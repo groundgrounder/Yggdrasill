@@ -35,12 +35,12 @@ invalidCase('补充：档案追加字段不能必填', '设定.文本规范', ro
 invalidCase('补充：增减上限必须正整数', '设定.本局变量', root => edit(root, '设定/本局变量.yaml', value => { value.单次增减上限 = 0; }));
 invalidCase('补充：同名说明递归空字符串仍为空壳', '目录.空壳说明', root => write(root, '装备/装备.txt', {说明: ['', '  ']}), '提示');
 
-test('补充：隐藏文件跳过，历史只列出，文本不扫描键或机器字段', async t => {
+test('补充：隐藏文件跳过，历史只列出，机器字段不扫描', async t => {
   const root = await fixture(t);
   await fs.mkdir(path.join(root, '.隐藏'));
   await fs.writeFile(path.join(root, '.隐藏/甲.txt'), '键: [坏语法');
   await fs.writeFile(path.join(root, '历史/事件/出师考核/事件.txt'), '键: [坏语法');
-  await write(root, '世界概况/海况与雾季.txt', {目录规则: '海风来自北湾。', 生效条件: {说明: '变量与条目。'}});
+  await write(root, '世界概况/海况与雾季.txt', {海况: '海风来自北湾。', 生效条件: {说明: '变量与条目。'}});
   const result = await checkWorldbook(root);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.hints, []);

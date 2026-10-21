@@ -9,3 +9,7 @@ invalidCase('档案-4丙：稳定体貌未知子键', '档案.形态', root => e
 invalidCase('档案-5：出生年未按位数补齐', '档案.出生年', root => edit(root, basic, value => { value.出生年 = '潮历12年'; }));
 invalidCase('档案-6：技能补充引用不存在', '档案.技能补充', root => edit(root, basic, value => { value.能力特征.技能补充[0].技能ID = '灯语·不存在'; }));
 invalidCase('档案-7：核心身份超建议条数只提示', '档案.建议条数', root => edit(root, impression, value => { value.核心身份 = ['灯塔学徒', '细心观察者', '夜灯辨读者', '沉默的港人']; }), '提示');
+
+invalidCase('档案-8：核心身份不写十四岁', '档案.年龄', root => edit(root, impression, value => { value.核心身份 = ['沉默的十四岁灯塔学徒']; }), '提示');
+invalidCase('档案补充：基本信息中的数字年龄只提示', '档案.年龄', root => edit(root, basic, value => { value.出身 = '14岁以前在雾港工匠家庭长大。'; }), '提示');
+invalidCase('档案补充：情境键中的汉字数字年龄只提示', '档案.年龄', root => edit(root, impression, value => { value.通用反应[0] = {两岁时听见钟声: Object.values(value.通用反应[0])[0]}; }), '提示');

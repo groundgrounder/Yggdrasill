@@ -1,6 +1,7 @@
 import {PROFILE_FIELDS} from '../../core/contract.mjs';
 import {checkField, referenceExists} from '../../core/fields.mjs';
 import {has, isMap, list, pairs, issue} from '../../core/utils.mjs';
+import {visibleStrings} from './text.mjs';
 
 export function checkProfiles(catalog, decl) {
   const issues = [], add = (rule, file, message) => issues.push(issue(rule, '错误', file, message));
@@ -15,6 +16,8 @@ export function checkProfiles(catalog, decl) {
       if (!isMap(value)) { add('档案.形态', file, '档案正文须为映射'); continue; }
       const additions = Object.fromEntries(pairs(decl.textRules?.档案追加字段?.[kind]).filter(([name]) => !has(PROFILE_FIELDS[kind], name)));
       const schemas = {...PROFILE_FIELDS[kind], ...additions};
+      if (visibleStrings(value, {子字段: schemas}).some(text => /[\p{Decimal_Number}零〇一二两三四五六七八九十百千万亿]+岁/u.test(text)))
+        issues.push(issue('档案.年龄', '提示', file, '档案不写年龄，当前年龄由出生年与当前时间计算'));
       for (const key of Object.keys(value)) if (!has(schemas, key)) add('档案.未知字段', file, `未知字段“${key}”`);
       for (const [name, schema] of pairs(schemas)) {
         if (!has(value, name)) { if (schema?.必填) add('档案.缺必填', file, `缺少必填字段“${name}”`); continue; }

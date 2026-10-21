@@ -1,4 +1,5 @@
-import {invalidCase, edit, basic, port} from './helpers.mjs';
+import {checkWorldbook} from '../checker/index.mjs';
+import {invalidCase, edit, basic, port, impression, ship, shortSkill, test, assert, fixture} from './helpers.mjs';
 
 invalidCase('文本-1甲：通用禁用词条目', '文本.禁用词', root => edit(root, '世界概况/秩序与行当.txt', value => { value.补充 = '每个条目写在海图背面。'; }));
 invalidCase('文本-1乙：第五层禁用词原作中', '文本.禁用词', root => edit(root, '世界概况/海况与雾季.txt', value => { value.补充 = '原作中海雾从北边来。'; }));
@@ -6,3 +7,29 @@ invalidCase('文本-2：同名地点说明不能写读取', '文本.系统视角
 invalidCase('文本-3：说明不用破折号', '文本.破折号', root => edit(root, '装备/装备.txt', value => { value.说明.push('船舷很低——水容易溅进来。'); }));
 invalidCase('文本-4：第五层收紧基本信息预算', '文本.长度', root => edit(root, basic, value => { value.出身 = '海'.repeat(401); }), '提示');
 invalidCase('文本-5：仿佛只报写法提示', '文本.写法', root => edit(root, '装备/装备.txt', value => { value.说明.push('灯光仿佛连成一线。'); }), '提示');
+
+invalidCase('文本-6：通用反应的情境键含条目', '文本.禁用词', root => edit(root, impression, value => { value.通用反应.push({看见条目: '先辨方向，再逐段记下明暗间隔。'}); }));
+invalidCase('文本-7：技能库说明的键含读取', '文本.系统视角', root => edit(root, '技能/技能.txt', value => { value.读取灯号 = '港人先辨明灯光的方向。'; }));
+invalidCase('文本-8：只加长情境键使全文超过六百字', '文本.长度', root => edit(root, impression, value => { value.通用反应[0] = {['灯'.repeat(601)]: Object.values(value.通用反应[0])[0]}; }), '提示');
+invalidCase('文本-9：情境键不能含破折号', '文本.破折号', root => edit(root, impression, value => { value.通用反应[0] = {'看见灯光——远处传来钟声': Object.values(value.通用反应[0])[0]}; }));
+
+invalidCase('文本补充：情境键与机器字段同名仍扫描正文', '文本.禁用词', root => edit(root, impression, value => { value.通用反应.push({变化: '先确认条目上的灯号。'}); }));
+invalidCase('文本补充：文本容器的嵌套键参与扫描', '文本.禁用词', root => edit(root, '世界概况/海况与雾季.txt', value => { value.海况.push({海边条目: '落潮后能看见湾口暗礁。'}); }));
+invalidCase('文本补充：说明文件的嵌套键计入长度', '文本.长度', root => edit(root, '技能/技能.txt', value => { value.说明.push({['灯'.repeat(301)]: '港人先辨明灯光的方向。'}); }), '提示');
+invalidCase('文本补充：基本信息的追加情境字段扫描键', '文本.禁用词', async root => {
+  await edit(root, '设定/文本规范.yaml', value => { value.档案追加字段.基本信息.习惯动作 = {形态: '情境列表'}; });
+  await edit(root, basic, value => { value.习惯动作 = [{看见条目: '停下手边动作。'}]; });
+});
+invalidCase('文本补充：条目嵌套映射按文本声明扫描键', '文本.禁用词', async root => {
+  await edit(root, '设定/条目库.yaml', value => { value.船只.字段.见闻 = {子字段: {沿途: {映射: {键: {形态: '文本'}, 值: {形态: '文本'}}}}}; });
+  await edit(root, ship, value => { value.见闻 = {沿途: {看见条目: '船员先收拢缆绳。'}}; });
+});
+
+test('文本补充：固定字段名、追加字段名和引用映射键不扫描', async t => {
+  const root = await fixture(t);
+  await edit(root, '设定/文本规范.yaml', value => { value.禁用词.push('核心身份', '技能ID', '概况', '惯用手', '北湾'); });
+  const result = await checkWorldbook(root);
+  const files = [basic, impression, shortSkill, port, ship];
+  assert.deepEqual(result.errors.filter(item => files.includes(item.文件)), []);
+  assert.deepEqual(result.hints, []);
+});
