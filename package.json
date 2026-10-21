@@ -1,0 +1,23 @@
+{
+  "name": "yggdrasill",
+  "version": "0.1.0",
+  "description": "世界树：角色组、版本、时期档案、统一事件树与成长树的世界书规范与工具链",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ygg": "cli/ygg.mjs"
+  },
+  "exports": {
+    ".": "./core/index.mjs",
+    "./checker": "./checker/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

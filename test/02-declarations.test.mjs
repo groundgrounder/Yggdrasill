@@ -1,0 +1,26 @@
+import {invalidCase, edit, remove} from './helpers.mjs';
+
+const calendar = '设定/纪年.yaml', ability = '设定/能力.yaml', libraries = '设定/条目库.yaml', variables = '设定/本局变量.yaml';
+invalidCase('设定-1：删除必需本局变量声明', '设定.缺少文件', root => remove(root, variables));
+invalidCase('设定-2：技能库缺能力声明', '设定.缺少文件', root => remove(root, ability));
+invalidCase('设定补充：事件分类出现未知键', '设定.格式', root => edit(root, '设定/事件分类.yaml', value => { value.额外 = []; }));
+invalidCase('设定-3甲：纪年缺前缀', '设定.纪年', root => edit(root, calendar, value => { delete value.前缀; }));
+invalidCase('设定-3乙：逐月天数长度不符', '设定.纪年', root => edit(root, calendar, value => { value.每月天数 = [91, 91, 91]; }));
+invalidCase('设定-4：等级清单重复', '设定.格式', root => edit(root, '设定/等级.yaml', value => { value.技艺.push('学徒'); }));
+invalidCase('设定-5甲：集合不能标综合实力', '设定.能力', root => edit(root, ability, value => { value.维度.天赋.综合实力 = true; }));
+invalidCase('设定-5乙：能力键跨组重复', '设定.能力', root => edit(root, ability, value => { value.维度.技艺.键.秘传.push('航海'); }));
+invalidCase('设定-5丙：能力维度与骨架重名', '设定.能力', root => edit(root, ability, value => { value.维度.在场 = {类型: '集合', 成员: '文本'}; }));
+invalidCase('设定-6：技能可用引用不存在键组', '设定.技能可用', root => edit(root, ability, value => { value.技能可用[0].键组 = '不存在'; }));
+invalidCase('设定-7：事件结果引用未声明支撑', '设定.事件结果支撑', root => edit(root, '设定/事件分类.yaml', value => { value.事件结果.知识变化 = ['见闻']; }));
+invalidCase('设定-8甲：地点库分法不符', '设定.条目库', root => edit(root, libraries, value => { value.地点.分法 = '按种类'; }));
+invalidCase('设定-8乙：库名与固定根重名', '设定.条目库', root => edit(root, libraries, value => { value.角色 = {分法: '按种类', 分级: ['类型'], 字段: {类型: {取值: ['人']}}}; }));
+invalidCase('设定-8丙：上级类型缺类型字段', '设定.条目库', root => edit(root, libraries, value => { delete value.地点.字段.类型; }));
+invalidCase('设定-9甲：字段混用形态与取值', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.效果.取值 = ['好']; }));
+invalidCase('设定-9乙：未知字段形态', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.效果.形态 = '段落'; }));
+invalidCase('设定-9丙：库字段不能用数值', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.伤害 = {数值: [0, 10]}; }));
+invalidCase('设定-9丁：不能声明名称字段', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.名称 = {形态: '文本'}; }));
+invalidCase('设定-10甲：缺装备状态词表', '设定.本局变量', root => edit(root, variables, value => { delete value.词表.装备状态; }));
+invalidCase('设定-10乙：角色变量与能力维度重名', '设定.本局变量', root => edit(root, variables, value => { value.角色.技艺 = {形态: '文本'}; }));
+invalidCase('设定-11：剧情标记值域为空', '设定.剧情标记', root => edit(root, '设定/剧情标记.yaml', value => { value.雾季 = []; }));
+invalidCase('设定-12甲：预算不能放宽', '设定.文本规范', root => edit(root, '设定/文本规范.yaml', value => { value.长度预算.基本信息 = 800; }));
+invalidCase('设定-12乙：追加字段与已有姓名重名', '设定.文本规范', root => edit(root, '设定/文本规范.yaml', value => { value.档案追加字段.基本信息.姓名 = {形态: '文本'}; }));
