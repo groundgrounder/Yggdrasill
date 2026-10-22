@@ -5,13 +5,13 @@ import {checkWorldbook} from '../checker/index.mjs';
 
 export async function runCli(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr} = {}) {
   const json = args.includes('--json');
-  const positionals = args.filter(value => value !== '--json');
-  if (positionals[0] !== 'check' || positionals.length > 2 || args.some(value => value.startsWith('-') && value !== '--json')) {
-    stderr.write('用法：ygg check [世界书目录] [--json]\n');
+  const positionals = args.filter(value => !['--json', '--static-only'].includes(value));
+  if (positionals[0] !== 'check' || positionals.length > 2 || args.some(value => value.startsWith('-') && !['--json', '--static-only'].includes(value))) {
+    stderr.write('用法：ygg check [世界书目录] [--json] [--static-only]\n');
     return 1;
   }
   try {
-    const result = await checkWorldbook(path.resolve(cwd, positionals[1] ?? '世界书'));
+    const result = await checkWorldbook(path.resolve(cwd, positionals[1] ?? '世界书'), {sampling: !args.includes('--static-only')});
     if (json) stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else {
       for (const item of [...result.errors, ...result.hints]) stdout.write(`${item.级别} ${item.规则} ${item.文件}：${item.说明}\n`);

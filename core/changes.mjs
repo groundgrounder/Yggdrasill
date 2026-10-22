@@ -1,4 +1,4 @@
-import {dimensionKeys, resolveDomain} from './fields.mjs';
+import {checkField, dimensionKeys, resolveDomain} from './fields.mjs';
 import {has, isMap, isText, list, pairs, issue} from './utils.mjs';
 
 const RESERVED_ROLE_FIELDS = new Set(['能力移除记录', '已初始化']);
@@ -11,7 +11,7 @@ export function checkChange(change, context = {}) {
   const keys = Object.keys(change);
   if (!keys.includes('路径') || !keys.includes('操作')) add('变化.格式', '必须含路径、操作');
   for (const key of keys) if (!['路径', '操作', '值'].includes(key)) add('变化.格式', `含未知字段“${key}”`);
-  if (!isText(change.路径) || !isText(change.操作)) return issues;
+  if (!isText(change.路径) || !isText(change.操作)) { add('变化.格式', '路径与操作须为非空文本'); return issues; }
   const parts = change.路径.split('.');
   if (parts.some(part => !isText(part) || ['__proto__', 'constructor', 'prototype'].includes(part))) { add('变化.路径', '路径各段必须为非空文本'); return issues; }
   const hasValue = has(change, '值');
@@ -25,8 +25,9 @@ export function checkChange(change, context = {}) {
     return true;
   };
   const validateMember = (value, schema) => {
-    if (schema?.形态 === '文本') validateText(value);
-    else if (schema?.取值) validateDomain(value, resolveDomain(schema.取值, decl));
+    if (schema?.形态 || schema?.子字段) {
+      for (const found of checkField(value, schema, {catalog, decl})) if (found.级别 === '错误') add('变化.取值', found.说明);
+    } else if (schema?.取值) validateDomain(value, resolveDomain(schema.取值, decl));
     else if (schema?.引用) {
       if (!isText(value) || !referenceExists(value, schema.引用, catalog)) add('变化.取值', `值“${String(value)}”不能引用“${schema.引用}”`);
     } else if (schema?.集合) validateMember(value, schema.集合);
@@ -180,7 +181,7 @@ function validMappingKey(schema, key, catalog) {
 
 function referenceExists(value, target, catalog) {
   if (!isText(value)) return false;
-  if (target === '角色组') return list(catalog.groups).some(group => group.id === value);
+  if (target === '角色组') return value === '玩家' || list(catalog.groups).some(group => group.id === value);
   return list(catalog.entries?.[target]).some(entry => entry.id === value);
 }
 

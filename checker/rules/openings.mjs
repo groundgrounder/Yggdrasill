@@ -18,6 +18,7 @@ export function checkOpenings(catalog, decl) {
         if (!events.has(item.事件ID) || optionIndex.has(item.事件ID)) add('开局.选项引用', file, `事件“${item.事件ID}”不存在或重复声明`);
         optionIndex.set(item.事件ID, item.选项);
         const event = events.get(item.事件ID);
+        if (event?.内容?.确认策略 === '仅作候选') add('开局.选项引用', file, `仅作候选事件“${item.事件ID}”不能作为开局选项`);
         for (const [branchID, text] of Object.entries(item.选项)) {
           if (branchID !== '未发生' && !event?.内容?.分支?.some(branch => branch?.分支ID === branchID)) add('开局.选项引用', file, `事件“${item.事件ID}”没有选项分支“${branchID}”`);
           if (!isText(text)) add('开局.选项引用', file, '选项文字须为文本');
@@ -41,7 +42,7 @@ export function checkOpenings(catalog, decl) {
         if (value.开局时间 && event && calendar) {
           const latest = calendar.time(event.内容?.触发时间?.最晚);
           const start = calendar.time(value.开局时间);
-          if (latest && start && latest[0] >= start[0]) add('开局.方案选择', file, `所选事件“${eventID}”的触发时间不早于开局时间`);
+          if (latest && start && latest[1] > start[0]) add('开局.方案选择', file, `所选事件“${eventID}”的触发时间最晚的终点晚于开局时间起点`);
         }
       }
     }

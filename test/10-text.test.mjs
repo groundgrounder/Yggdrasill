@@ -28,7 +28,7 @@ invalidCase('文本补充：条目嵌套映射按文本声明扫描键', '文本
 test('文本补充：固定字段名、追加字段名和引用映射键不扫描', async t => {
   const root = await fixture(t);
   await edit(root, '设定/文本规范.yaml', value => { value.禁用词.push('核心身份', '技能ID', '概况', '惯用手', '北湾'); });
-  const result = await checkWorldbook(root);
+  const result = await checkWorldbook(root, {sampling: false});
   const files = [basic, impression, shortSkill, port, ship];
   assert.deepEqual(result.errors.filter(item => files.includes(item.文件)), []);
   assert.deepEqual(result.hints, []);

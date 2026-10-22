@@ -1,7 +1,7 @@
 {
   "name": "yggdrasill",
   "version": "0.1.0",
-  "description": "世界树：角色组、版本、时期档案、统一事件树与成长树的世界书规范与工具链",
+  "description": "角色组、版本、时期档案与统一事件树的世界书规范与工具链",
   "type": "module",
   "private": true,
   "bin": {
