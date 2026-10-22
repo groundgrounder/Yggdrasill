@@ -26,6 +26,7 @@ export function analyzeEventTree(catalog, decl = {}) {
       return !value?.分支ID || branchAvailable.get(id)?.has(value.分支ID);
     }
     if (type === '事件串状态') {
+      if (negative) return true;
       const chain = list(catalog.chains).find(item => item.id === value?.事件串ID);
       if (!chain) return true;
       const members = list(chain.内容?.事件);
@@ -68,8 +69,10 @@ export function analyzeEventTree(catalog, decl = {}) {
     if (reachable.has(event.id)) for (const branch of list(content.分支)) {
       if (branch?.分支ID && !possible(combined(event.id, branch), event.id)) add('事件树.分支不可达', event.id, `分支“${branch.分支ID}”按乐观假设不可达`, '提示');
     }
-    checkTime(event, content.门槛, false);
-    for (const branch of list(content.分支)) checkTime(event, combined(event.id, branch), true);
+    const eventTimeIssue = checkTime(event, content.门槛, false);
+    for (const branch of list(content.分支)) {
+      if (branch?.门槛) checkTime(event, combined(event.id, branch), true, eventTimeIssue);
+    }
   }
 
   const requiredGraph = new Map(events.map(event => {
@@ -97,13 +100,19 @@ export function analyzeEventTree(catalog, decl = {}) {
   return {byID, references, reachable, branchReachable, issues,
     timePossible: (sourceID, targetID, strict = false) => timePossible(sourceID, targetID, strict)};
 
-  function checkTime(event, condition, branchSpecific) {
-    if (!condition || !calendar || !isMap(event.内容?.触发时间)) return;
+  function checkTime(event, condition, branchSpecific, suppressed = null) {
+    if (!condition || !calendar || !isMap(event.内容?.触发时间)) return null;
     const targetTime = calendar.time(event.内容.触发时间.最晚);
-    if (!targetTime) return;
-    const earliestPossible = conditionPossibleByTime(condition, event.id, false);
-    if (!earliestPossible) add('事件树.前置超出窗口', event.id, branchSpecific ? '分支门槛的正向前置全部超出本事件时间窗口' : '正向前置的全部可选路径均超出本事件时间窗口');
-    else if (!conditionPossibleByTime(condition, event.id, true)) add('事件树.前置倒流', event.id, branchSpecific ? '分支门槛的正向前置最晚时间晚于本事件' : '正向前置的全部可选路径最晚时间均晚于本事件');
+    if (!targetTime) return null;
+    const rule = !conditionPossibleByTime(condition, event.id, false) ? '事件树.前置超出窗口'
+      : !conditionPossibleByTime(condition, event.id, true) ? '事件树.前置倒流' : null;
+    if (rule && rule !== suppressed) {
+      const message = rule === '事件树.前置超出窗口'
+        ? (branchSpecific ? '分支门槛的正向前置全部超出本事件时间窗口' : '正向前置的全部可选路径均超出本事件时间窗口')
+        : (branchSpecific ? '分支门槛的正向前置最晚时间晚于本事件' : '正向前置的全部可选路径最晚时间均晚于本事件');
+      add(rule, event.id, message);
+    }
+    return rule;
   }
   function conditionPossibleByTime(condition, targetID, strict) {
     if (!condition) return true;

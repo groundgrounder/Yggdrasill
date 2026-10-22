@@ -1,6 +1,6 @@
 import {test, assert, fs, path, example, fixture, edit, write, remove, invalidCase, read} from './helpers.mjs';
 import {checkWorldbook} from '../checker/index.mjs';
-import {loadWorldbook, readDeclarations, validateDeclarations, evaluateCondition, impactOf, checkChange} from '../core/index.mjs';
+import {loadWorldbook, readDeclarations, validateDeclarations, evaluateCondition, impactOf, checkChange, analyzeEventTree} from '../core/index.mjs';
 
 async function eventData(root) {
   const {raw} = await readDeclarations(root, {fs, path});
@@ -11,6 +11,10 @@ async function eventData(root) {
 
 function hasRule(result, rule, level = null) {
   return [...result.errors, ...result.hints].some(item => item.规则 === rule && (!level || item.级别 === level));
+}
+
+function countRule(result, rule, level = null) {
+  return [...result.errors, ...result.hints].filter(item => item.规则 === rule && (!level || item.级别 === level)).length;
 }
 
 test('求值-1 all未知与false', () => {
@@ -90,9 +94,127 @@ invalidCase('变化-5：变化取值', '变化.取值', root => edit(root, '历�
 invalidCase('变化-6：变化映射键', '变化.映射键', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.分支[0].变化[3].路径 = '角色.灯塔学徒.关系.港务署'; }));
 invalidCase('变化-7：角色未保证启用', '变化.角色未保证启用', root => edit(root, '历史/事件/学徒守灯/事件.txt', value => { delete value.分支[0].门槛; }));
 
+test('修正-1：取反门槛仍须保证写入角色启用', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/学徒守灯/事件.txt', value => {
+    value.分支.find(branch => branch.分支ID === '重燃灯塔').门槛 = {none: [{角色启用: {角色组ID: '秦守'}}]};
+  });
+  const result = await checkWorldbook(root);
+  assert.ok(hasRule(result, '变化.角色未保证启用'), JSON.stringify(result, null, 2));
+});
+
+test('修正-2：正向角色版本门槛保证写入角色启用', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/学徒守灯/事件.txt', value => {
+    value.分支.find(branch => branch.分支ID === '重燃灯塔').门槛 = {角色版本: {角色组ID: '秦守', 版本ID: '秦守'}};
+  });
+  const result = await checkWorldbook(root);
+  assert.equal(hasRule(result, '变化.角色未保证启用'), false, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.hints, []);
+});
+
+test('修正-3：取反事件串状态按乐观假设可达', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/秦守讲旧事/事件.txt', value => {
+    const [chainState, ...rest] = value.门槛.all;
+    value.门槛.all = [{none: [chainState]}, ...rest];
+  });
+  const result = await checkWorldbook(root);
+  assert.equal(hasRule(result, '事件树.不可达'), false, JSON.stringify(result, null, 2));
+
+  // 起点不可达时，取反仍可能成立；正向条件则保留原来的起点判断。
+  const {catalog, decl} = await eventData(root);
+  catalog.events.find(item => item.id === '拜师').内容.门槛 = {事件确认: {事件ID: '潮汐号首航'}};
+  assert.equal(analyzeEventTree(catalog, decl).reachable.has('秦守讲旧事'), true);
+  const event = catalog.events.find(item => item.id === '秦守讲旧事');
+  event.内容.门槛.all[0] = event.内容.门槛.all[0].none[0];
+  assert.equal(analyzeEventTree(catalog, decl).reachable.has('秦守讲旧事'), false);
+});
+
+test('修正-4：角色状态属于列表含默认值时不提示无来源', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/补考/事件.txt', value => {
+    const branch = value.分支.find(item => item.分支ID === '通过');
+    branch.门槛 = {all: [branch.门槛, {角色状态: {角色组ID: '灯塔学徒', 字段: '身体状态.健康', 属于: ['正常', '未初始化']}}]};
+  });
+  const result = await checkWorldbook(root);
+  assert.equal(hasRule(result, '条件.取值无来源'), false, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.errors, []);
+});
+
+test('修正-5：角色状态属于列表都无来源时只提示一次', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/补考/事件.txt', value => {
+    const branch = value.分支.find(item => item.分支ID === '通过');
+    branch.门槛 = {all: [branch.门槛, {角色状态: {角色组ID: '灯塔学徒', 字段: '身体状态.健康', 属于: ['正常', '重伤']}}]};
+  });
+  const result = await checkWorldbook(root);
+  assert.equal(countRule(result, '条件.取值无来源', '提示'), 1, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.errors, []);
+});
+
 invalidCase('事件树-1：前置超出窗口', '事件树.前置超出窗口', root => edit(root, '历史/事件/夜间值守/事件.txt', value => { value.触发时间 = {最早: '潮历070年01月01日', 最晚: '潮历070年03月91日'}; }));
 invalidCase('事件树-2：前置倒流', '事件树.前置倒流', root => edit(root, '历史/事件/出师考核/事件.txt', value => { value.触发时间 = {最早: '潮历071年02月01日', 最晚: '潮历071年02月01日'}; }));
 invalidCase('事件树-3：前置闭环', '事件树.前置闭环', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.门槛 = {事件确认: {事件ID: '夜间值守'}}; }));
+
+test('修正-6：事件门槛时间问题不在分支重复报告', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/学徒守灯/事件.txt', value => {
+    value.触发时间 = {最早: '潮历071年04月10日', 最晚: '潮历071年04月10日'};
+  });
+  const result = await checkWorldbook(root);
+  assert.equal(countRule(result, '事件树.前置超出窗口'), 1, JSON.stringify(result, null, 2));
+  assert.equal(countRule(result, '事件树.前置倒流'), 0, JSON.stringify(result, null, 2));
+});
+
+test('修正补充-1：取反无关条件仍是未知，双重取反恢复角色保证', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/学徒守灯/事件.txt', value => {
+    value.分支.find(branch => branch.分支ID === '重燃灯塔').门槛 = {none: [{剧情标记: {标记ID: '灯塔状态', 比较: '等于', 值: '重燃'}}]};
+  });
+  let result = await checkWorldbook(root);
+  assert.ok(hasRule(result, '变化.角色未保证启用'), JSON.stringify(result, null, 2));
+  await edit(root, '历史/事件/学徒守灯/事件.txt', value => {
+    value.分支.find(branch => branch.分支ID === '重燃灯塔').门槛 = {none: [{none: [{角色启用: {角色组ID: '秦守'}}]}]};
+  });
+  result = await checkWorldbook(root);
+  assert.equal(hasRule(result, '变化.角色未保证启用'), false, JSON.stringify(result, null, 2));
+});
+
+test('修正补充-2：属于列表任一取值有事件来源即不提示', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/补考/事件.txt', value => {
+    const branch = value.分支.find(item => item.分支ID === '通过');
+    branch.门槛 = {all: [branch.门槛, {角色状态: {角色组ID: '灯塔学徒', 字段: '身体状态.健康', 属于: ['正常', '受伤']}}]};
+  });
+  const result = await checkWorldbook(root);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.hints, []);
+});
+
+test('修正补充-3：事件级倒流不在分支重复，分支独有时间问题仍检查', async () => {
+  const {catalog, decl} = await eventData(example);
+  const event = catalog.events.find(item => item.id === '学徒守灯');
+  const source = catalog.events.find(item => item.id === '大雾之夜');
+  source.内容.触发时间.最晚 = '潮历071年04月21日';
+  let analysis = analyzeEventTree(catalog, decl);
+  const timeIssues = result => result.issues.filter(item => item.文件 === event.文件 && ['事件树.前置超出窗口', '事件树.前置倒流'].includes(item.规则));
+  assert.deepEqual(timeIssues(analysis).map(item => item.规则), ['事件树.前置倒流']);
+  assert.equal(timeIssues(analysis)[0].说明.startsWith('分支门槛'), false);
+
+  // 事件门槛可满足，但分支新增更晚的前置时仍须报错。
+  source.内容.触发时间.最晚 = '潮历071年04月20日';
+  event.内容.分支[0].门槛 = {事件确认: {事件ID: '潮汐号首航'}};
+  analysis = analyzeEventTree(catalog, decl);
+  assert.deepEqual(timeIssues(analysis).map(item => item.规则), ['事件树.前置超出窗口']);
+  assert.equal(timeIssues(analysis)[0].说明.startsWith('分支门槛'), true);
+
+  // 合取后错误类型不同，不能因为事件门槛已经报过倒流就忽略。
+  source.内容.触发时间.最晚 = '潮历071年04月21日';
+  analysis = analyzeEventTree(catalog, decl);
+  assert.deepEqual(timeIssues(analysis).map(item => item.规则), ['事件树.前置倒流', '事件树.前置超出窗口']);
+});
 
 invalidCase('事件串-1：事件串缺概述', '事件串.格式', root => edit(root, '历史/事件串/学徒修习.yaml', value => { delete value.概述; }));
 invalidCase('事件串-2：事件串引用', '事件串.引用', root => edit(root, '历史/事件串/学徒修习.yaml', value => { value.结局[0] = {事件ID: '拜师', 分支ID: '出海'}; }));

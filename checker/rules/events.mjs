@@ -79,7 +79,12 @@ export function checkEvents(catalog, decl) {
       if (id === '玩家' || event.内容?.核心参与者?.includes(id)) continue;
       let value = true;
       if (condition) {
-        try { value = evaluateCondition(condition, (type, params) => conditionInvolvesRole(type, params, id) ? false : null); }
+        // 假设目标角色未启用；叶子结果须自行处理取反。
+        try {
+          value = evaluateCondition(condition, (type, params, negative) => conditionInvolvesRole(type, params, id)
+            ? (negative ? true : false)
+            : null);
+        }
         catch { value = null; }
       }
       if (value !== false) add('变化.角色未保证启用', event.文件, `分支“${branch?.分支ID ?? '?'}”写入角色组“${id}”，但门槛未保证其启用`);

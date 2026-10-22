@@ -180,8 +180,8 @@ export function checkCondition(condition, context = {}, position = '门槛') {
     const required = list(value.属于);
     const source = written.get(value.字段) ?? new Set();
     const domain = source.domain ?? stateDomain(value.字段);
-    for (const item of required) if (!source.has(item) && (!domain.length || domain[0] !== item))
-      add('条件.取值无来源', `${path}要求的取值“${item}”没有预设事件变化来源`, '提示');
+    if (required.length && !required.some(item => source.has(item) || (domain.length && domain[0] === item)))
+      add('条件.取值无来源', `${path}要求的取值“${required.join('、')}”均没有预设事件变化来源`, '提示');
   }
   function stateDomain(field) {
     const [root, ...tail] = String(field).split('.');
