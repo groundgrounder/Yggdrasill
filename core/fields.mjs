@@ -60,7 +60,8 @@ export function checkField(value, schema, context = {}) {
     if (!Array.isArray(values) || (schema.列表 && (!values.length || new Set(values).size !== values.length))) add(suffix, '须为非空无重复列表');
     else for (const item of values) {
       if (has(schema, '引用')) {
-        if (!referenceExists(item, schema.引用, catalog)) add('引用', `不能解析“${String(item)}”至“${schema.引用}”`);
+        if (!(context.allowPlayer && schema.引用 === '角色组' && item === '玩家')
+          && !referenceExists(item, schema.引用, catalog)) add('引用', `不能解析“${String(item)}”至“${schema.引用}”`);
       } else if (schema.取值 === '纪年') {
         let valid = false;
         if (decl?.calendar) valid = createCalendar(decl.calendar).time(item) !== null;

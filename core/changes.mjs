@@ -14,6 +14,7 @@ export function checkChange(change, context = {}) {
   if (!isText(change.路径) || !isText(change.操作)) { add('变化.格式', '路径与操作须为非空文本'); return issues; }
   const parts = change.路径.split('.');
   if (parts.some(part => !isText(part) || ['__proto__', 'constructor', 'prototype'].includes(part))) { add('变化.路径', '路径各段必须为非空文本'); return issues; }
+  if (context.preset && changeRoleReferences(change, decl).includes('玩家')) add('变化.玩家', '预设事件不能写保留角色组“玩家”');
   const hasValue = has(change, '值');
   const requireValue = () => { if (!hasValue) add('变化.格式', '该操作必须提供值'); };
   const forbidValue = () => { if (hasValue) add('变化.取值', '移除不能带值'); };
@@ -26,7 +27,7 @@ export function checkChange(change, context = {}) {
   };
   const validateMember = (value, schema) => {
     if (schema?.形态 || schema?.子字段) {
-      for (const found of checkField(value, schema, {catalog, decl})) if (found.级别 === '错误') add('变化.取值', found.说明);
+      for (const found of checkField(value, schema, {catalog, decl, allowPlayer: true})) if (found.级别 === '错误') add('变化.取值', found.说明);
     } else if (schema?.取值) validateDomain(value, resolveDomain(schema.取值, decl));
     else if (schema?.引用) {
       if (!isText(value) || !referenceExists(value, schema.引用, catalog)) add('变化.取值', `值“${String(value)}”不能引用“${schema.引用}”`);
@@ -77,7 +78,7 @@ export function checkChange(change, context = {}) {
   return issues;
 
   function checkScalarTarget(target, label) {
-    if (target?.取值 || target?.形态) {
+    if (target?.取值 || target?.形态 || target?.引用) {
       validateOperation(['设定']); requireValue(); if (hasValue) validateMember(change.值, target);
     } else add('变化.路径', `${label}必须写到可修改的字段格`);
   }
@@ -144,8 +145,8 @@ function checkVariable(parts, change, schema, decl, catalog, add, validateOperat
   if (current?.集合) {
     validateOperation(['新增', '移除']); requireValue(); if (change.值 !== undefined) validateMember(change.值, current.集合); return;
   }
-  if (current?.取值 || current?.形态 || current?.数值) {
-    const ops = current.数值 ? ['增加', '减少'] : current.取值 || current.形态 ? ['设定'] : [];
+  if (current?.取值 || current?.形态 || current?.引用 || current?.数值) {
+    const ops = current.数值 ? ['增加', '减少'] : ['设定'];
     validateOperation(ops);
     if (change.操作 === '移除') forbidValue(); else {
       requireValue();
@@ -162,7 +163,7 @@ function checkVariable(parts, change, schema, decl, catalog, add, validateOperat
     if (target?.数值) {
       if (!['增加', '减少'].includes(change.操作)) add('变化.操作', '数值映射键只允许增加或减少');
       requireValue(); if (change.值 !== undefined && (!Number.isSafeInteger(change.值) || change.值 < 1 || change.值 > (decl.variables?.单次增减上限 ?? 100))) add('变化.取值', '增减值须为不超过单次上限的正整数');
-    } else if (target?.取值 || target?.形态 || target?.子字段) {
+    } else if (target?.取值 || target?.形态 || target?.引用 || target?.子字段) {
       if (target?.子字段) {
         if (!['设定', '新增', '移除'].includes(change.操作)) add('变化.操作', '映射子字段只允许设定、新增、移除');
         if (change.操作 === '移除') forbidValue(); else { requireValue(); if (change.值 !== undefined) validateMember(change.值, target); }
@@ -183,6 +184,33 @@ function referenceExists(value, target, catalog) {
   if (!isText(value)) return false;
   if (target === '角色组') return value === '玩家' || list(catalog.groups).some(group => group.id === value);
   return list(catalog.entries?.[target]).some(entry => entry.id === value);
+}
+
+// 按声明识别角色引用，不把普通文本中的“玩家”当成保留引用。
+export function changeRoleReferences(change, decl) {
+  const parts = typeof change?.路径 === 'string' ? change.路径.split('.') : [], roles = new Set();
+  const role = parts[0] === '角色', offset = role ? 2 : 1;
+  if (role) roles.add(parts[1]);
+  let schema = has(role ? decl.variables?.角色 : decl.variables?.世界, parts[offset])
+    ? (role ? decl.variables.角色 : decl.variables.世界)[parts[offset]] : null;
+  for (const key of parts.slice(offset + 1)) {
+    if (schema?.映射) {
+      if (schema.映射.键?.引用 === '角色组') roles.add(key);
+      schema = schema.映射.值;
+    } else schema = has(schema?.子字段, key) ? schema.子字段[key] : null;
+  }
+  function visit(value, field) {
+    if (field?.引用 === '角色组') {
+      for (const id of field.列表 ? list(value) : [value]) if (isText(id)) roles.add(id);
+    }
+    else if (field?.集合) visit(value, field.集合);
+    else if (field?.子字段) for (const [key, item] of pairs(value)) visit(item, field.子字段[key]);
+    else if (field?.映射) for (const [key, item] of pairs(value)) {
+      visit(key, field.映射.键); visit(item, field.映射.值);
+    }
+  }
+  if (has(change, '值')) visit(change.值, schema);
+  return [...roles];
 }
 
 export function changedFields(changes) {

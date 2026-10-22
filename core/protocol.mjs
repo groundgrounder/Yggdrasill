@@ -1,8 +1,8 @@
 import {createCalendar} from './calendar.mjs';
 import {evaluateCondition, conditionReferences, checkCondition} from './conditions.mjs';
-import {checkChange} from './changes.mjs';
+import {checkChange, changeRoleReferences} from './changes.mjs';
 import {dimensionKeys, resolveDomain} from './fields.mjs';
-import {has, isMap, isText, list, pairs, freeze} from './utils.mjs';
+import {has, isMap, isText, list, pairs, freeze, codepointCompare} from './utils.mjs';
 import {createStateValidator} from './protocol/validation.mjs';
 
 const RESERVED_DYNAMIC_IDS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -23,12 +23,6 @@ function getOwn(value, key) { return own(value, key) ? value[key] : undefined; }
 function setOwn(value, key, item) {
   Object.defineProperty(value, key, {value: item, enumerable: true, configurable: true, writable: true});
 }
-function codepointCompare(left, right) {
-  const first = Array.from(left, value => value.codePointAt(0)), second = Array.from(right, value => value.codePointAt(0));
-  for (let index = 0; index < Math.min(first.length, second.length); index++) if (first[index] !== second[index]) return first[index] - second[index];
-  return first.length - second.length;
-}
-
 export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) {
   const catalog = sourceCatalog && freeze(clone(sourceCatalog)), decl = sourceDecl && freeze(clone(sourceDecl));
   if (!isMap(catalog) || !isMap(decl)) fail('协议.参数', '协议需要目录与声明');
@@ -50,8 +44,8 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     return groups.has(id) && getOwn(state?.开局?.角色组, id)?.启用 === true;
   }
 
-  function checkState(state, sealed = false) {
-    validation.validate(state, sealed);
+  function checkState(state, sealed = false, options = {}) {
+    validation.validate(state, sealed, options);
   }
 
   function eventRange(event) {
@@ -275,9 +269,9 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     return {state: draft, solved, skipped};
   }
 
-  function findPending(state) {
-    checkState(state);
-    if (state?.开局?.已封卷 !== true || !calendar.time(state?.世界?.当前时间)) return [];
+  function settleState(state, options = {}) {
+    checkState(state, false, options);
+    if (state?.开局?.已封卷 !== true || !calendar.time(state?.世界?.当前时间)) return {state, pending: []};
     const current = calendar.time(state.世界.当前时间);
     const eligible = [...events.values()].filter(event => {
       if (own(state.事件, event.id) || event.内容?.确认策略 !== '自动确认'
@@ -285,18 +279,11 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
       return current[0] >= eventRange(event).latest[1];
     });
     const draft = clone(state), solved = solveHistory(draft, eligible);
-    return [...solved.solved].map(([eventID, branchID]) => ({事件ID: eventID, 分支ID: branchID}));
+    return {state: draft, pending: [...solved.solved].map(([eventID, branchID]) => ({事件ID: eventID, 分支ID: branchID}))};
   }
 
-  function effectiveState(state) {
-    checkState(state);
-    if (state?.开局?.已封卷 !== true) return state;
-    const pending = findPending(state);
-    if (!pending.length) return state;
-    const draft = clone(state);
-    solveHistory(draft, pending.map(item => events.get(item.事件ID)));
-    return draft;
-  }
+  function findPending(state) { return settleState(state).pending; }
+  function effectiveState(state) { return settleState(state).state; }
 
   function chainStatusFromState(state, id) {
     const chain = chains.get(id)?.内容;
@@ -335,22 +322,16 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     const issues = checkChange(change, {decl, catalog});
     if (issues.length) fail('协议.变化', issues.map(item => `${item.规则}：${item.说明}`).join('；'));
     const parts = change.路径.split('.');
-    if (parts[0] === '角色' && parts[1] !== '玩家' && !isEnabled(parts[1], state))
-      fail('协议.变化', `变化写入未启用角色组：${parts[1]}`);
-    if (parts[0] === '角色' && parts[1] === '玩家' && state.开局.玩家.模式 !== '自建')
-      fail('协议.变化', '扮演模式不能写玩家角色变量');
-    if (parts[0] === '角色') {
-      let schema = getOwn(decl.variables?.角色, parts[2]);
-      for (const part of parts.slice(3)) {
-        if (isMap(schema?.映射)) {
-          if (schema.映射.键?.引用 === '角色组' && (part === '玩家' ? state.开局.玩家.模式 !== '自建' : !isEnabled(part, state)))
-            fail('协议.变化', `映射角色组未启用：${part}`);
-          schema = schema.映射.值;
-        } else if (isMap(schema?.子字段)) schema = getOwn(schema.子字段, part);
-        else break;
-      }
-    }
+    checkRoleTargets(change, state);
     return parts;
+  }
+
+  function checkRoleTargets(change, state) {
+    for (const id of changeRoleReferences({路径: change.路径}, decl)) {
+      if (id !== '玩家' && !isEnabled(id, state)) fail('协议.变化', `路径中的角色组未启用：${id}`);
+    }
+    if (state.开局.玩家.模式 !== '自建' && changeRoleReferences(change, decl).includes('玩家'))
+      fail('协议.变化', '扮演模式不能写保留角色组“玩家”');
   }
 
   function clearRemoval(run, field) {
@@ -570,7 +551,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
       && (!branch.门槛 || evaluateOn(state, branch.门槛, timeContext) === true);
   }
 
-  function statusOn(state, eventID, pending = findPending(state)) {
+  function statusOn(state, eventID, pending = findPending(state), preparedEffective) {
     if (own(state?.事件, eventID)) {
       const record = getOwn(state.事件, eventID);
       if (record?.状态 === 1) return {状态: '已确认'};
@@ -584,7 +565,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     const now = calendar.time(state.世界.当前时间), {earliest, latest} = eventRange(event);
     if (now[1] <= earliest[0]) return {状态: '未到'};
     if (now[0] >= latest[1]) return {状态: '已排除'};
-    const effective = effectiveState(state);
+    const effective = preparedEffective ?? effectiveState(state);
     const timeContext = clone(effective);
     timeContext.世界.当前时间 = state.世界.当前时间;
     if (event.内容?.门槛 && evaluateOn(effective, event.内容.门槛, timeContext) !== true) return {状态: '不适用'};
@@ -862,6 +843,31 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     return finishWrite(context, sceneParticipants);
   }
 
+  function writePendingItem(state, params) {
+    checkState(state, true);
+    if (!isMap(params) || Object.keys(params).some(key => !['操作', '字段路径', '候选值', '事件ID', '说明'].includes(key))
+      || !['新增', '移除'].includes(params.操作) || !isText(params.字段路径)) fail('协议.参数', '待定项参数不合法');
+    const parts = params.字段路径.split('.');
+    const pathIssues = checkChange({路径: params.字段路径, 操作: '设定'}, {catalog, decl})
+      .filter(item => ['变化.路径', '变化.映射键', '变化.协议字段'].includes(item.规则));
+    if (pathIssues.length || (parts[0] === '角色' && ['在场', '所在'].includes(parts[2])))
+      fail('协议.参数', '待定项字段路径须指向已声明的可写字段格，且不能是在场或所在');
+    if (params.操作 === '新增' && (!Array.isArray(params.候选值) || !params.候选值.length
+      || !isText(params.事件ID) || !isText(params.说明))) fail('协议.参数', '新增待定项须含非空候选值列表、事件ID与说明');
+    if (has(params, '候选值')) validation.serializable(params.候选值);
+    const context = writeBase(state), {draft} = context;
+    checkRoleTargets({路径: params.字段路径}, draft);
+    if (params.操作 === '新增' && getOwn(draft.事件, params.事件ID)?.状态 !== 1)
+      fail('协议.参数', `待定项须引用已确认事件：${params.事件ID}`);
+    const index = draft.待定项.findIndex(item => item.字段路径 === params.字段路径);
+    if (params.操作 === '移除') draft.待定项 = draft.待定项.filter(item => item.字段路径 !== params.字段路径);
+    else {
+      const item = {字段路径: params.字段路径, 候选值: clone(params.候选值), 事件ID: params.事件ID, 说明: params.说明};
+      if (index < 0) draft.待定项.push(item); else draft.待定项[index] = item;
+    }
+    return finishWrite(context);
+  }
+
   function hasAppeared(state, id) {
     return presentIDs(state).has(id) || getOwn(state.角色, id)?.已初始化 === true
       || Object.values(state.事件 ?? {}).some(record => record?.状态 === 1 && list(record.实际参与者).includes(id));
@@ -917,10 +923,42 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
     return availableSkillsOn(effective, groupID);
   }
 
+  // 每轮只求解一次待登记；其余读取共享同一份有效本局与缓存。
+  function createReadView(state) {
+    const settled = settleState(state, {allowUnknownLocation: true}), effective = freeze(clone(settled.state));
+    const profiles = new Map(), abilities = new Map(), skills = new Map(), statuses = new Map();
+    const cached = (cache, id, read) => {
+      if (!cache.has(id)) cache.set(id, read());
+      return clone(cache.get(id));
+    };
+    return Object.freeze({
+      state: effective, pending: freeze(clone(settled.pending)),
+      enabled: id => isEnabled(id, effective),
+      presentIDs: () => [...presentIDs(effective)].filter(id => id === '玩家'
+        ? effective?.开局?.玩家?.模式 === '自建' : isEnabled(id, effective)),
+      leaf: (type, value, negative) => {
+        if (!effective?.开局?.已封卷) return null;
+        const raw = conditionRaw(type, value, effective);
+        return raw === null ? null : negative ? !raw : raw;
+      },
+      evaluate: condition => evaluateOn(effective, condition),
+      eventStatus: id => cached(statuses, id, () => statusOn(state, id, settled.pending, effective)),
+      chainStatus: id => effective?.开局?.已封卷 ? chainStatusFromState(effective, id) : null,
+      resolveProfile: id => cached(profiles, id, () => resolveProfileOn(effective, id)),
+      currentAbility: id => cached(abilities, id, () => effective?.开局?.已封卷 ? currentAbilityOn(effective, id) : null),
+      availableSkills: id => cached(skills, id, () => effective?.开局?.已封卷 ? availableSkillsOn(effective, id) : []),
+      initializationPreview: id => {
+        if (!isEnabled(id, effective) || getOwn(effective?.角色, id)?.已初始化 === true) return null;
+        const profile = cached(profiles, id, () => resolveProfileOn(effective, id));
+        return profile.结果 === '成立' ? profileSeed(effective, id, profile.档案ID) : null;
+      },
+    });
+  }
+
   const protocol = {
     evaluate, pendingEvents, eventStatus, chainStatus, resolveProfile, currentAbility,
     availableSkills, initializationPreview: (state, id) => previewInitialization(state, id),
-    seal, confirmEvent, confirmPending, confirmDynamicEvent, confirmInitialization, writeScene,
+    seal, confirmEvent, confirmPending, confirmDynamicEvent, confirmInitialization, writeScene, writePendingItem, createReadView,
   };
   return Object.freeze(protocol);
 }
@@ -939,3 +977,4 @@ export const confirmPending = (protocol, state) => protocol.confirmPending(state
 export const confirmDynamicEvent = (protocol, state, params) => protocol.confirmDynamicEvent(state, params);
 export const confirmInitialization = (protocol, state, groupID) => protocol.confirmInitialization(state, groupID);
 export const writeScene = (protocol, state, params) => protocol.writeScene(state, params);
+export const writePendingItem = (protocol, state, params) => protocol.writePendingItem(state, params);

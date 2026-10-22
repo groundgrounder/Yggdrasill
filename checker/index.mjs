@@ -15,6 +15,7 @@ import {checkOpenings} from './rules/openings.mjs';
 import {checkSources} from './rules/sources.mjs';
 import {checkGraph} from './rules/graph.mjs';
 import {checkSampling} from './rules/sampling.mjs';
+import {checkSettings} from './rules/settings.mjs';
 import {issue} from './issue.mjs';
 
 export {issue} from './issue.mjs';
@@ -30,7 +31,7 @@ export async function checkWorldbook(root, options = {}) {
   const issues = [...readIssues, ...loadIssues, ...declarationIssues, ...checkLayout(catalog, decl),
     ...checkEntries(catalog, decl), ...checkGroups(catalog, decl), ...checkProfiles(catalog, decl), ...checkEvents(catalog, decl),
     ...checkPositions(catalog), ...checkChains(catalog, graph.analysis), ...checkOpenings(catalog, decl), ...checkSources(catalog),
-    ...graph.issues, ...checkText(catalog, decl)];
+    ...graph.issues, ...checkText(catalog, decl), ...await checkSettings(path.dirname(root), {fs, path, decl})];
   if (options.sampling !== false) {
     if (issues.some(value => value.级别 === '错误')) issues.push(issue('抽样.未执行', '提示', '历史', '静态检查有错误，未执行抽样'));
     else issues.push(...checkSampling(catalog, decl));

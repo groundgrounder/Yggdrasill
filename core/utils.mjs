@@ -10,6 +10,12 @@ export const count = value => [...value.replace(/\s/gu, '')].length;
 export const matches = (value, conditions) => isMap(value) && isMap(conditions)
   && Object.entries(conditions).every(([key, expected]) => has(value, key) && value[key] === expected);
 
+export function codepointCompare(left, right) {
+  const first = Array.from(left, value => value.codePointAt(0)), second = Array.from(right, value => value.codePointAt(0));
+  for (let index = 0; index < Math.min(first.length, second.length); index++) if (first[index] !== second[index]) return first[index] - second[index];
+  return first.length - second.length;
+}
+
 export function freeze(value) {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(freeze);

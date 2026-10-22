@@ -62,7 +62,7 @@ export function checkEvents(catalog, decl) {
       }
       if (has(branch, '变化')) {
         if (!Array.isArray(branch.变化)) add('变化.格式', file, `分支“${branch.分支ID ?? '?'}”的变化须为列表`);
-        else for (let index = 0; index < branch.变化.length; index++) issues.push(...checkChange(branch.变化[index], {decl, catalog, file, position: `分支“${branch.分支ID ?? '?'}”变化[${index + 1}]`}));
+        else for (let index = 0; index < branch.变化.length; index++) issues.push(...checkChange(branch.变化[index], {decl, catalog, file, preset: true, position: `分支“${branch.分支ID ?? '?'}”变化[${index + 1}]`}));
       }
       checkRoleGuarantee(event, branch);
     }

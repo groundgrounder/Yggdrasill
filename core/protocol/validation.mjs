@@ -11,9 +11,9 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
   function keys(value, allowed, label) {
     if (!isMap(value) || Object.keys(value).some(key => !allowed.includes(key))) fail('协议.参数', `${label}须为合法映射`);
   }
-  function location(value) {
+  function location(value, allowUnknown = false) {
     keys(value, ['地标', '场景'], '当前地点');
-    if (!locations.has(value.地标) || !isText(value.场景)) fail('协议.参数', '当前地点须含已声明地标与场景文本');
+    if ((!locations.has(value.地标) && !(allowUnknown && isText(value.地标))) || !isText(value.场景)) fail('协议.参数', '当前地点须含已声明地标与场景文本');
   }
   function variable(value, schema, label, state) {
     if (schema.映射) {
@@ -28,7 +28,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     } else if (schema.子字段) {
       keys(value, Object.keys(schema.子字段), label);
       for (const [key, item] of pairs(value)) variable(item, schema.子字段[key], `${label}.${key}`, state);
-    } else if (checkField(value, schema, {catalog, decl, allowEmpty: true}).some(issue => issue.级别 === '错误'))
+    } else if (checkField(value, schema, {catalog, decl, allowEmpty: true, allowPlayer: state.开局.玩家.模式 === '自建'}).some(issue => issue.级别 === '错误'))
       fail('协议.参数', `本局字段取值不合法：${label}`);
   }
   function player(value, state, code = '协议.参数') {
@@ -56,7 +56,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     for (const item of Object.values(value)) serializable(item, stack);
     stack.delete(value);
   }
-  function validate(state, requireSealed = false) {
+  function validate(state, requireSealed = false, options = {}) {
     if (!isMap(state)) fail('协议.参数', '本局变量须为映射');
     serializable(state);
     if (has(state, '开局') && !isMap(state.开局)) fail('协议.参数', '开局须为映射');
@@ -69,7 +69,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     keys(state.世界, ['当前时间', '当前地点', '剧情标记', ...Object.keys(decl.variables.世界)], '世界');
     if (has(state.世界, '当前时间') && !calendar.time(state.世界.当前时间)) fail('协议.参数', '当前时间不合法');
     if (requireSealed && !calendar.time(state.世界.当前时间)) fail('协议.参数', '写入须有当前时间');
-    if (has(state.世界, '当前地点')) location(state.世界.当前地点);
+    if (has(state.世界, '当前地点')) location(state.世界.当前地点, options.allowUnknownLocation === true);
     keys(state.世界.剧情标记, Object.keys(decl.marks), '剧情标记');
     for (const [key, value] of pairs(state.世界.剧情标记)) if (!decl.marks[key].includes(value)) fail('协议.参数', `剧情标记取值不合法：${key}`);
     for (const [key, value] of pairs(state.世界)) if (has(decl.variables.世界, key)) variable(value, decl.variables.世界[key], `世界.${key}`, state);
@@ -142,5 +142,5 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
       if (!isText(item.字段路径) || !has(item, '候选值') || !isText(item.事件ID) || !isText(item.说明)) fail('协议.参数', '待定项缺少必填字段');
     }
   }
-  return {validate, player, location};
+  return {validate, player, location, serializable};
 }
