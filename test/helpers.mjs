@@ -29,6 +29,8 @@ export async function fixture(t) {
   t.after(() => fs.rm(temporary, {recursive: true, force: true}));
   const root = path.join(temporary, '世界书');
   await fs.cp(example, root, {recursive: true});
+  const author = path.join(path.dirname(example), '作者资料');
+  await fs.cp(author, path.join(temporary, '作者资料'), {recursive: true});
   return root;
 }
 export async function read(root, name) { return parseYaml(await fs.readFile(path.join(root, name), 'utf8')); }

@@ -2,14 +2,21 @@ import {parseYaml} from './yaml.mjs';
 import {DECLARATION_FILES, TEXT_CONTAINERS} from './contract.mjs';
 import {has, isMap, list, issue} from './utils.mjs';
 
+function historicalKind(parts) {
+  if (parts.length === 1 && parts[0] === '历史') return '历史';
+  if (parts[0] === '历史') return '历史';
+  return null;
+}
+
 export async function loadWorldbook(root, {fs, path, decl}) {
-  const catalog = {entries: {}, descriptions: [], groups: [], texts: [], eventIds: [], files: [], directories: []};
+  const catalog = {entries: {}, descriptions: [], groups: [], texts: [], events: [], chains: [], openingOptions: null,
+    openingPlans: [], sources: null, eventIds: [], files: [], directories: []};
   const issues = [];
   const libraries = decl?.libraries ?? {};
   for (const name of Object.keys(libraries)) Object.defineProperty(catalog.entries, name, {value: [], enumerable: true});
   function classify(parts, stem) {
     const top = parts[0];
-    if (top === '历史') return '历史';
+    if (historicalKind(parts)) return '历史';
     if (top === '设定' && parts.length === 2 && DECLARATION_FILES.includes(stem)) return '设定';
     if (top === '角色' && parts.length === 3 && stem === '角色组') return '角色组文件';
     if (top === '角色' && parts.length === 5 && parts[2] === '档案' && ['基本信息', '角色印象'].includes(stem)) return '档案文件';
@@ -40,7 +47,7 @@ export async function loadWorldbook(root, {fs, path, decl}) {
       const extension = path.extname(child.name), stem = child.name.slice(0, child.name.length - extension.length);
       const kind = classify(next, stem);
       const record = {文件: file, 种类: kind, 扩展名: extension, 原文: null, 内容: null};
-      if (['.txt', '.yaml'].includes(extension) && kind !== '历史') {
+      if (['.txt', '.yaml'].includes(extension)) {
         try { record.原文 = await fs.readFile(path.join(root, ...next), 'utf8'); }
         catch { issues.push(issue('目录.读取失败', '错误', file, '无法读取文件')); }
         if (record.原文 !== null) {
@@ -61,10 +68,27 @@ export async function loadWorldbook(root, {fs, path, decl}) {
     }
   }
   await walk([]);
+
   catalog.eventIds = catalog.directories.filter(directory => {
     const parts = directory.split('/');
     return parts.length === 3 && parts[0] === '历史' && parts[1] === '事件';
   }).map(directory => directory.split('/').at(-1));
+  catalog.events = catalog.eventIds.map(id => {
+    const directory = `历史/事件/${id}`;
+    const eventRecord = catalog.files.find(record => record.文件 === `${directory}/事件.txt`);
+    const positions = catalog.files.filter(record => record.文件.startsWith(`${directory}/角色/`)
+      && record.文件.split('/').length === 5 && record.扩展名 === '.txt')
+      .map(record => ({角色组ID: record.文件.split('/').at(-1).slice(0, -4), 文件: record.文件, 内容: record.内容, 原文: record.原文}));
+    return {id, 目录: directory, 文件: eventRecord?.文件 ?? `${directory}/事件.txt`, 内容: eventRecord?.内容 ?? null,
+      原文: eventRecord?.原文 ?? null, 角色位置: positions};
+  });
+  catalog.chains = catalog.files.filter(record => /^历史\/事件串\/[^/]+\.yaml$/u.test(record.文件))
+    .map(record => ({id: record.文件.split('/').at(-1).slice(0, -5), 文件: record.文件, 内容: record.内容}));
+  const optionRecord = catalog.files.find(record => record.文件 === '历史/开局选项.yaml');
+  if (optionRecord) catalog.openingOptions = {文件: optionRecord.文件, 内容: optionRecord.内容};
+  catalog.openingPlans = catalog.files.filter(record => /^历史\/开局方案\/[^/]+\.yaml$/u.test(record.文件))
+    .map(record => ({id: record.文件.split('/').at(-1).slice(0, -5), 文件: record.文件, 内容: record.内容}));
+
   for (const directory of catalog.directories.filter(value => value.startsWith('角色/') && value.split('/').length === 2)) {
     const id = directory.split('/')[1], file = `${directory}/角色组.yaml`;
     const record = catalog.files.find(value => value.文件 === file);
@@ -79,5 +103,30 @@ export async function loadWorldbook(root, {fs, path, decl}) {
     });
     catalog.groups.push({id, 文件: file, 内容: content ?? null, 版本清单: versions, 档案: profiles});
   }
+
+  catalog.sources = await loadSources(root, {fs, path}, issues);
   return {catalog, issues};
+}
+
+async function loadSources(root, {fs, path}, issues) {
+  const directory = path.join(path.dirname(root), '作者资料', '出处');
+  let children;
+  try { children = await fs.readdir(directory, {withFileTypes: true}); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    issues.push(issue('目录.读取失败', '错误', '作者资料/出处', '无法读取目录'));
+    return {目录: '作者资料/出处', 记录: []};
+  }
+  const records = [];
+  children.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  for (const child of children) {
+    if (child.name.startsWith('.') || !child.isFile() || path.extname(child.name) !== '.yaml') continue;
+    const file = `作者资料/出处/${child.name}`;
+    let content = null;
+    try { content = parseYaml(await fs.readFile(path.join(directory, child.name), 'utf8')); }
+    catch { issues.push(issue('目录.YAML错误', '错误', file, 'YAML 解析失败或含重复键、循环别名')); }
+    if (Array.isArray(content)) content.forEach((item, index) => records.push({文件: file, 序号: index + 1, 内容: item}));
+    else records.push({文件: file, 序号: 1, 内容: content});
+  }
+  return {目录: '作者资料/出处', 记录: records};
 }

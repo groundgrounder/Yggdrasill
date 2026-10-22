@@ -15,7 +15,7 @@ export async function runCli(args, {cwd = process.cwd(), stdout = process.stdout
     if (json) stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else {
       for (const item of [...result.errors, ...result.hints]) stdout.write(`${item.级别} ${item.规则} ${item.文件}：${item.说明}\n`);
-      stdout.write(`摘要：${result.summary.错误} 错误，${result.summary.提示} 提示；${result.summary.角色组} 角色组，${result.summary.档案} 档案，${result.summary.条目} 条目\n`);
+      stdout.write(`摘要：${result.summary.错误} 错误，${result.summary.提示} 提示；${result.summary.角色组} 角色组，${result.summary.档案} 档案，${result.summary.条目} 条目，${result.summary.事件 ?? 0} 事件\n`);
     }
     return result.errors.length ? 1 : 0;
   } catch {

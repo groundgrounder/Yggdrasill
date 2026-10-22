@@ -15,6 +15,13 @@ export function checkLayout(catalog, decl) {
     if (directory.split('/').length === 1 && TEXT_CONTAINERS.includes(directory)) continue;
     if (directory.split('/').length > 1 && !FIXED_ROOTS.includes(top) && !TEXT_CONTAINERS.includes(top) && !has(decl.libraries, top)) add(out, '目录.未声明目录', directory, '目录不属于固定根或已声明条目库');
     const parts = directory.split('/');
+    if (top === '历史') {
+      const eventSubdirectory = parts[1] === '事件';
+      if ((eventSubdirectory && parts.length === 4 && parts[3] !== '角色') || (eventSubdirectory && parts.length >= 5))
+        add(out, parts.length >= 3 ? '事件.未知文件' : '目录.未知文件', directory, '事件目录下出现未规定的目录');
+      else if (!['历史', '事件', '事件串', '开局方案'].includes(parts.at(-1)) && parts.length < 3)
+        add(out, '目录.未知文件', directory, '历史下出现未规定的目录');
+    }
     if ((top === '设定' && parts.length > 1) || (top === '角色' && parts.length > 2 && parts[2] !== '档案')
       || (top === '角色' && parts.length > 4)) add(out, '目录.未知文件', directory, '固定根下出现未规定的目录结构');
     const library = has(decl.libraries, top) ? decl.libraries[top] : null;
@@ -40,6 +47,8 @@ export function checkLayout(catalog, decl) {
     if (kind === '未知') { add(out, '目录.未知文件', name, '文件无法按世界书目录规范归类'); continue; }
     const extension = expectedExtension(kind, parts);
     if (extension && suffix !== extension) add(out, '目录.扩展名不符', name, `此类文件必须使用 ${extension}`);
+    if (kind === '历史' && !validHistoryPath(parts)) add(out, parts[1] === '事件' ? '事件.未知文件' : '目录.未知文件', name, '历史下出现未规定的文件或目录');
+    if (kind === '历史' && parts[1] === '事件' && parts.length >= 4 && parts[3] === '角色' && parts.length === 5 && !parts[4].endsWith('.txt')) add(out, '事件.未知文件', name, '角色目录下只能有角色位置文本文件');
     if (kind === '条目库说明') {
       if (source !== null && !hasContent(content)) add(out, '目录.空壳说明', name, '说明文件没有任何内容', '提示');
       continue;
@@ -72,6 +81,16 @@ function hasContent(value) {
   if (Array.isArray(value)) return value.some(hasContent);
   if (isMap(value)) return Object.values(value).some(hasContent);
   return value !== null && value !== undefined;
+}
+
+function validHistoryPath(parts) {
+  const name = parts.at(-1) ?? '';
+  const stem = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
+  if (parts.length === 2 && parts[0] === '历史' && stem === '开局选项') return true;
+  if (parts.length === 3 && parts[0] === '历史' && ['事件串', '开局方案'].includes(parts[1])) return true;
+  if (parts.length === 4 && parts[0] === '历史' && parts[1] === '事件' && stem === '事件') return true;
+  if (parts.length === 5 && parts[0] === '历史' && parts[1] === '事件' && parts[3] === '角色') return true;
+  return false;
 }
 
 function expectedExtension(kind, parts) {

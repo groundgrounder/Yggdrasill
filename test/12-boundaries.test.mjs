@@ -15,11 +15,11 @@ invalidCase('补充：等级引用依赖等级文件', '设定.缺少文件', ro
 invalidCase('补充：角色组依赖角色分类文件', '设定.缺少文件', root => remove(root, '设定/角色分类.yaml'));
 invalidCase('补充：技能可用适用条件引用未知字段', '设定.技能可用', root => edit(root, '设定/能力.yaml', value => { value.技能可用[0].适用 = {来历: '习得'}; }));
 invalidCase('补充：两条技能可用规则同时匹配', '技能.可用规则', root => edit(root, '设定/能力.yaml', value => { value.技能可用.push(structuredClone(value.技能可用[0])); }));
-invalidCase('补充：前置档案不在同一版本', '档案项.前置档案', root => edit(root, apprenticeGroup, value => { value.档案[2].前置档案 = '林汐·学徒期'; }));
-invalidCase('补充：默认档案不能有生效条件', '档案项.默认', root => edit(root, oldGroup, value => { value.档案[0].生效条件 = {事件确认: {事件ID: '出师考核'}}; }));
+invalidCase('补充：前置档案不在同一版本', '档案项.前置档案', root => edit(root, apprenticeGroup, value => { value.档案.find(item => item.档案ID === '林澜·学徒期').前置档案 = '林汐·学徒期'; }));
+invalidCase('补充：默认档案不能有生效条件', '档案项.默认', root => edit(root, oldGroup, value => { value.档案.find(item => item.档案ID === '秦守·守塔期').生效条件 = {事件确认: {事件ID: '出师考核'}}; }));
 invalidCase('补充：共享版本不能有两个默认档案', '档案项.默认', root => edit(root, captainGroup, value => { value.档案[1].默认 = true; delete value.档案[1].生效条件; }));
-invalidCase('补充：初始能力集合成员不合声明', '档案项.初始能力', root => edit(root, oldGroup, value => { value.档案[0].初始能力.天赋 = ['灯语·短讯']; }));
-invalidCase('补充：初始装备不能重复', '档案项.初始装备', root => edit(root, oldGroup, value => { value.档案[0].初始装备.push(structuredClone(value.档案[0].初始装备[0])); }));
+invalidCase('补充：初始能力集合成员不合声明', '档案项.初始能力', root => edit(root, oldGroup, value => { value.档案.find(item => item.档案ID === '秦守·守塔期').初始能力.天赋 = ['灯语·短讯']; }));
+invalidCase('补充：初始装备不能重复', '档案项.初始装备', root => edit(root, oldGroup, value => { value.档案.find(item => item.档案ID === '秦守·守塔期').初始装备.push(structuredClone(value.档案.find(item => item.档案ID === '秦守·守塔期').初始装备[0])); }));
 invalidCase('补充：短语不能带句末标点', '档案.形态', root => edit(root, impression, value => { value.核心身份 = ['灯塔学徒。']; }));
 invalidCase('补充：能力特征两个数组必填', '档案.缺必填', root => edit(root, basic, value => { delete value.能力特征.技能补充; }));
 invalidCase('补充：技能补充至少一个个人字段', '档案.技能补充', root => edit(root, basic, value => { value.能力特征.技能补充 = [{技能ID: '雾中视·辨影'}]; }));
@@ -35,11 +35,11 @@ invalidCase('补充：档案追加字段不能必填', '设定.文本规范', ro
 invalidCase('补充：增减上限必须正整数', '设定.本局变量', root => edit(root, '设定/本局变量.yaml', value => { value.单次增减上限 = 0; }));
 invalidCase('补充：同名说明递归空字符串仍为空壳', '目录.空壳说明', root => write(root, '装备/装备.txt', {说明: ['', '  ']}), '提示');
 
-test('补充：隐藏文件跳过，历史只列出，机器字段不扫描', async t => {
+test('补充：隐藏文件跳过，历史事件检查，机器字段不扫描', async t => {
   const root = await fixture(t);
   await fs.mkdir(path.join(root, '.隐藏'));
   await fs.writeFile(path.join(root, '.隐藏/甲.txt'), '键: [坏语法');
-  await fs.writeFile(path.join(root, '历史/事件/出师考核/事件.txt'), '键: [坏语法');
+  await edit(root, '历史/事件/学修船/事件.txt', value => { value.公开信息 = ['潮雾覆盖工具间。']; value.叙事条件 = '只在工具间处理旧船板。'; });
   await write(root, '世界概况/海况与雾季.txt', {海况: '海风来自北湾。', 生效条件: {说明: '变量与条目。'}});
   const result = await checkWorldbook(root);
   assert.deepEqual(result.errors, []);

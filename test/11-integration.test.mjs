@@ -7,7 +7,7 @@ test('正例：原样雾港零错误零提示', async () => {
   const result = await checkWorldbook(example);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.hints, []);
-  assert.deepEqual(result.summary, {错误: 0, 提示: 0, 文件: 58, 角色组: 4, 档案: 9, 条目: 18, 事件: 3});
+  assert.deepEqual(result.summary, {错误: 0, 提示: 0, 文件: 87, 角色组: 4, 档案: 11, 条目: 18, 事件: 13});
 });
 test('命令-1：检查示例退出零', async () => {
   let stdout = '', stderr = '';
