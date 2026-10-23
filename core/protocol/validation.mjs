@@ -1,9 +1,10 @@
 import {checkField, resolveDomain} from '../fields.mjs';
 import {PROFILE_FIELDS} from '../contract.mjs';
+import {isValidId} from '../ids.mjs';
 import {has, isMap, isText, pairs} from '../utils.mjs';
 
 const DEBUT_PREFIX = '初次登场·';
-const RESERVED = new Set(['__proto__', 'constructor', 'prototype']);
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const get = (value, key) => has(value, key) ? value[key] : undefined;
 
 export function createStateValidator({catalog, decl, calendar, groups, events, chains, locations, fail, abilityValid}) {
@@ -19,7 +20,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     if (schema.映射) {
       if (!isMap(value)) fail('协议.参数', `${label}须为映射`);
       for (const [key, item] of pairs(value)) {
-        if (RESERVED.has(key)) fail('协议.参数', `${label}含保留映射键`);
+        if (RESERVED_KEYS.has(key)) fail('协议.参数', `${label}含保留映射键`);
         const playerKey = key === '玩家' && schema.映射.键?.引用 === '角色组' && state.开局.玩家.模式 === '自建';
         if (!playerKey && checkField(key, schema.映射.键, {catalog, decl}).some(issue => issue.级别 === '错误'))
           fail('协议.参数', `${label}的映射键不合法：${key}`);
@@ -119,11 +120,11 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     if (!isMap(state.事件)) fail('协议.参数', '事件须为映射');
     for (const [id, record] of pairs(state.事件)) {
       keys(record, ['状态', '分支', '实际时间', '实际参与者', '摘要', '结束事件串'], `事件“${id}”`);
-      if (!isText(id) || ![0, 1, 2].includes(record.状态)) fail('协议.参数', '事件ID或状态不合法');
+      if (!isText(id) || ![1, 2].includes(record.状态)) fail('协议.参数', '事件ID或状态不合法');
       if (!events.has(id)) {
         if (id.startsWith(DEBUT_PREFIX)) {
           if (!groups.has(id.slice(DEBUT_PREFIX.length))) fail('协议.参数', '首次登场记录引用未知角色组');
-        } else if (RESERVED.has(id) || id.includes('.')) fail('协议.参数', '动态事件ID不合法');
+        } else if (!isValidId(id)) fail('协议.参数', '动态事件ID不合法');
       }
       if (record.状态 !== 1) continue;
       if (!isText(record.分支) || !calendar.time(record.实际时间) || !Array.isArray(record.实际参与者)) fail('协议.参数', '确认记录不完整');
@@ -131,7 +132,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
         if (!events.get(id).内容.分支.some(item => item.分支ID === record.分支)) fail('协议.参数', `确认记录分支不存在：${id}`);
       } else if (id.startsWith(DEBUT_PREFIX)) {
         if (!groups.has(id.slice(DEBUT_PREFIX.length)) || record.分支 !== '初始化') fail('协议.参数', '首次登场记录不合法');
-      } else if (RESERVED.has(id) || id.includes('.') || !isText(record.摘要) || record.分支 !== '完成') fail('协议.参数', '动态事件记录不合法');
+      } else if (!isValidId(id) || !isText(record.摘要) || record.分支 !== '完成') fail('协议.参数', '动态事件记录不合法');
       for (const participant of record.实际参与者) if (participant === '玩家'
         ? state.开局.玩家.模式 !== '自建' : !groups.has(participant)) fail('协议.参数', '确认记录含未知参与者');
       if (has(record, '结束事件串') && !chains.has(record.结束事件串)) fail('协议.参数', '确认记录含未知事件串');

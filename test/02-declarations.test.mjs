@@ -4,6 +4,7 @@ const calendar = '设定/纪年.yaml', ability = '设定/能力.yaml', libraries
 invalidCase('设定-1：删除必需本局变量声明', '设定.缺少文件', root => remove(root, variables));
 invalidCase('设定-2：技能库缺能力声明', '设定.缺少文件', root => remove(root, ability));
 invalidCase('设定补充：事件分类出现未知键', '设定.格式', root => edit(root, '设定/事件分类.yaml', value => { value.额外 = []; }));
+invalidCase('设定补充：世界事件不在主类型中', '设定.格式', root => edit(root, '设定/事件分类.yaml', value => { value.世界事件 = '不存在'; }));
 invalidCase('设定-3甲：纪年缺前缀', '设定.纪年', root => edit(root, calendar, value => { delete value.前缀; }));
 invalidCase('设定-3乙：逐月天数长度不符', '设定.纪年', root => edit(root, calendar, value => { value.每月天数 = [91, 91, 91]; }));
 invalidCase('设定-4：等级清单重复', '设定.格式', root => edit(root, '设定/等级.yaml', value => { value.技艺.push('学徒'); }));

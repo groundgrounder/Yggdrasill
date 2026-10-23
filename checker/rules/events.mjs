@@ -41,7 +41,11 @@ export function checkEvents(catalog, decl) {
     }
     checkBranches(event, file);
     checkResultSupport(event, profileSupports);
-    if (content.主类型 === '世界' && conditionReferences(content.门槛).some(ref => !ref.排斥 && ['个人', '关系'].includes(byID.get(ref.事件ID)?.内容?.主类型))) add('事件.世界依赖个人', file, '世界事件的门槛正向引用了个人或关系事件', '提示');
+    const worldType = decl.classification?.世界事件;
+    if (isText(worldType) && content.主类型 === worldType
+      && conditionReferences(content.门槛).some(ref => !ref.排斥
+        && byID.has(ref.事件ID) && byID.get(ref.事件ID).内容?.主类型 !== worldType))
+      add('事件.世界依赖个人', file, '世界事件的门槛正向引用了非世界事件', '提示');
   }
   return issues;
 

@@ -152,9 +152,19 @@ test('运行-31：不能结束已结束或不存在的事件串', () => {
   assert.throws(() => D(p, D0, [], {结束事件串: '不存在'}), errorCode('协议.参数'));
 });
 test('运行-32：动态事件保留ID、非法ID与缺摘要', () => {
-  for (const id of ['拜师', '初次登场·秦守', '甲.乙', '__proto__', 'constructor', 'prototype', ''])
+  for (const id of ['拜师', '初次登场·秦守', '甲.乙', '甲/乙', '甲\\乙', ' 甲', '甲 ', '玩家', '__proto__', 'constructor', 'prototype', ''])
     assert.throws(() => D(p, D0, [], {事件ID: id}), errorCode('协议.参数'));
   assert.throws(() => confirmDynamicEvent(p, D0, {事件ID: '测试', 变化: []}), errorCode('协议.参数'));
+});
+test('运行-32甲：已有事件记录状态与动态ID校验', () => {
+  const statusZero = structuredClone(D0);
+  statusZero.事件.拜师.状态 = 0;
+  assert.throws(() => eventStatus(p, statusZero, '拜师'), errorCode('协议.参数'));
+  for (const id of ['甲/乙', '甲\\乙', ' 甲', '甲 ', '玩家']) {
+    const state = structuredClone(D0);
+    state.事件[id] = {状态: 2};
+    assert.throws(() => eventStatus(p, state, '拜师'), errorCode('协议.参数'));
+  }
 });
 test('运行-33：动态事件幂等', () => {
   const state = confirmDeparture(D0).state, result = confirmDeparture(state); assert.deepEqual(result.已写入, []); assert.deepEqual(result.state, state);

@@ -1,9 +1,9 @@
 import {FIXED_ROOTS, RESERVED_IDS, TEXT_CONTAINERS} from '../../core/contract.mjs';
+import {isValidIdShape} from '../../core/ids.mjs';
 import {has, isMap, list, pairs, issue} from '../../core/utils.mjs';
 import {resolveDomain, dimensionKeys} from '../../core/fields.mjs';
 
 const add = (out, rule, file, message, level = '错误') => out.push(issue(rule, level, file, message));
-const badId = id => !id || id !== id.trim() || /[./\\]/.test(id);
 
 export function checkLayout(catalog, decl) {
   const out = [], directories = new Set(catalog.directories), files = catalog.files;
@@ -106,7 +106,7 @@ function expectedExtension(kind, parts) {
 
 export function checkId(id, file, namespace, readable, decl) {
   const out = [];
-  if (typeof id !== 'string' || badId(id)) add(out, '命名.非法字符', file, `${namespace}为空、含非法字符或首尾有空白`);
+  if (!isValidIdShape(id)) add(out, '命名.非法字符', file, `${namespace}为空、含非法字符或首尾有空白`);
   if (RESERVED_IDS.includes(id)) add(out, '命名.保留字', file, `${namespace}使用了保留字“${id}”`);
   if (readable && typeof id === 'string') {
     if (/^[A-Za-z0-9_-]+$/.test(id)) add(out, '命名.编码样式', file, `${namespace}呈编码样式`, '提示');

@@ -33,6 +33,27 @@ export function checkText(catalog, decl) {
       checkValues(position.文件, position.内容, values, null, position);
     }
   }
+  for (const group of catalog.groups) {
+    const values = [];
+    addText(values, group.内容?.显示名);
+    addTexts(values, group.内容?.别名);
+    for (const version of list(group.内容?.版本)) {
+      addText(values, version?.显示名);
+      addTexts(values, version?.别名);
+      addText(values, version?.简介);
+    }
+    checkValues(group.文件, group.内容, values, null);
+  }
+  for (const chain of catalog.chains) checkValues(chain.文件, chain.内容, [chain.内容?.概述].filter(value => typeof value === 'string'), null);
+  if (catalog.openingOptions) {
+    const values = [];
+    for (const option of list(catalog.openingOptions.内容?.选项)) {
+      addText(values, option?.问题);
+      for (const text of Object.values(option?.选项 ?? {})) addText(values, text);
+    }
+    checkValues(catalog.openingOptions.文件, catalog.openingOptions.内容, values, null);
+  }
+  for (const plan of catalog.openingPlans) checkValues(plan.文件, plan.内容, [plan.内容?.概述].filter(value => typeof value === 'string'), null);
   return issues;
 
   function checkValues(file, raw, values, kind, position = null) {
@@ -46,6 +67,14 @@ export function checkText(catalog, decl) {
     }
     for (const term of WRITING_TERMS) if (values.some(value => value.includes(term))) add('文本.写法', `正文出现“${term}”`, '提示');
     if (kind && count(values.join('')) > budgets[kind]) add('文本.长度', `正文${count(values.join(''))}字，超过${kind}的${budgets[kind]}字预算`, '提示');
+  }
+
+  function addText(values, value) {
+    if (typeof value === 'string') values.push(value);
+  }
+
+  function addTexts(values, value) {
+    for (const item of list(value)) addText(values, item);
   }
 }
 

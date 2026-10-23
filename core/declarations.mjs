@@ -216,8 +216,11 @@ export function validateDeclarations(input) {
   }
   if ((has(variableRaw, '单次增减上限') && variableRaw.单次增减上限 === null)
     || !Number.isSafeInteger(decl.variables.单次增减上限) || decl.variables.单次增减上限 <= 0) add('设定.本局变量', '本局变量', '单次增减上限须为正整数');
-  if (has(raw, '事件分类')) keys(raw.事件分类, ['主类型', '标签', '事件结果'], ['主类型', '标签', '事件结果'], '事件分类', '事件分类');
+  if (has(raw, '事件分类')) keys(raw.事件分类, ['主类型', '世界事件', '标签', '事件结果'], ['主类型', '标签', '事件结果'], '事件分类', '事件分类');
   for (const key of ['主类型', '标签']) if (has(decl.classification, key)) textList(decl.classification[key], '事件分类', key);
+  if (has(decl.classification, '世界事件')
+    && (!isText(decl.classification.世界事件) || !list(decl.classification.主类型).includes(decl.classification.世界事件)))
+    add('设定.格式', '事件分类', '世界事件须为主类型中的文本');
   if (has(decl.classification, '事件结果') && !isMap(decl.classification.事件结果)) add('设定.格式', '事件分类', '事件结果须为支撑字段映射');
   const support = [...SKELETON_FIELDS.角色, ...SKELETON_FIELDS.世界, ...Object.keys(dimensions), ...Object.keys(decl.variables.角色), '剧情标记', '档案切期'];
   for (const [name, values] of pairs(decl.classification.事件结果)) {

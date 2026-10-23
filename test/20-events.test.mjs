@@ -71,7 +71,14 @@ invalidCase('事件-8：事件地点', '事件.地点', root => edit(root, '历�
 invalidCase('事件-9：事件关联引用', '事件.关联事件', root => edit(root, '历史/事件/港务署问责/事件.txt', value => { value.关联事件.push('不存在'); }));
 invalidCase('事件-10：结果缺支撑提示', '事件.结果缺支撑', root => edit(root, '历史/事件/夜间值守/事件.txt', value => { value.事件结果.push('关系变化'); }), '提示');
 invalidCase('事件-11：结果遗漏提示', '事件.结果遗漏', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.事件结果 = ['身份变化']; }), '提示');
-invalidCase('事件-12：世界依赖个人提示', '事件.世界依赖个人', root => edit(root, '历史/事件/大雾之夜/事件.txt', value => { value.门槛 = {事件确认: {事件ID: '拜师'}}; }), '提示');
+test('事件-12：未声明世界事件不提示', async t => {
+  const root = await fixture(t);
+  await edit(root, '设定/事件分类.yaml', value => { delete value.世界事件; });
+  await edit(root, '历史/事件/大雾之夜/事件.txt', value => { value.门槛 = {事件确认: {事件ID: '拜师'}}; });
+  const result = await checkWorldbook(root);
+  assert.equal(hasRule(result, '事件.世界依赖个人'), false, JSON.stringify(result, null, 2));
+});
+invalidCase('事件-13：声明世界事件时依赖个人提示', '事件.世界依赖个人', root => edit(root, '历史/事件/大雾之夜/事件.txt', value => { value.门槛 = {事件确认: {事件ID: '拜师'}}; }), '提示');
 invalidCase('分支-1：分支缺结果', '分支.格式', root => edit(root, '历史/事件/拜师/事件.txt', value => { delete value.分支[0].分支结果; }));
 invalidCase('分支-2：分支ID重复', '分支.重复ID', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.分支[1].分支ID = value.分支[0].分支ID; }));
 invalidCase('分支-3：默认分支不存在', '分支.默认分支', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.默认分支 = '出海'; }));
@@ -273,6 +280,25 @@ invalidCase('档案项-10：档案生效条件不可求值', '条件.封卷不�
 invalidCase('文本-10：事件禁用词', '文本.禁用词', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.事件概要 += '变量'; }));
 invalidCase('文本-11：位置破折号', '文本.破折号', root => edit(root, '历史/事件/拜师/角色/灯塔学徒.txt', value => { value.按分支.拜师.主观记忆.push('记得灯火——熄灭。'); }));
 invalidCase('文本-13：事件长度', '文本.长度', root => edit(root, '历史/事件/拜师/事件.txt', value => { value.事件概要 = '海'.repeat(801); }), '提示');
+
+for (const [name, file, mutate] of [
+  ['角色组显示名', '角色/白棠/角色组.yaml', value => { value.显示名 = '变量——'; }],
+  ['角色组别名', '角色/白棠/角色组.yaml', value => { value.别名[0] = '变量——'; }],
+  ['版本显示名', '角色/白棠/角色组.yaml', value => { value.版本[0].显示名 = '变量——'; }],
+  ['版本别名', '角色/白棠/角色组.yaml', value => { value.版本[0].别名 = ['变量——']; }],
+  ['版本简介', '角色/白棠/角色组.yaml', value => { value.版本[0].简介 = '变量——'; }],
+  ['事件串概述', '历史/事件串/雾夜余波.yaml', value => { value.概述 = '变量——'; }],
+  ['开局选项问题', '历史/开局选项.yaml', value => { value.选项[0].问题 = '变量——'; }],
+  ['开局选项文字', '历史/开局选项.yaml', value => { value.选项[0].选项.拜师 = '变量——'; }],
+  ['开局方案概述', '历史/开局方案/码头少年.yaml', value => { value.概述 = '变量——'; }],
+]) test(`文本-YAML：${name}检查禁用词与破折号`, async t => {
+  const root = await fixture(t);
+  await edit(root, file, mutate);
+  const result = await checkWorldbook(root);
+  for (const rule of ['文本.禁用词', '文本.破折号'])
+    assert.ok(result.errors.some(item => item.规则 === rule && item.文件 === file), `${rule}\n${JSON.stringify(result, null, 2)}`);
+  assert.equal(result.errors.some(item => item.规则 === '文本.长度' && item.文件 === file), false, JSON.stringify(result, null, 2));
+});
 
 test('正例-2：删除作者资料', async t => {
   const root = await fixture(t);

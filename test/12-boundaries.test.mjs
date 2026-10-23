@@ -81,7 +81,7 @@ test('补充：声明1662种局部畸形替换均不崩溃', async () => {
     }, keys.join('.'));
     mutations++;
   }
-  assert.equal(mutations, 1662);
+  assert.equal(mutations, 1668);
 });
 
 test('补充：YAML唯一键、循环别名和纯数据往返', () => {

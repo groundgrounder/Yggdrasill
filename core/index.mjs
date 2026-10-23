@@ -7,6 +7,7 @@ export * from './fields.mjs';
 export * from './conditions.mjs';
 export * from './changes.mjs';
 export * from './graph.mjs';
+export * from './ids.mjs';
 export * from './protocol.mjs';
 export {protocolText, formatCalendar, writableFields, locationList} from './text.mjs';
 export {readSettings, DEFAULT_SETTINGS} from './settings.mjs';

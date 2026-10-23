@@ -2,10 +2,10 @@ import {createCalendar} from './calendar.mjs';
 import {evaluateCondition, conditionReferences, checkCondition} from './conditions.mjs';
 import {checkChange, changeRoleReferences} from './changes.mjs';
 import {dimensionKeys, resolveDomain} from './fields.mjs';
+import {isValidId} from './ids.mjs';
 import {has, isMap, isText, list, pairs, freeze, codepointCompare} from './utils.mjs';
 import {createStateValidator} from './protocol/validation.mjs';
 
-const RESERVED_DYNAMIC_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 const DEBUT_PREFIX = '初次登场·';
 
 export class ProtocolError extends Error {
@@ -758,7 +758,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl} = {}) 
       || Object.keys(params).some(key => !['事件ID', '摘要', '实际参与者', '变化', '结束事件串'].includes(key)))
       fail('协议.参数', '动态事件参数不合法');
     const id = params.事件ID;
-    if (id.includes('.') || id.startsWith(DEBUT_PREFIX) || RESERVED_DYNAMIC_IDS.has(id))
+    if (!isValidId(id) || id.startsWith(DEBUT_PREFIX))
       fail('协议.参数', `动态事件ID不合法：${id}`);
     if (events.has(id)) fail('协议.参数', `动态事件ID与预设事件重复：${id}`);
     if (!Array.isArray(params.变化)) fail('协议.参数', '动态事件变化须为列表');
