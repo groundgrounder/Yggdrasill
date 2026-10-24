@@ -1,5 +1,5 @@
-import {test, assert, fs, path, fixture, edit, remove, loadRouting, R0, U1, route, renderContext, messages,
-  S, W, time, currentAbility, availableSkills, eventStatus, pendingEvents} from './router-helpers.mjs';
+import {test, assert, fs, path, fixture, edit, remove, read, example, eventFile, loadRouting, R0, U1, route, renderContext, messages,
+  S, W, D, time, currentAbility, availableSkills, eventStatus, pendingEvents} from './router-helpers.mjs';
 
 function ids(items = []) { return items.map(item => item.事件ID); }
 
@@ -36,7 +36,8 @@ test('R1：渲染顺序、原文部分与自定义标签', async () => {
 test('R2a-e：经历、候选、条目预算按整项与摘要规则处理', async () => {
   const cases = [
     [{经历: {条数: 2}}, ['拜师', '夜间值守'], []],
-    [{经历: {字符: 220}}, ['拜师', '夜间值守'], ['拜师']],
+    [{经历: {字符: 220}}, ['夜间值守'], ['拜师']],
+    [{经历: {字符: 246}}, ['拜师', '夜间值守'], []],
     [{候选: {条数: 1}}, ['出师考核'], []],
     [{候选: {条数: 0}}, [], ['拜师', '学徒守灯', '夜间值守', '大雾之夜']],
     [{条目字符: {技能: 184}}, ['雾中视·辨影'], ['灯语·长夜信号']],
@@ -45,7 +46,14 @@ test('R2a-e：经历、候选、条目预算按整项与摘要规则处理', asy
     const {protocol, router} = await loadRouting(undefined, settings), result = route(router, R0(protocol), messages);
     if (settings.经历?.字符 === 220) {
       assert.deepEqual(ids(result.context.事件.已确认经历), expected);
+      assert.equal(result.audit.经历.略过.find(item => item.事件ID === '拜师').原因, '超出字符');
+      assert.equal(result.audit.经历.字符, 110);
+    } else if (settings.经历?.字符 === 246) {
+      // 拜师完整形式 372 字符放不下，去掉角色位置后 136 字符恰好放下
+      assert.deepEqual(ids(result.context.事件.已确认经历), expected);
       assert.equal(result.context.事件.已确认经历.find(item => item.事件ID === '拜师').角色位置, undefined);
+      assert.equal(result.audit.经历.选入.find(item => item.事件ID === '拜师').形式, '摘要');
+      assert.equal(result.audit.经历.字符, 246);
     } else if (settings.候选) assert.deepEqual(ids(result.context.事件.候选), expected);
     else if (settings.条目字符) assert.deepEqual(result.context.条目.技能.filter(item => item.技能ID).map(item => item.技能ID), expected);
     else if (settings.候选?.条数 === 0) {
@@ -59,10 +67,47 @@ test('R2a-e：经历、候选、条目预算按整项与摘要规则处理', asy
 test('R3：待登记作为已发生状态输出但不进入已确认经历', async () => {
   const {protocol, router} = await loadRouting(), result = route(router, U1(protocol), []);
   assert.deepEqual(ids(result.context.事件.待登记), ['大雾之夜', '学徒守灯', '白棠在码头']);
+  const source = await read(example, eventFile('大雾之夜')), fog = result.context.事件.待登记[0];
+  assert.equal(fog.影响范围, source.影响范围);
+  assert.deepEqual(Object.keys(fog), ['事件ID', '事件标题', '事件概要', '影响范围', '实际时间', '分支结果', '公开信息', '隐秘信息', '已经发生']);
+  assert.ok(result.context.事件.待登记.slice(1).every(item => !Object.hasOwn(item, '影响范围')));
   assert.ok(result.context.事件.待登记.every(item => item.已经发生 === true && item.角色位置 === undefined));
   assert.equal(result.context.事件.已确认经历, undefined);
   assert.deepEqual(pendingEvents(protocol, U1(protocol)).map(item => item.事件ID), ids(result.context.事件.待登记));
   assert.deepEqual(result.context.世界状态.进行中事件串.map(item => item.事件串ID), ['学徒修习']);
+});
+
+test('R4：已确认经历保留源文件的影响范围，未写时省略整键', async () => {
+  const {protocol, router} = await loadRouting(), result = route(router, R0(protocol), messages);
+  for (const id of ['大雾之夜', '拜师']) {
+    const source = await read(example, eventFile(id)), item = result.context.事件.已确认经历.find(item => item.事件ID === id);
+    assert.equal(item.影响范围, source.影响范围);
+    assert.deepEqual(Object.keys(item).slice(0, 5), ['事件ID', '事件标题', '事件概要', '影响范围', '实际时间']);
+  }
+  assert.ok(result.context.事件.已确认经历.filter(item => !['大雾之夜', '拜师'].includes(item.事件ID))
+    .every(item => !Object.hasOwn(item, '影响范围')));
+  assert.ok(result.context.事件.候选.every(item => !Object.hasOwn(item, '影响范围')));
+});
+
+for (const [id, date] of [['大雾之夜', '071-04-20'], ['拜师', '071-01-10']]) {
+  test(`R5：${id}作为候选时在概要与叙事条件之间输出影响范围`, async t => {
+    const root = await fixture(t), source = await read(root, eventFile(id));
+    await edit(root, eventFile(id), event => { event.叙事条件 = '须由叙事模型判断现场是否适合发生。'; });
+    const {protocol, router} = await loadRouting(root);
+    const state = W(protocol, S(protocol, date), {当前地点: {地标: '灯塔', 场景: '值守室'}, 在场: {秦守: true}}).state;
+    assert.equal(eventStatus(protocol, state, id).状态, '候选');
+    const result = route(router, state, []), item = result.context.事件.候选.find(item => item.事件ID === id);
+    assert.equal(item.影响范围, source.影响范围);
+    assert.equal(item.叙事条件, '须由叙事模型判断现场是否适合发生。');
+    assert.deepEqual(Object.keys(item).slice(0, 5), ['事件ID', '事件标题', '事件概要', '影响范围', '叙事条件']);
+  });
+}
+
+test('路由边界：动态事件仍只输出事件ID、摘要与实际时间', async () => {
+  const {protocol, router} = await loadRouting();
+  const state = D(protocol, R0(protocol), [], {事件ID: '学徒自省', 摘要: '学徒回想守灯的经历。', 实际参与者: ['灯塔学徒']}).state;
+  const item = route(router, state, []).context.事件.已确认经历.find(item => item.事件ID === '学徒自省');
+  assert.deepEqual(item, {事件ID: '学徒自省', 摘要: '学徒回想守灯的经历。', 实际时间: state.事件.学徒自省.实际时间});
 });
 
 test('R6-R7：有效本局缓存、档案异常与显式初始化', async t => {

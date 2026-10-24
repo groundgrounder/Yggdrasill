@@ -229,7 +229,7 @@ function historyItem(router, view, id, present) {
   if (!event) return {事件ID: id, 摘要: record.摘要, 实际时间: record.实际时间};
   const branch = event.内容.分支.find(item => item.分支ID === record.分支);
   const positions = eventPositions(event, present, [record.分支], true);
-  return {事件ID: id, 事件标题: event.内容.事件标题 ?? id, ...pick(event.内容, ['事件概要']), 实际时间: record.实际时间,
+  return {事件ID: id, 事件标题: event.内容.事件标题 ?? id, ...pick(event.内容, ['事件概要', '影响范围']), 实际时间: record.实际时间,
     ...pick(branch, ['分支结果']), ...pick(event.内容, ['公开信息', '隐秘信息']), ...(positions.length ? {角色位置: positions} : {})};
 }
 
@@ -272,7 +272,7 @@ function eventContext(router, view, present, places, mentions, initialization, a
     const positions = eventPositions(event, present, status.分支, false);
     candidates.push({id: event.id, count, nearby, ongoing: ongoing.has(router.eventChains.get(event.id)),
       latest: router.calendar.time(content.触发时间.最晚)[0], reason: count ? '核心参与者在场' : nearby ? '当前地点' : '无核心参与者',
-      item: {事件ID: event.id, 事件标题: content.事件标题 ?? event.id, ...pick(content, ['事件概要', '叙事条件', '公开信息']),
+      item: {事件ID: event.id, 事件标题: content.事件标题 ?? event.id, ...pick(content, ['事件概要', '影响范围', '叙事条件', '公开信息']),
         触发时间最晚: content.触发时间.最晚,
         分支: content.分支.filter(branch => status.分支.includes(branch.分支ID)).map(branch => pick(branch, ['分支ID', '分支条件', '分支结果'])),
         ...(positions.length ? {角色位置: positions} : {})}});
