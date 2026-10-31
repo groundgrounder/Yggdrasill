@@ -82,6 +82,15 @@ test('读取-校验：未知ID、非法成员与畸形本局不被默认为空',
   const state = structuredClone(s72); state.角色.灯塔学徒.天赋 = ['灯语·短讯'];
   assert.throws(() => currentAbility(p, state, '灯塔学徒'), errorCode('协议.能力取值'));
 });
+test('读取-校验：另一个 realm 的本局照常读取，非纯数据与环仍被拒绝', async () => {
+  const vm = await import('node:vm');
+  const foreign = vm.runInNewContext('JSON.parse(text)', {text: JSON.stringify(s72)});
+  assert.notEqual(Object.getPrototypeOf(foreign), Object.prototype);
+  assert.deepEqual(eventStatus(p, foreign, '出师考核'), eventStatus(p, s72, '出师考核'));
+  const loop = structuredClone(s72); loop.世界.天气 = loop;
+  for (const state of [{...s72, 待定项: new Map()}, {...s72, 世界: {...s72.世界, 天气: new Date()}}, {...s72, 角色: new (class 角色 {})()}, loop])
+    assert.throws(() => eventStatus(p, state, '拜师'), errorCode('协议.参数'));
+});
 test('读取-只读协议：外部目录变动不影响已创建协议', async () => {
   const {protocol, catalog, decl} = await loadProtocol();
   assert.equal(Object.isFrozen(protocol), true);

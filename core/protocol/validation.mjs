@@ -47,12 +47,17 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
       }
     }
   }
+  // 普通对象按原型链的形状认，不比较 Object.prototype 本身：宿主可能在另一个 realm 中解析出本局（如酒馆页面与脚本 iframe）。
+  const plainObject = value => {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === null || Object.getPrototypeOf(prototype) === null;
+  };
   function serializable(value, stack = new Set()) {
     if (value === null || ['string', 'boolean'].includes(typeof value)) return;
     if (typeof value === 'number' && Number.isFinite(value)) return;
-    if (typeof value !== 'object' || stack.has(value)
-      || (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))))
-      fail('协议.参数', '本局变量须由无环的数据组成');
+    if (typeof value !== 'object' || (!Array.isArray(value) && !plainObject(value)))
+      fail('协议.参数', '本局变量须由映射、列表、文本、布尔、有限的数与空值组成');
+    if (stack.has(value)) fail('协议.参数', '本局变量须由无环的数据组成');
     stack.add(value);
     for (const item of Object.values(value)) serializable(item, stack);
     stack.delete(value);
