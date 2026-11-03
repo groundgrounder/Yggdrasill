@@ -1,5 +1,5 @@
 // 时期档案格式：按核心契约的档案形态校验基本信息、角色印象与角色组索引的写法。
-// 规范正文见 spec/；本模块只做机器可判断的部分。ctx 提供 skills（技能目录）与 dialect（年份形态）。
+// 规范正文见 docs/参考/角色.md“档案项”“基本信息”“角色印象”与 docs/写作规范.md“档案”；本模块只做机器可判断的部分。ctx 提供 skills（技能目录）与 dialect（年份形态）。
 import {traitsIssues} from './growth.mjs';
 import {PROFILE_SHAPES, GROUP_INDEX} from './contract.mjs';
 

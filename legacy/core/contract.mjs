@@ -1,5 +1,5 @@
 // 世界树核心契约：任何采用本架构的世界书都成立的字段、取值与保留字。作品取值见方言（dialect.mjs）。
-// 规范正文见 spec/；本文件是其中机器可判断部分的唯一出处。
+// 规范正文见 docs/参考/（协议、事件、角色、世界书）与 docs/写作规范.md，索引见 docs/README.md；本文件是其中机器可判断部分的唯一出处。
 const freeze = o => { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.values(o).forEach(freeze); } return o; };
 
 export const SPEC_VERSION = '0.1';
