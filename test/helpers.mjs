@@ -46,13 +46,71 @@ export async function edit(root, name, callback) {
 }
 export const remove = (root, name) => fs.rm(path.join(root, name), {recursive: true, force: true});
 export const rename = (root, from, to) => fs.rename(path.join(root, from), path.join(root, to));
-export function invalidCase(name, rule, mutate, level = '错误') {
+
+// 期望的一条发现；默认错误级、出现一次。说明片段只断言稳定部分，不 pin 整句。
+export function finding(规则, 文件, {级别 = '错误', 次数 = 1, 说明 = []} = {}) {
+  return {规则, 级别, 文件, 次数, 说明};
+}
+export function hint(规则, 文件, options = {}) {
+  return finding(规则, 文件, {...options, 级别: '提示'});
+}
+
+function findingKey(item) {
+  return [item.级别, item.规则, item.文件].join('\u0000');
+}
+function describe(items) {
+  return items.slice().sort((left, right) => findingKey(left) < findingKey(right) ? -1 : findingKey(left) > findingKey(right) ? 1 : 0)
+    .map(item => `${item.级别} ${item.规则} ${item.文件}：${item.说明}`).join('\n') || '（无）';
+}
+
+// 完整发现集合：级别 + 规则 + 文件的重复次数必须与期望一致；说明只核对给出的稳定片段。
+export function assertFindings(result, expected, label = '发现集合') {
+  const actual = [...result.errors, ...result.hints];
+  const expectedItems = (Array.isArray(expected) ? expected : [expected]).map(item => ({
+    规则: item.规则, 级别: item.级别 ?? '错误', 文件: item.文件, 次数: item.次数 ?? 1, 说明: item.说明 ?? [],
+  }));
+  assert.ok(expectedItems.every(item => item.规则 !== '检查.规则失败'), `${label}：不得把检查.规则失败列为预期`);
+  assert.equal(actual.some(item => item.规则 === '检查.规则失败'), false,
+    `${label}：内部规则失败不能当作业务发现\n${describe(actual)}`);
+
+  const actualCounts = new Map(), actualMessages = new Map();
+  for (const item of actual) {
+    const key = findingKey(item);
+    actualCounts.set(key, (actualCounts.get(key) ?? 0) + 1);
+    if (!actualMessages.has(key)) actualMessages.set(key, []);
+    actualMessages.get(key).push(item.说明);
+  }
+  const expectedCounts = new Map();
+  for (const item of expectedItems) {
+    const key = findingKey(item);
+    expectedCounts.set(key, (expectedCounts.get(key) ?? 0) + item.次数);
+  }
+  const differences = [];
+  for (const key of [...new Set([...actualCounts.keys(), ...expectedCounts.keys()])].sort()) {
+    const actualCount = actualCounts.get(key) ?? 0, expectedCount = expectedCounts.get(key) ?? 0;
+    if (actualCount !== expectedCount) differences.push(`${key.split('\u0000').join(' | ')}：实际 ${actualCount}，期望 ${expectedCount}`);
+  }
+  assert.deepEqual(differences, [],
+    `${label}：发现集合不符\n实际：\n${describe(actual)}\n差异：\n${differences.join('\n') || '（无）'}`);
+
+  for (const item of expectedItems) for (const fragment of item.说明) {
+    const messages = (actualMessages.get(findingKey(item)) ?? []).join('\n');
+    assert.ok(messages.includes(fragment), `${label}：${item.规则} ${item.文件} 缺少说明片段“${fragment}”\n${messages}`);
+  }
+  return actual;
+}
+
+export function assertIssues(issues, expected, label = '异常集合') {
+  return assertFindings({
+    errors: issues.filter(item => item.级别 === '错误'),
+    hints: issues.filter(item => item.级别 === '提示'),
+  }, expected, label);
+}
+
+export function invalidCase(name, expected, mutate) {
   test(name, async t => {
     const root = await fixture(t);
     await mutate(root);
-    const result = await checkWorldbook(root);
-    const expected = Array.isArray(rule) ? rule : [rule];
-    for (const id of expected) assert.ok([...result.errors, ...result.hints].some(item => item.规则 === id && item.级别 === (id === '命名.编码样式' ? '提示' : level)), `${id}\n${JSON.stringify(result, null, 2)}`);
-    if (level === '提示') assert.equal(result.errors.length, 0, JSON.stringify(result.errors));
+    assertFindings(await checkWorldbook(root), expected, name);
   });
 }

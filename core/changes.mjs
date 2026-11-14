@@ -15,9 +15,12 @@ export function checkChange(change, context = {}) {
   const parts = change.路径.split('.');
   if (parts.some(part => !isText(part) || ['__proto__', 'constructor', 'prototype'].includes(part))) { add('变化.路径', '路径各段必须为非空文本'); return issues; }
   if (context.preset && changeRoleReferences(change, decl).includes('玩家')) add('变化.玩家', '预设事件不能写保留角色组“玩家”');
-  const hasValue = has(change, '值');
-  const requireValue = () => { if (!hasValue) add('变化.格式', '该操作必须提供值'); };
-  const forbidValue = () => { if (hasValue) add('变化.取值', '移除不能带值'); };
+  const hasKey = has(change, '值'), hasValue = hasKey && change.值 !== undefined;
+  const requireValue = () => {
+    if (!hasKey) add('变化.格式', '该操作必须提供值');
+    else if (!hasValue) add('变化.格式', '该操作的值不能为 undefined');
+  };
+  const forbidValue = () => { if (hasKey) add('变化.取值', '移除不能带值'); };
   const validateDomain = (value, domain, label = '值') => { if (!domain.includes(value)) add('变化.取值', `${label}“${String(value)}”不在声明的值域内`); };
   const validateText = value => { if (!isText(value)) add('变化.取值', '值须为非空文本'); };
   const validateRole = id => {
@@ -43,8 +46,9 @@ export function checkChange(change, context = {}) {
       validateOperation(['设定']); requireValue(); if (hasValue) validateDomain(change.值, list(decl.marks[parts[2]]));
       return issues;
     }
-    if (parts.length !== 2 || !has(decl.variables?.世界, parts[1])) { add('变化.路径', '世界路径必须写到已声明的二层世界字段'); return issues; }
-    checkScalarTarget(decl.variables.世界[parts[1]], '世界字段');
+    if (parts.length < 2 || !has(decl.variables?.世界, parts[1])) { add('变化.路径', '世界路径必须写到已声明的二层世界字段'); return issues; }
+    checkVariable(parts, change, decl.variables.世界[parts[1]], decl, catalog, add, validateOperation, requireValue, forbidValue,
+      validateDomain, validateMember, 2);
     return issues;
   }
   if (parts[0] !== '角色' || parts.length < 3) { add('变化.路径', '路径根必须是世界.剧情标记、世界字段或角色字段'); return issues; }
@@ -76,12 +80,15 @@ export function checkChange(change, context = {}) {
   if (!schema) { add('变化.路径', `角色字段“${fieldName}”未声明`); return issues; }
   checkVariable(parts, change, schema, decl, catalog, add, validateOperation, requireValue, forbidValue, validateDomain, validateMember);
   return issues;
+}
 
-  function checkScalarTarget(target, label) {
-    if (target?.取值 || target?.形态 || target?.引用) {
-      validateOperation(['设定']); requireValue(); if (hasValue) validateMember(change.值, target);
-    } else add('变化.路径', `${label}必须写到可修改的字段格`);
-  }
+export function checkPendingPath(path, context = {}) {
+  const issues = checkChange({路径: path, 操作: '设定'}, context)
+    .filter(item => ['变化.路径', '变化.映射键', '变化.协议字段'].includes(item.规则));
+  const parts = typeof path === 'string' ? path.split('.') : [];
+  if (parts[0] === '角色' && ['在场', '所在'].includes(parts[2]))
+    issues.push(issue('变化.路径', '错误', context.file ?? '', `${context.position ?? '待定项'}：字段路径不能是在场或所在`));
+  return issues;
 }
 
 function checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText) {
@@ -120,9 +127,9 @@ function checkDimension(parts, change, dimension, decl, catalog, add, validateOp
   }
 }
 
-function checkVariable(parts, change, schema, decl, catalog, add, validateOperation, requireValue, forbidValue, validateDomain, validateMember) {
+function checkVariable(parts, change, schema, decl, catalog, add, validateOperation, requireValue, forbidValue, validateDomain, validateMember, start = 3) {
   let current = schema;
-  let index = 3;
+  let index = start;
   while (index < parts.length) {
     if (isMap(current?.映射)) {
       const key = parts[index++];

@@ -1,27 +1,290 @@
-import {invalidCase, edit, remove} from './helpers.mjs';
+import {invalidCase, edit, remove, finding, hint} from './helpers.mjs';
 
 const calendar = '设定/纪年.yaml', ability = '设定/能力.yaml', libraries = '设定/条目库.yaml', variables = '设定/本局变量.yaml';
-invalidCase('设定-1：删除必需本局变量声明', '设定.缺少文件', root => remove(root, variables));
-invalidCase('设定-2：技能库缺能力声明', '设定.缺少文件', root => remove(root, ability));
-invalidCase('设定补充：事件分类出现未知键', '设定.格式', root => edit(root, '设定/事件分类.yaml', value => { value.额外 = []; }));
-invalidCase('设定补充：世界事件不在主类型中', '设定.格式', root => edit(root, '设定/事件分类.yaml', value => { value.世界事件 = '不存在'; }));
-invalidCase('设定-3甲：纪年缺前缀', '设定.纪年', root => edit(root, calendar, value => { delete value.前缀; }));
-invalidCase('设定-3乙：逐月天数长度不符', '设定.纪年', root => edit(root, calendar, value => { value.每月天数 = [91, 91, 91]; }));
-invalidCase('设定-4：等级清单重复', '设定.格式', root => edit(root, '设定/等级.yaml', value => { value.技艺.push('学徒'); }));
-invalidCase('设定-5甲：集合不能标综合实力', '设定.能力', root => edit(root, ability, value => { value.维度.天赋.综合实力 = true; }));
-invalidCase('设定-5乙：能力键跨组重复', '设定.能力', root => edit(root, ability, value => { value.维度.技艺.键.秘传.push('航海'); }));
-invalidCase('设定-5丙：能力维度与骨架重名', '设定.能力', root => edit(root, ability, value => { value.维度.在场 = {类型: '集合', 成员: '文本'}; }));
-invalidCase('设定-6：技能可用引用不存在键组', '设定.技能可用', root => edit(root, ability, value => { value.技能可用[0].键组 = '不存在'; }));
-invalidCase('设定-7：事件结果引用未声明支撑', '设定.事件结果支撑', root => edit(root, '设定/事件分类.yaml', value => { value.事件结果.知识变化 = ['见闻']; }));
-invalidCase('设定-8甲：地点库分法不符', '设定.条目库', root => edit(root, libraries, value => { value.地点.分法 = '按种类'; }));
-invalidCase('设定-8乙：库名与固定根重名', '设定.条目库', root => edit(root, libraries, value => { value.角色 = {分法: '按种类', 分级: ['类型'], 字段: {类型: {取值: ['人']}}}; }));
-invalidCase('设定-8丙：上级类型缺类型字段', '设定.条目库', root => edit(root, libraries, value => { delete value.地点.字段.类型; }));
-invalidCase('设定-9甲：字段混用形态与取值', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.效果.取值 = ['好']; }));
-invalidCase('设定-9乙：未知字段形态', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.效果.形态 = '段落'; }));
-invalidCase('设定-9丙：库字段不能用数值', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.伤害 = {数值: [0, 10]}; }));
-invalidCase('设定-9丁：不能声明名称字段', '设定.字段声明', root => edit(root, libraries, value => { value.技能.字段.名称 = {形态: '文本'}; }));
-invalidCase('设定-10甲：缺装备状态词表', '设定.本局变量', root => edit(root, variables, value => { delete value.词表.装备状态; }));
-invalidCase('设定-10乙：角色变量与能力维度重名', '设定.本局变量', root => edit(root, variables, value => { value.角色.技艺 = {形态: '文本'}; }));
-invalidCase('设定-11：剧情标记值域为空', '设定.剧情标记', root => edit(root, '设定/剧情标记.yaml', value => { value.雾季 = []; }));
-invalidCase('设定-12甲：预算不能放宽', '设定.文本规范', root => edit(root, '设定/文本规范.yaml', value => { value.长度预算.基本信息 = 800; }));
-invalidCase('设定-12乙：追加字段与已有姓名重名', '设定.文本规范', root => edit(root, '设定/文本规范.yaml', value => { value.档案追加字段.基本信息.姓名 = {形态: '文本'}; }));
+// 删除必需声明会同时触发声明缺失与引用它的下游发现；完整集合逐项列出。
+invalidCase('设定-1：删除必需本局变量声明', [
+  finding('变化.取值', '历史/事件/出师考核/事件.txt'),
+  finding('变化.取值', '历史/事件/补考/事件.txt'),
+  finding('变化.路径', '历史/事件/出师考核/事件.txt'),
+  finding('变化.路径', '历史/事件/大雾之夜/事件.txt'),
+  finding('变化.路径', '历史/事件/学徒守灯/事件.txt', {次数: 5}),
+  finding('变化.路径', '历史/事件/拜师/事件.txt', {次数: 4}),
+  finding('变化.路径', '历史/事件/接手商会账目/事件.txt', {次数: 2}),
+  finding('变化.路径', '历史/事件/正式守灯/事件.txt', {次数: 2}),
+  finding('变化.路径', '历史/事件/港务署问责/事件.txt', {次数: 3}),
+  finding('变化.路径', '历史/事件/潮汐号首航/事件.txt'),
+  finding('变化.路径', '历史/事件/白棠在码头/事件.txt', {次数: 2}),
+  finding('变化.路径', '历史/事件/秦守讲旧事/事件.txt', {次数: 2}),
+  hint('抽样.未执行', '历史'),
+  finding('条件.角色状态字段', '历史/事件/出师考核/事件.txt'),
+  finding('条件.角色状态字段', '历史/事件/补考/事件.txt'),
+  finding('档案项.初始装备', '角色/灯塔学徒/角色组.yaml', {次数: 2}),
+  finding('档案项.初始装备', '角色/白棠/角色组.yaml'),
+  finding('档案项.初始装备', '角色/秦守/角色组.yaml'),
+  finding('设定.事件结果支撑', '设定/事件分类.yaml', {次数: 5}),
+  finding('设定.本局变量', '设定/本局变量.yaml'),
+  finding('设定.缺少文件', '设定/本局变量.yaml'),
+], root => remove(root, variables));
+// 能力声明缺失会使等级、字段、条目与事件变化同时失去依据；完整集合逐项列出。
+invalidCase('设定-2：技能库缺能力声明', [
+  finding('变化.路径', '历史/事件/出师考核/事件.txt'),
+  finding('变化.路径', '历史/事件/夜间值守/事件.txt', {次数: 2}),
+  finding('变化.路径', '历史/事件/学修船/事件.txt'),
+  finding('变化.路径', '历史/事件/学徒守灯/事件.txt', {次数: 2}),
+  finding('变化.路径', '历史/事件/拜师/事件.txt'),
+  finding('变化.路径', '历史/事件/正式守灯/事件.txt'),
+  finding('变化.路径', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('变化.路径', '历史/事件/补考/事件.txt'),
+  finding('技能.可用规则', '技能/修船/修船·补帆.txt'),
+  finding('技能.可用规则', '技能/灯语/灯语·短讯.txt'),
+  finding('技能.可用规则', '技能/灯语/灯语·长夜信号.txt'),
+  finding('技能.可用规则', '技能/航海/航海·夜航.txt'),
+  finding('技能.可用规则', '技能/雾中视/雾中视·辨影.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('条件.不可用', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('条件.参数', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('条目.分级', '技能/修船'),
+  finding('条目.分级', '技能/修船/修船·补帆.txt'),
+  finding('条目.分级', '技能/灯语'),
+  finding('条目.分级', '技能/灯语/灯语·短讯.txt'),
+  finding('条目.分级', '技能/灯语/灯语·长夜信号.txt'),
+  finding('条目.分级', '技能/航海'),
+  finding('条目.分级', '技能/航海/航海·夜航.txt'),
+  finding('条目.分级', '技能/雾中视'),
+  finding('条目.分级', '技能/雾中视/雾中视·辨影.txt'),
+  finding('条目.取值', '技能/修船/修船·补帆.txt'),
+  finding('条目.取值', '技能/灯语/灯语·短讯.txt'),
+  finding('条目.取值', '技能/灯语/灯语·长夜信号.txt'),
+  finding('条目.取值', '技能/航海/航海·夜航.txt'),
+  finding('条目.取值', '技能/雾中视/雾中视·辨影.txt'),
+  finding('档案项.初始能力', '角色/灯塔学徒/角色组.yaml', {次数: 6}),
+  finding('档案项.初始能力', '角色/秦守/角色组.yaml', {次数: 2}),
+  finding('设定.事件结果支撑', '设定/事件分类.yaml', {次数: 4}),
+  finding('设定.字段声明', '设定/条目库.yaml'),
+  finding('设定.缺少文件', '设定/能力.yaml'),
+], root => remove(root, ability));
+invalidCase('设定补充：事件分类出现未知键', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.格式', '设定/事件分类.yaml'),
+], root => edit(root, '设定/事件分类.yaml', value => { value.额外 = []; }));
+invalidCase('设定补充：世界事件不在主类型中', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.格式', '设定/事件分类.yaml'),
+], root => edit(root, '设定/事件分类.yaml', value => { value.世界事件 = '不存在'; }));
+invalidCase('设定-3甲：纪年缺前缀', [
+  finding('事件.触发时间', '历史/事件/出师考核/事件.txt'),
+  finding('事件.触发时间', '历史/事件/夜间值守/事件.txt'),
+  finding('事件.触发时间', '历史/事件/大雾之夜/事件.txt'),
+  finding('事件.触发时间', '历史/事件/学修船/事件.txt'),
+  finding('事件.触发时间', '历史/事件/学徒守灯/事件.txt'),
+  finding('事件.触发时间', '历史/事件/拜师/事件.txt'),
+  finding('事件.触发时间', '历史/事件/接手商会账目/事件.txt'),
+  finding('事件.触发时间', '历史/事件/正式守灯/事件.txt'),
+  finding('事件.触发时间', '历史/事件/港务署问责/事件.txt'),
+  finding('事件.触发时间', '历史/事件/潮汐号首航/事件.txt'),
+  finding('事件.触发时间', '历史/事件/白棠在码头/事件.txt'),
+  finding('事件.触发时间', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('事件.触发时间', '历史/事件/补考/事件.txt'),
+  finding('开局.方案格式', '历史/开局方案/码头少年.yaml'),
+  finding('开局.方案格式', '历史/开局方案/补考之年.yaml'),
+  hint('抽样.未执行', '历史'),
+  finding('条件.参数', '历史/事件/学修船/事件.txt'),
+  finding('档案.出生年', '角色/周岚/档案/周岚·港务期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·学徒期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·守塔期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·少年期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·学徒期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·守塔期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·少年期/基本信息.txt'),
+  finding('档案.出生年', '角色/秦守/档案/秦守·守塔期/基本信息.txt'),
+  finding('设定.纪年', '设定/纪年.yaml'),
+], root => edit(root, calendar, value => { delete value.前缀; }));
+invalidCase('设定-3乙：逐月天数长度不符', [
+  finding('事件.触发时间', '历史/事件/出师考核/事件.txt'),
+  finding('事件.触发时间', '历史/事件/夜间值守/事件.txt'),
+  finding('事件.触发时间', '历史/事件/大雾之夜/事件.txt'),
+  finding('事件.触发时间', '历史/事件/学修船/事件.txt'),
+  finding('事件.触发时间', '历史/事件/学徒守灯/事件.txt'),
+  finding('事件.触发时间', '历史/事件/拜师/事件.txt'),
+  finding('事件.触发时间', '历史/事件/接手商会账目/事件.txt'),
+  finding('事件.触发时间', '历史/事件/正式守灯/事件.txt'),
+  finding('事件.触发时间', '历史/事件/港务署问责/事件.txt'),
+  finding('事件.触发时间', '历史/事件/潮汐号首航/事件.txt'),
+  finding('事件.触发时间', '历史/事件/白棠在码头/事件.txt'),
+  finding('事件.触发时间', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('事件.触发时间', '历史/事件/补考/事件.txt'),
+  finding('开局.方案格式', '历史/开局方案/码头少年.yaml'),
+  finding('开局.方案格式', '历史/开局方案/补考之年.yaml'),
+  hint('抽样.未执行', '历史'),
+  finding('条件.参数', '历史/事件/学修船/事件.txt'),
+  finding('档案.出生年', '角色/周岚/档案/周岚·港务期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·学徒期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·守塔期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林汐·少年期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·学徒期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·守塔期/基本信息.txt'),
+  finding('档案.出生年', '角色/灯塔学徒/档案/林澜·少年期/基本信息.txt'),
+  finding('档案.出生年', '角色/秦守/档案/秦守·守塔期/基本信息.txt'),
+  finding('设定.纪年', '设定/纪年.yaml'),
+], root => edit(root, calendar, value => { value.每月天数 = [91, 91, 91]; }));
+invalidCase('设定-4：等级清单重复', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.格式', '设定/等级.yaml'),
+], root => edit(root, '设定/等级.yaml', value => { value.技艺.push('学徒'); }));
+invalidCase('设定-5甲：集合不能标综合实力', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.能力', '设定/能力.yaml', {次数: 2}),
+], root => edit(root, ability, value => { value.维度.天赋.综合实力 = true; }));
+invalidCase('设定-5乙：能力键跨组重复', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.能力', '设定/能力.yaml'),
+], root => edit(root, ability, value => { value.维度.技艺.键.秘传.push('航海'); }));
+invalidCase('设定-5丙：能力维度与骨架重名', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.能力', '设定/能力.yaml'),
+], root => edit(root, ability, value => { value.维度.在场 = {类型: '集合', 成员: '文本'}; }));
+invalidCase('设定-6：技能可用引用不存在键组', [
+  finding('技能.门槛取值', '技能/修船/修船·补帆.txt'),
+  finding('技能.门槛取值', '技能/灯语/灯语·短讯.txt'),
+  finding('技能.门槛取值', '技能/灯语/灯语·长夜信号.txt'),
+  finding('技能.门槛取值', '技能/航海/航海·夜航.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('设定.技能可用', '设定/能力.yaml'),
+], root => edit(root, ability, value => { value.技能可用[0].键组 = '不存在'; }));
+invalidCase('设定-7：事件结果引用未声明支撑', [
+  hint('事件.结果缺支撑', '历史/事件/出师考核/事件.txt'),
+  hint('事件.结果缺支撑', '历史/事件/学徒守灯/事件.txt'),
+  hint('事件.结果缺支撑', '历史/事件/港务署问责/事件.txt'),
+  hint('事件.结果缺支撑', '历史/事件/白棠在码头/事件.txt'),
+  hint('事件.结果缺支撑', '历史/事件/秦守讲旧事/事件.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('设定.事件结果支撑', '设定/事件分类.yaml'),
+], root => edit(root, '设定/事件分类.yaml', value => { value.事件结果.知识变化 = ['见闻']; }));
+invalidCase('设定-8甲：地点库分法不符', [
+  finding('事件.地点', '历史/事件/出师考核/事件.txt'),
+  finding('事件.地点', '历史/事件/夜间值守/事件.txt'),
+  finding('事件.地点', '历史/事件/大雾之夜/事件.txt'),
+  finding('事件.地点', '历史/事件/学修船/事件.txt'),
+  finding('事件.地点', '历史/事件/学徒守灯/事件.txt'),
+  finding('事件.地点', '历史/事件/拜师/事件.txt'),
+  finding('事件.地点', '历史/事件/接手商会账目/事件.txt'),
+  finding('事件.地点', '历史/事件/正式守灯/事件.txt'),
+  finding('事件.地点', '历史/事件/港务署问责/事件.txt'),
+  finding('事件.地点', '历史/事件/潮汐号首航/事件.txt'),
+  finding('事件.地点', '历史/事件/白棠在码头/事件.txt'),
+  finding('事件.地点', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('事件.地点', '历史/事件/补考/事件.txt'),
+  finding('变化.取值', '历史/事件/拜师/事件.txt'),
+  finding('变化.取值', '历史/事件/潮汐号首航/事件.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('文本.禁用词', '地点/北湾/北湾.txt'),
+  finding('文本.禁用词', '地点/北湾/雾港/上城/上城.txt'),
+  finding('文本.禁用词', '地点/北湾/雾港/上城/商会馆/商会馆.txt'),
+  finding('文本.禁用词', '地点/北湾/雾港/灯塔/灯塔.txt'),
+  finding('文本.禁用词', '地点/北湾/雾港/码头区/码头区.txt'),
+  finding('文本.禁用词', '地点/北湾/雾港/雾港.txt'),
+  finding('条件.不可用', '历史/事件/学修船/事件.txt'),
+  finding('条件.不可用', '历史/事件/学徒守灯/事件.txt', {次数: 2}),
+  finding('条件.不可用', '历史/事件/白棠在码头/事件.txt'),
+  finding('条件.不可用', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('条件.引用', '历史/事件/学修船/事件.txt'),
+  finding('条件.引用', '历史/事件/学徒守灯/事件.txt'),
+  finding('条件.引用', '历史/事件/白棠在码头/事件.txt'),
+  finding('条件.引用', '历史/事件/秦守讲旧事/事件.txt'),
+  finding('条目.分级', '地点/北湾', {次数: 2}),
+  finding('条目.分级', '地点/北湾/雾港', {次数: 3}),
+  finding('条目.分级', '地点/北湾/雾港/上城', {次数: 4}),
+  finding('条目.分级', '地点/北湾/雾港/上城/商会馆', {次数: 5}),
+  finding('条目.分级', '地点/北湾/雾港/灯塔', {次数: 4}),
+  finding('条目.分级', '地点/北湾/雾港/码头区', {次数: 4}),
+  finding('条目.引用', '势力/商会/白帆商会.txt'),
+  finding('条目.引用', '势力/官署/港务署.txt'),
+  finding('条目.引用', '船只/货船/潮汐号.txt'),
+  finding('角色组.初始所在', '角色/周岚/角色组.yaml'),
+  finding('角色组.初始所在', '角色/灯塔学徒/角色组.yaml'),
+  finding('角色组.初始所在', '角色/白棠/角色组.yaml'),
+  finding('角色组.初始所在', '角色/秦守/角色组.yaml'),
+  finding('设定.条目库', '设定/条目库.yaml', {次数: 3,
+    说明: ['地点的分法不合法', '地点.分级须为非空无重复文本列表', '地点按种类时不能写上级类型']}),
+], root => edit(root, libraries, value => { value.地点.分法 = '按种类'; }));
+invalidCase('设定-8乙：库名与固定根重名', [
+  hint('抽样.未执行', '历史'),
+  finding('条目.分级', '角色/周岚'),
+  finding('条目.分级', '角色/周岚/档案', {次数: 3}),
+  finding('条目.分级', '角色/周岚/档案/周岚·港务期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒'),
+  finding('条目.分级', '角色/灯塔学徒/档案', {次数: 3}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林汐·学徒期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林汐·守塔期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林汐·少年期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林澜·学徒期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林澜·守塔期', {次数: 4}),
+  finding('条目.分级', '角色/灯塔学徒/档案/林澜·少年期', {次数: 4}),
+  finding('条目.分级', '角色/白棠'),
+  finding('条目.分级', '角色/白棠/档案', {次数: 3}),
+  finding('条目.分级', '角色/白棠/档案/白棠·商会期', {次数: 4}),
+  finding('条目.分级', '角色/白棠/档案/白棠·少女期', {次数: 4}),
+  finding('条目.分级', '角色/白棠/档案/白棠·航海期', {次数: 4}),
+  finding('条目.分级', '角色/秦守'),
+  finding('条目.分级', '角色/秦守/档案', {次数: 3}),
+  finding('条目.分级', '角色/秦守/档案/秦守·守塔期', {次数: 4}),
+  finding('设定.条目库', '设定/条目库.yaml'),
+], root => edit(root, libraries, value => { value.角色 = {分法: '按种类', 分级: ['类型'], 字段: {类型: {取值: ['人']}}}; }));
+invalidCase('设定-8丙：上级类型缺类型字段', [
+  hint('抽样.未执行', '历史'),
+  finding('条目.未声明字段', '地点/北湾/北湾.txt'),
+  finding('条目.未声明字段', '地点/北湾/雾港/上城/上城.txt'),
+  finding('条目.未声明字段', '地点/北湾/雾港/上城/商会馆/商会馆.txt'),
+  finding('条目.未声明字段', '地点/北湾/雾港/灯塔/灯塔.txt'),
+  finding('条目.未声明字段', '地点/北湾/雾港/码头区/码头区.txt'),
+  finding('条目.未声明字段', '地点/北湾/雾港/雾港.txt'),
+  finding('设定.条目库', '设定/条目库.yaml', {次数: 3}),
+], root => edit(root, libraries, value => { delete value.地点.字段.类型; }));
+invalidCase('设定-9甲：字段混用形态与取值', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.字段声明', '设定/条目库.yaml'),
+], root => edit(root, libraries, value => { value.技能.字段.效果.取值 = ['好']; }));
+invalidCase('设定-9乙：未知字段形态', [
+  hint('抽样.未执行', '历史'),
+  finding('条目.形态', '技能/修船/修船·补帆.txt'),
+  finding('条目.形态', '技能/灯语/灯语·短讯.txt'),
+  finding('条目.形态', '技能/灯语/灯语·长夜信号.txt'),
+  finding('条目.形态', '技能/航海/航海·夜航.txt'),
+  finding('条目.形态', '技能/雾中视/雾中视·辨影.txt'),
+  finding('设定.字段声明', '设定/条目库.yaml'),
+], root => edit(root, libraries, value => { value.技能.字段.效果.形态 = '段落'; }));
+invalidCase('设定-9丙：库字段不能用数值', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.字段声明', '设定/条目库.yaml'),
+], root => edit(root, libraries, value => { value.技能.字段.伤害 = {数值: [0, 10]}; }));
+invalidCase('设定-9丁：不能声明名称字段', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.字段声明', '设定/条目库.yaml'),
+], root => edit(root, libraries, value => { value.技能.字段.名称 = {形态: '文本'}; }));
+invalidCase('设定-10甲：缺装备状态词表', [
+  finding('变化.取值', '历史/事件/出师考核/事件.txt'),
+  finding('变化.取值', '历史/事件/补考/事件.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('档案项.初始装备', '角色/灯塔学徒/角色组.yaml', {次数: 2}),
+  finding('档案项.初始装备', '角色/白棠/角色组.yaml'),
+  finding('档案项.初始装备', '角色/秦守/角色组.yaml'),
+  finding('设定.本局变量', '设定/本局变量.yaml'),
+], root => edit(root, variables, value => { delete value.词表.装备状态; }));
+invalidCase('设定-10乙：角色变量与能力维度重名', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.本局变量', '设定/本局变量.yaml'),
+  finding('设定.能力', '设定/能力.yaml'),
+], root => edit(root, variables, value => { value.角色.技艺 = {形态: '文本'}; }));
+invalidCase('设定-11：剧情标记值域为空', [
+  finding('变化.取值', '历史/事件/大雾之夜/事件.txt'),
+  hint('抽样.未执行', '历史'),
+  finding('设定.剧情标记', '设定/剧情标记.yaml'),
+], root => edit(root, '设定/剧情标记.yaml', value => { value.雾季 = []; }));
+invalidCase('设定-12甲：预算不能放宽', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.文本规范', '设定/文本规范.yaml'),
+], root => edit(root, '设定/文本规范.yaml', value => { value.长度预算.基本信息 = 800; }));
+invalidCase('设定-12乙：追加字段与已有姓名重名', [
+  hint('抽样.未执行', '历史'),
+  finding('设定.文本规范', '设定/文本规范.yaml'),
+], root => edit(root, '设定/文本规范.yaml', value => { value.档案追加字段.基本信息.姓名 = {形态: '文本'}; }));

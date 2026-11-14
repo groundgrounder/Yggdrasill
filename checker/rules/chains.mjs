@@ -22,7 +22,7 @@ export function checkChains(catalog, analysis) {
     }
     for (const ending of list(value.结局)) {
       if (!isMap(ending) || !isText(ending.事件ID) || Object.keys(ending).some(key => !['事件ID', '分支ID'].includes(key))) { add('事件串.格式', file, '结局项须为含事件ID、可选分支ID的映射'); continue; }
-      if (!events.has(ending.事件ID) || (ending.分支ID && !events.get(ending.事件ID)?.内容?.分支?.some(branch => branch?.分支ID === ending.分支ID))) add('事件串.引用', file, '结局引用的事件或分支不存在');
+      if (!events.has(ending.事件ID) || (ending.分支ID && !list(events.get(ending.事件ID)?.内容?.分支).some(branch => branch?.分支ID === ending.分支ID))) add('事件串.引用', file, '结局引用的事件或分支不存在');
       if (!members.includes(ending.事件ID)) add('事件串.引用', file, '结局事件必须属于本串');
     }
     if (!Array.isArray(value.事件) || !value.事件.length) continue;

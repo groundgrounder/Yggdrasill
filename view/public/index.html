@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>世界树 · 作者视图</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">树</span>
+      <div>
+        <strong>世界树</strong>
+        <small>作者视图 · 现行世界书只读投影</small>
+      </div>
+    </div>
+    <span id="counts" class="counts" aria-live="polite"></span>
+    <span id="status" class="status" role="status" aria-live="polite"></span>
+    <button id="reload" type="button">重新读取文件</button>
+  </header>
+
+  <main class="app-main">
+    <aside class="navigation" aria-label="视图与筛选">
+      <nav id="views" class="views" aria-label="视图"></nav>
+      <div class="filters">
+        <label class="field">查找事件
+          <input id="search" type="search" placeholder="事件名、正文、角色…" autocomplete="off">
+        </label>
+        <label class="field">角色
+          <select id="characterFilter"></select>
+        </label>
+        <label class="field">版本
+          <select id="versionFilter"></select>
+        </label>
+        <label class="field">主类型
+          <select id="primaryFilter"></select>
+        </label>
+        <label class="field">标签
+          <select id="tagFilter"></select>
+        </label>
+        <label class="field">事件结果
+          <select id="resultFilter"></select>
+        </label>
+      </div>
+      <p id="navNote" class="caption"></p>
+      <div class="nav-footer">
+        原文件是唯一正文来源<br>
+        批注与布局单独保存
+      </div>
+    </aside>
+
+    <section class="workspace" aria-label="视图工作区">
+      <div class="toolbar">
+        <div class="toolbar-title">
+          <h1 id="viewTitle">世界主树</h1>
+          <p id="viewSubtitle"></p>
+        </div>
+        <div id="viewControls" class="toolbar-controls"></div>
+      </div>
+      <div id="canvas" class="canvas" tabindex="0" aria-label="事件图与时间轴"></div>
+      <div id="legend" class="legend" aria-label="图例"></div>
+    </section>
+
+    <aside class="inspector" aria-label="选中对象详情">
+      <div id="selectionTitle" class="selection-title">
+        <span class="eyebrow">选择一个节点</span>
+        <h2>从故事开始审阅</h2>
+      </div>
+      <div class="tabs" role="tablist" aria-label="详情分区">
+        <button type="button" data-tab="detail" class="active" role="tab" aria-selected="true">事件详情</button>
+        <button type="button" data-tab="characters" role="tab" aria-selected="false">相关角色</button>
+        <button type="button" data-tab="edit" role="tab" aria-selected="false">编辑与批注</button>
+      </div>
+      <div id="detailPanel" class="panel" role="tabpanel" aria-label="事件详情"></div>
+      <div id="charactersPanel" class="panel" role="tabpanel" aria-label="相关角色" hidden></div>
+      <div id="editPanel" class="panel" role="tabpanel" aria-label="编辑与批注" hidden></div>
+    </aside>
+  </main>
+
+  <dialog id="previewDialog" aria-labelledby="previewTitle">
+    <div class="dialog-head">
+      <h2 id="previewTitle">保存前预览</h2>
+      <button id="closePreview" type="button">关闭</button>
+    </div>
+    <div id="previewContent" class="dialog-body"></div>
+    <div class="dialog-footer">
+      <span>只在校验通过且完整输入未变时写回。</span>
+      <button id="saveEvent" class="primary" type="button" disabled>保存到原文件</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

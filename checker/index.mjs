@@ -26,15 +26,40 @@ export async function checkWorldbook(root, options = {}) {
   const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
   const compiled = validateDeclarations(raw);
   const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-  const {decl, issues: declarationIssues} = checkDeclarations(raw, catalog, compiled);
-  const graph = checkGraph(catalog, decl);
-  const issues = [...readIssues, ...loadIssues, ...declarationIssues, ...checkLayout(catalog, decl),
-    ...checkEntries(catalog, decl), ...checkGroups(catalog, decl), ...checkProfiles(catalog, decl), ...checkEvents(catalog, decl),
-    ...checkPositions(catalog), ...checkChains(catalog, graph.analysis), ...checkOpenings(catalog, decl), ...checkSources(catalog),
-    ...graph.issues, ...checkText(catalog, decl), ...await checkSettings(path.dirname(root), {fs, path, decl})];
+  const decl = compiled.decl;
+  const issues = [...readIssues, ...loadIssues];
+  const run = async (stage, module, callback) => {
+    try {
+      const value = await callback();
+      return Array.isArray(value) ? value : value?.issues ?? [];
+    }
+    catch (error) {
+      const name = error?.name ?? 'Error', message = error?.message ?? String(error);
+      return [issue('检查.规则失败', '错误', '.', `${stage}（${module}）内部失败：${name}: ${message}`)];
+    }
+  };
+  issues.push(...await run('设定核对', 'checkDeclarations', () => checkDeclarations(raw, catalog, compiled)));
+  issues.push(...await run('目录与布局', 'checkLayout', () => checkLayout(catalog, decl)));
+  issues.push(...await run('条目', 'checkEntries', () => checkEntries(catalog, decl)));
+  issues.push(...await run('角色组', 'checkGroups', () => checkGroups(catalog, decl)));
+  issues.push(...await run('档案', 'checkProfiles', () => checkProfiles(catalog, decl)));
+  issues.push(...await run('事件', 'checkEvents', () => checkEvents(catalog, decl)));
+  issues.push(...await run('角色位置', 'checkPositions', () => checkPositions(catalog)));
+  let analysis = null;
+  const graphIssues = await run('事件树', 'checkGraph', () => {
+    const graph = checkGraph(catalog, decl);
+    analysis = graph.analysis;
+    return graph.issues;
+  });
+  issues.push(...await run('事件串', 'checkChains', () => checkChains(catalog, analysis)));
+  issues.push(...await run('开局', 'checkOpenings', () => checkOpenings(catalog, decl)));
+  issues.push(...await run('出处', 'checkSources', () => checkSources(catalog)));
+  issues.push(...graphIssues);
+  issues.push(...await run('文本', 'checkText', () => checkText(catalog, decl)));
+  issues.push(...await run('运行参数', 'checkSettings', () => checkSettings(path.dirname(root), {fs, path, decl})));
   if (options.sampling !== false) {
     if (issues.some(value => value.级别 === '错误')) issues.push(issue('抽样.未执行', '提示', '历史', '静态检查有错误，未执行抽样'));
-    else issues.push(...checkSampling(catalog, decl));
+    else issues.push(...await run('抽样', 'checkSampling', () => checkSampling(catalog, decl)));
   }
   const unique = [...new Map(issues.map(value => [JSON.stringify(value), value])).values()];
   const errors = unique.filter(value => value.级别 === '错误'), hints = unique.filter(value => value.级别 === '提示');

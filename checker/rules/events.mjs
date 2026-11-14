@@ -96,7 +96,7 @@ export function checkEvents(catalog, decl) {
   }
 
   function checkResultSupport(event, profileRefs) {
-    const content = event.内容, fields = new Set(content.分支?.flatMap(branch => changedFields(branch?.变化)) ?? []);
+    const content = event.内容, fields = new Set(list(content.分支).flatMap(branch => changedFields(branch?.变化)));
     const profileSupport = profileRefs.some(ref => ref.事件ID === event.id && !ref.排斥);
     for (const result of list(content.事件结果)) {
       const supports = list(decl.classification?.事件结果?.[result]);
@@ -104,11 +104,11 @@ export function checkEvents(catalog, decl) {
     }
     for (const field of fields) {
       const matching = Object.entries(decl.classification?.事件结果 ?? {}).filter(([, supports]) => list(supports).includes(field)).map(([name]) => name);
-      if (matching.length && !content.事件结果.some(result => matching.includes(result))) add('事件.结果遗漏', event.文件, `变化写到“${field}”，但事件结果未包含对应项`, '提示');
+      if (matching.length && !list(content.事件结果).some(result => matching.includes(result))) add('事件.结果遗漏', event.文件, `变化写到“${field}”，但事件结果未包含对应项`, '提示');
     }
     if (fields.has('档案切期') && !profileSupport) add('事件.结果遗漏', event.文件, '档案切期没有生效条件支撑', '提示');
     // profileSupport is intentionally also accepted for an explicit档案切期 result.
-    if (profileSupport && content.事件结果.some(result => list(decl.classification?.事件结果?.[result]).includes('档案切期'))) return;
+    if (profileSupport && list(content.事件结果).some(result => list(decl.classification?.事件结果?.[result]).includes('档案切期'))) return;
   }
 }
 

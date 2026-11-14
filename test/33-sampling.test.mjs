@@ -1,4 +1,5 @@
-import {test, assert, fixture, edit, example, loadProtocol, eventFile, apprenticeGroup, youngGroup, fogGate, path} from './protocol-helpers.mjs';
+import {test, assert, fixture, edit, example, loadProtocol, eventFile, apprenticeGroup, youngGroup, oldGroup, fogGate, path,
+  hint, assertFindings} from './protocol-helpers.mjs';
 import {checkWorldbook, samplingYears, checkSampling} from '../checker/index.mjs';
 import {runCli} from '../cli/ygg.mjs';
 const hasRule = (result, rule) => [...result.errors, ...result.hints].some(item => item.规则 === rule);
@@ -76,4 +77,18 @@ test('抽样-异常传播：只捕获ProtocolError', async () => {
   const {catalog, decl} = await loadProtocol();
   catalog.groups.find(group => group.id === '灯塔学徒').内容.档案.find(profile => profile.档案ID === '林澜·守塔期').生效条件 = {不存在: {}};
   assert.throws(() => checkSampling(catalog, decl), error => !(error.name === 'ProtocolError') && error.message.includes('未登记条件类型'));
+});
+
+test('抽样-14：静态合法但抽样无法解析的档案只报提示', async t => {
+  const root = await fixture(t);
+  await edit(root, oldGroup, group => {
+    const profile = group.档案.find(item => item.档案ID === '秦守·守塔期');
+    profile.默认 = false;
+    profile.生效条件 = {事件确认: {事件ID: '正式守灯'}};
+  });
+  const staticOnly = await checkWorldbook(root, {sampling: false});
+  assertFindings(staticOnly, [], '抽样-14 静态模式');
+  const result = await checkWorldbook(root);
+  assertFindings(result, [hint('抽样.档案异常', oldGroup, {次数: 12,
+    说明: ['年份 70', '年份 73', '默认开局', '全部启用·版本2', '档案解析异常']})], '抽样-14');
 });

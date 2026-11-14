@@ -10,7 +10,8 @@ export function createCalendar(declaration) {
   const prefix = declaration.前缀;
   const digits = declaration.年位数;
   const monthCount = declaration.月数;
-  if (!isText(prefix) || prefix !== prefix.trim() || !Number.isSafeInteger(digits) || digits < 1
+  // 年天数最多 99×99=9801；11 位年乘上去仍在安全整数内，12 位会溢出。
+  if (!isText(prefix) || prefix !== prefix.trim() || !Number.isSafeInteger(digits) || digits < 1 || digits > 11
     || !Number.isSafeInteger(monthCount) || monthCount < 1 || monthCount > 99) fail();
   const months = Array.isArray(declaration.每月天数) ? [...declaration.每月天数] : Array(monthCount).fill(declaration.每月天数);
   if (months.length !== monthCount || months.some(day => !Number.isSafeInteger(day) || day < 1 || day > 99)) fail();

@@ -1,4 +1,4 @@
-import {PROFILE_FIELDS, MACHINE_FIELDS} from './contract.mjs';
+import {PROFILE_FIELDS} from './contract.mjs';
 import {evaluateCondition} from './conditions.mjs';
 import {createCalendar} from './calendar.mjs';
 import {protocolText, containerText, trimNewlines} from './text.mjs';
@@ -21,12 +21,6 @@ const pick = (value, keys) => Object.fromEntries(keys.filter(key => has(value, k
   .map(key => [key, clone(value[key])]));
 const atCompare = (a, b) => a.消息序号 - b.消息序号 || a.字符位置 - b.字符位置;
 const byID = (a, b) => codepointCompare(a.id, b.id);
-
-function stripMachine(value) {
-  if (Array.isArray(value)) return value.map(stripMachine);
-  if (!isMap(value)) return value;
-  return Object.fromEntries(pairs(value).filter(([key]) => !MACHINE_FIELDS.includes(key)).map(([key, item]) => [key, stripMachine(item)]));
-}
 
 function profileFields(value, fields) {
   return Object.fromEntries(pairs(fields).filter(([key]) => has(value, key) && value[key] != null).map(([key, schema]) => {
@@ -144,8 +138,10 @@ function worldState(router, view) {
       .sort((a, b) => router.calendar.time(view.state.事件[a].实际时间)[0] - router.calendar.time(view.state.事件[b].实际时间)[0]
         || codepointCompare(a, b)).map(id => {
         const event = router.events.get(id), record = view.state.事件[id];
-        return `${event.内容.事件标题 ?? id}：${event.内容.分支.find(branch => branch.分支ID === record.分支).分支结果}`;
-      });
+        if (!event || !record) return null;
+        const branch = list(event.内容?.分支).find(item => item.分支ID === record.分支);
+        return `${event.内容?.事件标题 ?? id}：${branch?.分支结果}`;
+      }).filter(item => item !== null);
     return {事件串ID: chain.id, ...pick(chain.内容, ['概述']), ...(confirmed.length ? {已确认: confirmed} : {})};
   });
   if (ongoing.length) world.进行中事件串 = ongoing;
@@ -188,15 +184,16 @@ function entryContext(router, view, present, places, mentions, audit) {
       const {条目ID: id, 理由: reason} = request, entry = router.entries.get(name).get(id);
       if (!entry) { log.略过.push({条目ID: id, 原因: '条目不存在'}); continue; }
       if (name === '技能' && !available.has(id)) { log.略过.push({条目ID: id, 原因: '不可用'}); continue; }
+      if (!nonempty(entry.内容)) { log.略过.push({条目ID: id, 原因: '正文为空'}); continue; }
       const directories = library.分法 === '按种类' ? [name, ...entry.层级目录] : [name];
       const added = [];
       for (let index = 0; index < directories.length; index++) {
         const directory = directories.slice(0, index + 1).join('/'), file = `${directory}/${directories[index]}.txt`;
         if (descriptions.has(file)) continue;
         const record = router.descriptions.get(file);
-        if (record) added.push({file, item: {说明: directories[index], 内容: stripMachine(record.内容)}});
+        if (record && nonempty(record.内容)) added.push({file, item: {说明: directories[index], 内容: clone(record.内容)}});
       }
-      const item = stripMachine(entry.内容), size = chars(item) + added.reduce((sum, row) => sum + chars(row.item), 0);
+      const item = clone(entry.内容), size = chars(item) + added.reduce((sum, row) => sum + chars(row.item), 0);
       if (log.字符 + size > budget) { log.略过.push({条目ID: id, 原因: '超出字符'}); continue; }
       for (const row of added) { descriptions.add(row.file); items.push(row.item); }
       items.push(item); log.字符 += size;
@@ -227,9 +224,9 @@ function eventPositions(event, present, branches, confirmed) {
 function historyItem(router, view, id, present) {
   const event = router.events.get(id), record = view.state.事件[id];
   if (!event) return {事件ID: id, 摘要: record.摘要, 实际时间: record.实际时间};
-  const branch = event.内容.分支.find(item => item.分支ID === record.分支);
+  const branch = list(event.内容?.分支).find(item => item.分支ID === record.分支);
   const positions = eventPositions(event, present, [record.分支], true);
-  return {事件ID: id, 事件标题: event.内容.事件标题 ?? id, ...pick(event.内容, ['事件概要', '影响范围']), 实际时间: record.实际时间,
+  return {事件ID: id, 事件标题: event.内容?.事件标题 ?? id, ...pick(event.内容, ['事件概要', '影响范围']), 实际时间: record.实际时间,
     ...pick(branch, ['分支结果']), ...pick(event.内容, ['公开信息', '隐秘信息']), ...(positions.length ? {角色位置: positions} : {})};
 }
 
@@ -265,17 +262,23 @@ function eventContext(router, view, present, places, mentions, initialization, a
   const ongoing = new Set(router.catalog.chains.filter(chain => view.chainStatus(chain.id) === '进行中').map(chain => chain.id));
   const candidates = [];
   for (const event of router.events.values()) {
-    const status = view.eventStatus(event.id);
-    if (status.状态 !== '候选') continue;
-    const content = event.内容, count = shared(content.核心参与者), nearby = local(event);
-    if (!count && !nearby && content.核心参与者.length) { audit.候选.略过.push({事件ID: event.id, 原因: '无关联'}); continue; }
-    const positions = eventPositions(event, present, status.分支, false);
-    candidates.push({id: event.id, count, nearby, ongoing: ongoing.has(router.eventChains.get(event.id)),
-      latest: router.calendar.time(content.触发时间.最晚)[0], reason: count ? '核心参与者在场' : nearby ? '当前地点' : '无核心参与者',
-      item: {事件ID: event.id, 事件标题: content.事件标题 ?? event.id, ...pick(content, ['事件概要', '影响范围', '叙事条件', '公开信息']),
-        触发时间最晚: content.触发时间.最晚,
-        分支: content.分支.filter(branch => status.分支.includes(branch.分支ID)).map(branch => pick(branch, ['分支ID', '分支条件', '分支结果'])),
-        ...(positions.length ? {角色位置: positions} : {})}});
+    try {
+      const status = view.eventStatus(event.id);
+      if (status.状态 !== '候选') continue;
+      const content = event.内容, participants = list(content?.核心参与者);
+      const count = shared(participants), nearby = local(event);
+      if (!count && !nearby && participants.length) { audit.候选.略过.push({事件ID: event.id, 原因: '无关联'}); continue; }
+      const positions = eventPositions(event, present, status.分支, false);
+      candidates.push({id: event.id, count, nearby, ongoing: ongoing.has(router.eventChains.get(event.id)),
+        latest: router.calendar.time(content.触发时间.最晚)[0], reason: count ? '核心参与者在场' : nearby ? '当前地点' : '无核心参与者',
+        item: {事件ID: event.id, 事件标题: content?.事件标题 ?? event.id, ...pick(content, ['事件概要', '影响范围', '叙事条件', '公开信息']),
+          触发时间最晚: content.触发时间.最晚,
+          分支: list(content?.分支).filter(branch => status.分支.includes(branch.分支ID)).map(branch => pick(branch, ['分支ID', '分支条件', '分支结果'])),
+          ...(positions.length ? {角色位置: positions} : {})}});
+    } catch (error) {
+      if (!(error instanceof ProtocolError)) throw error;
+      audit.异常.push({类型: '事件异常', 事件ID: event.id, 说明: error.message});
+    }
   }
   candidates.sort((a, b) => Number(b.ongoing) - Number(a.ongoing) || Number(b.nearby) - Number(a.nearby)
     || b.count - a.count || a.latest - b.latest || byID(a, b));

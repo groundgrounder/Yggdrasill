@@ -1,7 +1,9 @@
 import {checkField, resolveDomain} from '../fields.mjs';
+import {checkPendingPath} from '../changes.mjs';
+import {valueProblem, valueText} from '../values.mjs';
 import {PROFILE_FIELDS} from '../contract.mjs';
 import {isValidId} from '../ids.mjs';
-import {has, isMap, isText, pairs} from '../utils.mjs';
+import {has, isMap, isText, list, pairs} from '../utils.mjs';
 
 const DEBUT_PREFIX = '初次登场·';
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -47,20 +49,9 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
       }
     }
   }
-  // 普通对象按原型链的形状认，不比较 Object.prototype 本身：宿主可能在另一个 realm 中解析出本局（如酒馆页面与脚本 iframe）。
-  const plainObject = value => {
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === null || Object.getPrototypeOf(prototype) === null;
-  };
-  function serializable(value, stack = new Set()) {
-    if (value === null || ['string', 'boolean'].includes(typeof value)) return;
-    if (typeof value === 'number' && Number.isFinite(value)) return;
-    if (typeof value !== 'object' || (!Array.isArray(value) && !plainObject(value)))
-      fail('协议.参数', '本局变量须由映射、列表、文本、布尔、有限的数与空值组成');
-    if (stack.has(value)) fail('协议.参数', '本局变量须由无环的数据组成');
-    stack.add(value);
-    for (const item of Object.values(value)) serializable(item, stack);
-    stack.delete(value);
+  function serializable(value, code = '协议.参数') {
+    const problem = valueProblem(value);
+    if (problem) fail(code, problem === 'cycle' ? valueText.cycle : valueText.type);
   }
   function validate(state, requireSealed = false, options = {}) {
     if (!isMap(state)) fail('协议.参数', '本局变量须为映射');
@@ -90,7 +81,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     player(state.开局.玩家, state);
     if (!isMap(state.开局.历史选择)) fail('协议.参数', '历史选择须为映射');
     for (const [id, branch] of pairs(state.开局.历史选择)) if (!events.has(id)
-      || (branch !== '未发生' && !events.get(id).内容.分支.some(item => item.分支ID === branch))) fail('协议.参数', `历史选择不合法：${id}`);
+      || (branch !== '未发生' && !list(events.get(id).内容?.分支).some(item => item.分支ID === branch))) fail('协议.参数', `历史选择不合法：${id}`);
     if (has(state.开局, '方案') && !catalog.openingPlans.some(plan => plan.id === state.开局.方案)) fail('协议.参数', '开局方案不存在');
     if (!isMap(state.角色)) fail('协议.参数', '角色须为映射');
     for (const [id, run] of pairs(state.角色)) {
@@ -134,7 +125,7 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
       if (record.状态 !== 1) continue;
       if (!isText(record.分支) || !calendar.time(record.实际时间) || !Array.isArray(record.实际参与者)) fail('协议.参数', '确认记录不完整');
       if (events.has(id)) {
-        if (!events.get(id).内容.分支.some(item => item.分支ID === record.分支)) fail('协议.参数', `确认记录分支不存在：${id}`);
+        if (!list(events.get(id).内容?.分支).some(item => item.分支ID === record.分支)) fail('协议.参数', `确认记录分支不存在：${id}`);
       } else if (id.startsWith(DEBUT_PREFIX)) {
         if (!groups.has(id.slice(DEBUT_PREFIX.length)) || record.分支 !== '初始化') fail('协议.参数', '首次登场记录不合法');
       } else if (!isValidId(id) || !isText(record.摘要) || record.分支 !== '完成') fail('协议.参数', '动态事件记录不合法');
@@ -146,6 +137,10 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     for (const item of state.待定项) {
       keys(item, ['字段路径', '候选值', '事件ID', '说明'], '待定项');
       if (!isText(item.字段路径) || !has(item, '候选值') || !isText(item.事件ID) || !isText(item.说明)) fail('协议.参数', '待定项缺少必填字段');
+      if (checkPendingPath(item.字段路径, {decl, catalog}).length) fail('协议.参数', '待定项的字段路径不合法');
+      if (!Array.isArray(item.候选值) || !item.候选值.length) fail('协议.参数', '待定项的候选值须为非空列表');
+      serializable(item.候选值);
+      if (get(state.事件, item.事件ID)?.状态 !== 1) fail('协议.参数', `待定项须引用已确认事件：${item.事件ID}`);
     }
   }
   return {validate, player, location, serializable};

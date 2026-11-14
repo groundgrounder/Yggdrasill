@@ -234,6 +234,20 @@ test('边界-参数：拒绝畸形参数与保留映射键，不污染原型', (
     assert.throws(() => W(p, T0, params), errorCode('协议.参数'));
   assert.equal(Object.hasOwn(Object.prototype, '知识'), false);
 });
+test('边界-宿主页面：另一个 realm 的本局可写场景与建调试视图，非纯数据与环仍拒绝', async () => {
+  const vm = await import('node:vm');
+  const foreign = vm.runInNewContext('JSON.parse(text)', {text: JSON.stringify(P3)});
+  assert.notEqual(Object.getPrototypeOf(foreign), Object.prototype);
+  const before = structuredClone(P3), result = W(p, foreign, {在场: {秦守: false}});
+  assert.equal(result.state.角色.秦守.在场, false);
+  assert.equal(result.state.角色.秦守.所在, '灯塔');
+  assert.equal(JSON.stringify(foreign), JSON.stringify(before));
+  assert.doesNotThrow(() => p.createReadView(foreign));
+  const loop = structuredClone(P3); loop.世界.天气 = loop;
+  for (const state of [{...P3, 待定项: new Map()}, {...P3, 世界: {...P3.世界, 天气: new Date()}},
+    {...P3, 角色: new (class 角色 {})()}, loop])
+    assert.throws(() => W(p, state, {}), errorCode('协议.参数'));
+});
 test('边界-能力：空集合优先、单值等级移除与恢复', () => {
   const state = structuredClone(T0); state.角色.灯塔学徒.习惯 = [];
   assert.deepEqual(confirmInitialization(p, state, '灯塔学徒').state.角色.灯塔学徒.习惯, []);

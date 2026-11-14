@@ -20,7 +20,7 @@ export function checkOpenings(catalog, decl) {
         const event = events.get(item.事件ID);
         if (event?.内容?.确认策略 === '仅作候选') add('开局.选项引用', file, `仅作候选事件“${item.事件ID}”不能作为开局选项`);
         for (const [branchID, text] of Object.entries(item.选项)) {
-          if (branchID !== '未发生' && !event?.内容?.分支?.some(branch => branch?.分支ID === branchID)) add('开局.选项引用', file, `事件“${item.事件ID}”没有选项分支“${branchID}”`);
+          if (branchID !== '未发生' && !list(event?.内容?.分支).some(branch => branch?.分支ID === branchID)) add('开局.选项引用', file, `事件“${item.事件ID}”没有选项分支“${branchID}”`);
           if (!isText(text)) add('开局.选项引用', file, '选项文字须为文本');
         }
       }

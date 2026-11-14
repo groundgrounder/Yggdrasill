@@ -101,7 +101,7 @@ export function checkCondition(condition, context = {}, position = '门槛') {
       if (!event) add('条件.引用', `事件“${value.事件ID}”不存在`);
       if (has(value, '分支ID')) {
         if (!isText(value.分支ID)) add('条件.参数', `${path}.分支ID须为文本`);
-        else if (!event?.内容?.分支?.some(branch => branch?.分支ID === value.分支ID)) add('条件.引用', `事件“${value.事件ID}”没有分支“${value.分支ID}”`);
+        else if (!list(event?.内容?.分支).some(branch => branch?.分支ID === value.分支ID)) add('条件.引用', `事件“${value.事件ID}”没有分支“${value.分支ID}”`);
       }
       return;
     }
