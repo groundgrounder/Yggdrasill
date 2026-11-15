@@ -243,8 +243,9 @@ assert.equal(rejectedHistory.error.code, '开局.历史选择');
 console.log('0b 开局纯计算：自由组合开启时，“拜师”与“未发生”写入真实声明分支；未声明事件被拒绝');
 
 // 无职默认路径：卡面初值直接可供预演，全部开场命令成功后才产出一份可写记录。
+// 卡面是同人内容，不随仓库分发（见 .gitignore）；只在本地放了卡面并设置 YGG_MUSHOKU_ROOT 时读取。
 const noJobRoot = process.env.YGG_MUSHOKU_ROOT;
-const noJobFace = parseYaml(await fs.readFile(new URL('./卡面-无职.yaml', import.meta.url), 'utf8'));
+const noJobFace = noJobRoot ? parseYaml(await fs.readFile(new URL('./卡面-无职.yaml', import.meta.url), 'utf8')) : null;
 if (noJobRoot) {
   const noJob = await loadRouter(path.join(noJobRoot, '世界书'), {fs, path});
   const noJobDraft = createOpeningDraft({protocol: noJob.protocol, catalog: noJob.router.catalog, decl: noJob.router.decl,
@@ -1577,7 +1578,7 @@ console.log('24 脚本缺失/停用/ID 不符、宿主 API 缺失均报 权限.�
 // ---------- 25. 模式无关的卡面、预设与共享模板 ----------
 const preset = JSON.parse(await fs.readFile(new URL('./preset-Yggdrasill.json', import.meta.url), 'utf8'));
 const presetMain = preset.prompts.find(item => item.identifier === 'main')?.content ?? '';
-for (const description of [face.描述, noJobFace.描述]) {
+for (const description of [face.描述, noJobFace?.描述].filter(description => description !== undefined)) {
   assert.doesNotMatch(description, /只写正文/);
   assert.doesNotMatch(description, /另行记账/, '卡面不得把独立记账写成关闭模式的工作');
   assert.match(description, /本局状态由系统维护/);

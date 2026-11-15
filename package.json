@@ -4,6 +4,7 @@
   "description": "角色组、版本、时期档案与统一事件树的世界书规范与工具链",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
   "bin": {
     "ygg": "cli/ygg.mjs"
   },
