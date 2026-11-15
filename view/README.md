@@ -60,7 +60,7 @@ node cli/ygg.mjs view --worldbook <世界书目录> [--storage <审阅存储目�
 ```sh
 npm test
 ygg check examples/雾港/世界书 --json
-ygg check <当前无职世界书> --json
+ygg check <当前世界书> --json
 ```
 
 相关测试：`test/60-view-data.test.mjs`、`test/61-view-store.test.mjs`、`test/62-view-server.test.mjs`。浏览器验收证据与迁移覆盖矩阵见二级工作区 `reports/YG-VIEW-01-v1/`。真实世界书与旧创作项目只读；本工具不提交、不推送。

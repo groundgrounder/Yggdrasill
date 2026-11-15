@@ -25,8 +25,8 @@ const expectedCalendar = '潮历YYY年或潮历YYY年MM月DD日（年份 3 位�
 test('文本-1：可写字段按声明顺序逐行展开', () => assert.equal(writableFields(decl), expectedFields));
 test('文本-2：地点列表按上下级与码点排序', () => assert.equal(locationList(catalog), expectedPlaces));
 test('文本-3：雾港不等长月份纪年格式', () => assert.equal(formatCalendar(decl.calendar), expectedCalendar));
-test('文本-4：等长月份纪年格式', () => assert.equal(formatCalendar({前缀: '甲龙历', 年位数: 4, 月数: 12, 每月天数: 30}),
-  '甲龙历YYYY年或甲龙历YYYY年MM月DD日（年份 4 位，每年 12 个月，每月 30 天）'));
+test('文本-4：等长月份纪年格式', () => assert.equal(formatCalendar({前缀: '潮历', 年位数: 4, 月数: 12, 每月天数: 30}),
+  '潮历YYYY年或潮历YYYY年MM月DD日（年份 4 位，每年 12 个月，每月 30 天）'));
 test('文本-5：三份模板精确填充并以空行拼接', async () => {
   const card = catalog.texts.find(item => item.文件 === '扮演准则/海港白描.txt').原文.replace(/[\r\n]+$/u, '');
   const replacements = {'纪年格式': expectedCalendar, '可写字段': expectedFields, '地点列表': expectedPlaces, '单次增减上限': 100, '本卡扮演准则': card};

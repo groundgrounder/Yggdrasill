@@ -242,29 +242,7 @@ assert.equal(rejectedHistory.ok, false);
 assert.equal(rejectedHistory.error.code, '开局.历史选择');
 console.log('0b 开局纯计算：自由组合开启时，“拜师”与“未发生”写入真实声明分支；未声明事件被拒绝');
 
-// 无职默认路径：卡面初值直接可供预演，全部开场命令成功后才产出一份可写记录。
-// 卡面是同人内容，不随仓库分发（见 .gitignore）；只在本地放了卡面并设置 YGG_MUSHOKU_ROOT 时读取。
-const noJobRoot = process.env.YGG_MUSHOKU_ROOT;
-const noJobFace = noJobRoot ? parseYaml(await fs.readFile(new URL('./卡面-无职.yaml', import.meta.url), 'utf8')) : null;
-if (noJobRoot) {
-  const noJob = await loadRouter(path.join(noJobRoot, '世界书'), {fs, path});
-  const noJobDraft = createOpeningDraft({protocol: noJob.protocol, catalog: noJob.router.catalog, decl: noJob.router.decl,
-    defaults: noJobFace.开局, commands: noJobFace.开场命令});
-  const noJobSnapshot = noJobDraft.snapshot();
-  assert.equal(noJobSnapshot.时间, noJobFace.开局.开局时间);
-  assert.deepEqual(noJobSnapshot.玩家, noJobFace.开局.玩家);
-  assert.equal(noJobSnapshot.历史.length, 0, '没有开局选项时不应生成空历史错误');
-  const noJobPrepared = noJobDraft.prepare();
-  assert.equal(noJobPrepared.ok, true);
-  assert.equal(noJobPrepared.record.本局.世界.当前地点.地标, '布耶纳村');
-  assert.equal(noJobPrepared.record.本局.角色['鲁迪乌斯·格雷拉特'].已初始化, true);
-  assert.deepEqual(noJobPrepared.record.失败, []);
-  console.log('0c 无职默认路径：卡面时间与扮演玩家原样预演；确认初始化、地点和记录草稿成功，历史区为空');
-} else {
-  console.log('0c 外部项目探针：未设置 YGG_MUSHOKU_ROOT，明确跳过；雾港与其余探针继续执行');
-}
-
-// 0d 开场命令按最终封卷的玩家调整：扮演角色组在当前地点写入后自动在场，协议不许用写场景改写它。
+// 0c 开场命令按最终封卷的玩家调整：扮演角色组在当前地点写入后自动在场，协议不许用写场景改写它。
 const cardCommands = clone(face.开场命令);
 const roleplayDraft = createOpeningDraft({protocol, catalog: router.catalog, decl: router.decl,
   defaults: face.开局, commands: cardCommands});
@@ -328,7 +306,7 @@ malformedCommand([{写场景: {在场: {秦守: '是'}}}], '在场值非布尔')
 malformedCommand([{写场景: '不是映射'}], '写场景非映射');
 malformedCommand([{写场景: {在场: '不是映射'}}], '在场非映射');
 malformedCommand([{写场景: {未知: 1}, 确认初始化: {角色组ID: '灯塔学徒'}}], '多键命令');
-console.log('0d 默认扮演灯塔学徒：开场命令生效且记录不含扮演组在场；白棠与自建逐字保持；只含扮演组的写场景省略、混合命令保留其余字段；第 0 楼重放一致；畸形命令仍被拒绝');
+console.log('0c 默认扮演灯塔学徒：开场命令生效且记录不含扮演组在场；白棠与自建逐字保持；只含扮演组的写场景省略、混合命令保留其余字段；第 0 楼重放一致；畸形命令仍被拒绝');
 
 // 1. 开局门禁、五类选择、预演、三种失败与原子提交
 push(face.开场白, false);
@@ -1050,7 +1028,7 @@ console.log('19 编辑前检查下游缺口与旧记录；均保持原始变量�
 await restoreChat();
 globals['世界树·记账'] = {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true};
 serverGlobals = clone(globals);
-chat[4].variables[chat[4].swipe_id].世界树.本局.世界.当前时间 = '甲龙历0999年01月01日';
+chat[4].variables[chat[4].swipe_id].世界树.本局.世界.当前时间 = '潮历0999年01月01日';
 const invalidDownstream = clone(chat[4].variables[chat[4].swipe_id].世界树);
 const unchangedFloor2 = clone(chat[2].variables[chat[2].swipe_id].世界树);
 chat[2].mes = chat[2].swipes[chat[2].swipe_id] = chat[2].mes + '（旧链审计）';
@@ -1578,11 +1556,9 @@ console.log('24 脚本缺失/停用/ID 不符、宿主 API 缺失均报 权限.�
 // ---------- 25. 模式无关的卡面、预设与共享模板 ----------
 const preset = JSON.parse(await fs.readFile(new URL('./preset-Yggdrasill.json', import.meta.url), 'utf8'));
 const presetMain = preset.prompts.find(item => item.identifier === 'main')?.content ?? '';
-for (const description of [face.描述, noJobFace?.描述].filter(description => description !== undefined)) {
-  assert.doesNotMatch(description, /只写正文/);
-  assert.doesNotMatch(description, /另行记账/, '卡面不得把独立记账写成关闭模式的工作');
-  assert.match(description, /本局状态由系统维护/);
-}
+assert.doesNotMatch(face.描述, /只写正文/);
+assert.doesNotMatch(face.描述, /另行记账/, '卡面不得把独立记账写成关闭模式的工作');
+assert.match(face.描述, /本局状态由系统维护/);
 assert.doesNotMatch(presetMain, /不包含标签、YAML 或命令/);
 assert.doesNotMatch(presetMain, /另行记账/);
 assert.match(presetMain, /本局状态由系统维护/);
