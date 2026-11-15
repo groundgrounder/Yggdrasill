@@ -77,6 +77,10 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 
 > 作者视图会直接读取你的世界书文件。关于视图的保存范围、自动备份与并发规则，请见[作者视图文档](view/README.md)。
 
+### 3. 载入配套预设
+
+[`presets/yggdrasill.json`](presets/yggdrasill.json) 是配合酒馆使用的 SillyTavern 补全预设：主提示词限定叙述者身份与正文边界，另有一条可编辑的输出长度提示。在酒馆的「预设 → 导入」中载入该文件即可。世界书内容仍由角色卡与脚本注入，预设只影响正文如何生成。
+
 <!-- 建议：如果你有其他常用子命令（如初始化预览、YAML 排版、构建角色卡等），可以在这里补一个简短的 CLI 常用命令速查表 -->
 
 ---
@@ -139,6 +143,7 @@ Yggdrasill/
 ├── cli/             # 命令行入口（ygg.mjs）
 ├── view/            # 本地作者视图服务端与前端页面
 ├── skills/          # 面向编程代理的写卡与检查工作流 Skill
+├── presets/         # 酒馆补全预设
 ├── templates/       # 世界书与相关配置模板
 ├── defaults/设定/   # 默认基础设定
 ├── examples/雾港/   # 完整示例世界书

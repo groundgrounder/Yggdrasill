@@ -1554,7 +1554,7 @@ await recoverPermission();
 console.log('24 脚本缺失/停用/ID 不符、宿主 API 缺失均报 权限.脚本；关闭记账时正则缺失/停用/placement/未授权报 权限.正则；均清除注入并阻断，恢复后继续；开启记账不受正则故障影响；缺少 $ 或 toastr 时诊断不抛错，仍清理注入并停止生成');
 
 // ---------- 25. 模式无关的卡面、预设与共享模板 ----------
-const preset = JSON.parse(await fs.readFile(new URL('./preset-Yggdrasill.json', import.meta.url), 'utf8'));
+const preset = JSON.parse(await fs.readFile(new URL('../../presets/yggdrasill.json', import.meta.url), 'utf8'));
 const presetMain = preset.prompts.find(item => item.identifier === 'main')?.content ?? '';
 assert.doesNotMatch(face.描述, /只写正文/);
 assert.doesNotMatch(face.描述, /另行记账/, '卡面不得把独立记账写成关闭模式的工作');
