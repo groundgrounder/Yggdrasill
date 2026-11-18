@@ -1,4 +1,5 @@
 import {parseYaml} from './yaml.mjs';
+import {readDeclarations, validateDeclarations} from './declarations.mjs';
 import {DECLARATION_FILES, TEXT_CONTAINERS} from './contract.mjs';
 import {has, isMap, list, issue} from './utils.mjs';
 
@@ -6,6 +7,16 @@ function historicalKind(parts) {
   if (parts.length === 1 && parts[0] === '历史') return '历史';
   if (parts[0] === '历史') return '历史';
   return null;
+}
+
+// 平台无关的三步加载入口：调用方注入 fs/path，浏览器与内存文件系统可直接复用。
+export async function compileWorldbook(root, {fs, path} = {}) {
+  if (!fs || !path) throw new Error('compileWorldbook 需要注入 {fs, path}');
+  const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
+  const compiled = validateDeclarations(raw);
+  const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
+  return {raw, compiled, decl: compiled.decl, catalog, readIssues, loadIssues,
+    issues: [...readIssues, ...compiled.issues, ...loadIssues]};
 }
 
 export async function loadWorldbook(root, {fs, path, decl}) {

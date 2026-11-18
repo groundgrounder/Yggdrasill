@@ -37,5 +37,14 @@ export function createCalendar(declaration) {
     const result = `${prefix}${String(value).padStart(digits, '0')}年`;
     return year(result) === value ? result : null;
   }
-  return {time, year, format, pattern: `${prefix}${'Y'.repeat(digits)}年[MM月DD日]`};
+  function formatDay(value) {
+    if (!Number.isSafeInteger(value) || value < 0 || String(Math.floor(value / yearDays)).length > digits) return null;
+    const offset = value % yearDays;
+    let month = 0;
+    while (month < monthCount - 1 && offset >= offsets[month + 1]) month++;
+    const result = `${prefix}${String(Math.floor(value / yearDays)).padStart(digits, '0')}年`
+      + `${String(month + 1).padStart(2, '0')}月${String(offset - offsets[month] + 1).padStart(2, '0')}日`;
+    return time(result)?.[0] === value ? result : null;
+  }
+  return {time, year, format, formatDay, yearDays, pattern: `${prefix}${'Y'.repeat(digits)}年[MM月DD日]`};
 }

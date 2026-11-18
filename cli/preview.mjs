@@ -1,9 +1,8 @@
 import * as defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
-import {readDeclarations, validateDeclarations} from '../core/declarations.mjs';
-import {loadWorldbook} from '../core/catalog.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {createProtocol} from '../core/protocol.mjs';
-import {whatIf} from '../core/what-if.mjs';
+import {timelineEnd} from '../core/what-if.mjs';
 
 const USAGE = '用法：ygg preview <世界书目录> <角色组ID> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--json]';
 
@@ -27,16 +26,13 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
 
   const root = path.resolve(cwd, parsed.世界书);
   try {
-    const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
-    const compiled = validateDeclarations(raw);
-    const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-    const issues = [...readIssues, ...compiled.issues, ...loadIssues];
+    const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
 
     if (!listGroups(catalog).some(group => group.id === parsed.角色组))
       throw new PreviewError('预览.角色组', `角色组不存在：${parsed.角色组}`);
 
-    const protocol = createProtocol({catalog, decl: compiled.decl});
-    const state = parsed.本局 ? await readState(parsed.本局, {cwd, fs, path}) : sealState(protocol, catalog, compiled.decl, parsed);
+    const protocol = createProtocol({catalog, decl});
+    const state = parsed.本局 ? await readState(parsed.本局, {cwd, fs, path}) : sealState(protocol, catalog, decl, parsed);
 
     let preview;
     try { preview = protocol.initializationPreview(state, parsed.角色组); }
@@ -131,13 +127,10 @@ function sealState(protocol, catalog, decl, parsed) {
   }
 }
 
-// 时间轴末尾与 if 共用 core/what-if.mjs 的同一实现；这里只读取输入摘要，不比较路径。
+// 时间轴末尾与 if 共用 core/what-if.mjs 的同一实现。
 function axisEnd(catalog, decl) {
-  const result = whatIf(catalog, decl, {});
-  const end = result?.输入?.时间轴末尾;
-  if (end) return end;
-  const error = (result?.异常 ?? []).find(item => item?.级别 === '错误');
-  throw new PreviewError('预览.时间轴', error?.说明 ?? '无法确定时间轴末尾');
+  try { return timelineEnd(catalog, decl); }
+  catch (error) { throw new PreviewError('预览.时间轴', error?.message ?? '无法确定时间轴末尾'); }
 }
 
 async function readState(file, {cwd, fs, path}) {

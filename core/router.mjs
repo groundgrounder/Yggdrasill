@@ -4,8 +4,7 @@ import {createCalendar} from './calendar.mjs';
 import {protocolText, containerText, trimNewlines} from './text.mjs';
 import {normalizeSettings, readSettings} from './settings.mjs';
 import {createProtocol, ProtocolError} from './protocol.mjs';
-import {readDeclarations, validateDeclarations} from './declarations.mjs';
-import {loadWorldbook} from './catalog.mjs';
+import {compileWorldbook} from './catalog.mjs';
 import {stringifyYaml} from './yaml.mjs';
 import {codepointCompare, freeze, has, isMap, list, pairs} from './utils.mjs';
 import {fileURLToPath} from 'node:url';
@@ -336,14 +335,13 @@ export function renderContext(context, tags = DEFAULT_TAGS) {
 }
 
 export async function loadRouter(root, {fs, path}) {
-  const read = await readDeclarations(root, {fs, path}), compiled = validateDeclarations(read.raw);
-  const loaded = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-  const errors = [...read.issues, ...compiled.issues, ...loaded.issues].filter(item => item.级别 === '错误');
+  const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
+  const errors = issues.filter(item => item.级别 === '错误');
   if (errors.length) throw new ProtocolError('协议.参数', errors.map(item => `${item.文件}：${item.说明}`).join('；'));
-  const settings = await readSettings(path.dirname(path.resolve(root)), {fs, path, decl: compiled.decl});
+  const settings = await readSettings(path.dirname(path.resolve(root)), {fs, path, decl});
   const templateRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'templates');
   const templates = Object.fromEntries(await Promise.all(['变量更新规则', '角色通用约束', '扮演准则'].map(async name =>
     [name, await fs.readFile(path.join(templateRoot, `${name}.txt`), 'utf8')])));
-  const protocol = createProtocol({catalog: loaded.catalog, decl: compiled.decl});
-  return {protocol, router: createRouter({catalog: loaded.catalog, decl: compiled.decl, protocol, settings, templates})};
+  const protocol = createProtocol({catalog, decl});
+  return {protocol, router: createRouter({catalog, decl, protocol, settings, templates})};
 }

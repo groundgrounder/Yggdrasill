@@ -138,7 +138,7 @@ function normalizeBranches(value) {
     .sort((left, right) => codepointCompare(left.事件ID, right.事件ID) || codepointCompare(left.分支ID, right.分支ID));
 }
 
-function timelineEnd(catalog, decl) {
+export function timelineEnd(catalog, decl) {
   const events = list(catalog?.events);
   if (!events.length) fail('if.时间轴为空', '世界书没有预设事件，无法确定时间轴末尾');
   let calendar;
@@ -152,19 +152,12 @@ function timelineEnd(catalog, decl) {
     if (!interval) fail('if.时间轴', `事件“${event?.id ?? '未知'}”的触发时间不合法：${String(value)}`);
     maxEnd = Math.max(maxEnd, interval[1]);
   }
-  const yearDays = calendarYearDays(decl.calendar);
-  const year = Math.ceil(maxEnd / yearDays);
+  const year = Math.ceil(maxEnd / calendar.yearDays);
   const end = calendar.format(year);
   const interval = calendar.time(end);
   if (!end || !interval || interval[0] < maxEnd)
     fail('if.时间轴', '纪年范围不足以表示全部事件窗口结束后的时间');
   return end;
-}
-
-function calendarYearDays(calendar) {
-  const months = Array.isArray(calendar.每月天数)
-    ? calendar.每月天数 : Array(calendar.月数).fill(calendar.每月天数);
-  return months.reduce((sum, days) => sum + days, 0);
 }
 
 function inputSummary(value, axisEnd = null) {

@@ -1,7 +1,6 @@
 import * as defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
-import {readDeclarations, validateDeclarations} from '../core/declarations.mjs';
-import {loadWorldbook} from '../core/catalog.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {buildReferenceIndex, isTraceFailure} from '../core/references.mjs';
 
 export async function runTrace(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
@@ -14,11 +13,8 @@ export async function runTrace(args, {cwd = process.cwd(), stdout = process.stdo
   }
   const root = path.resolve(cwd, positionals[0]), objectKey = positionals[1];
   try {
-    const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
-    const compiled = validateDeclarations(raw);
-    const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-    const index = buildReferenceIndex(catalog, compiled.decl,
-      {issues: [...readIssues, ...compiled.issues, ...loadIssues]});
+    const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
+    const index = buildReferenceIndex(catalog, decl, {issues});
     const result = index.query(objectKey);
     if (json) stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else stdout.write(formatTrace(result));

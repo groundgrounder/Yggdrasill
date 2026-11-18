@@ -13,6 +13,9 @@ const STATIC = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/dom.js', ['dom.js', 'text/javascript; charset=utf-8']],
+  ['/canvas-views.js', ['canvas-views.js', 'text/javascript; charset=utf-8']],
+  ['/inspector.js', ['inspector.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "

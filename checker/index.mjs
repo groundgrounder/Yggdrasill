@@ -1,7 +1,6 @@
 import * as defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
-import {readDeclarations, validateDeclarations} from '../core/declarations.mjs';
-import {loadWorldbook} from '../core/catalog.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {checkLayout} from './rules/layout.mjs';
 import {checkDeclarations} from './rules/declarations.mjs';
 import {checkEntries} from './rules/entries.mjs';
@@ -23,10 +22,7 @@ export {checkSampling, samplingYears} from './rules/sampling.mjs';
 
 export async function checkWorldbook(root, options = {}) {
   const fs = options.fs ?? defaultFs, path = options.path ?? defaultPath;
-  const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
-  const compiled = validateDeclarations(raw);
-  const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-  const decl = compiled.decl;
+  const {raw, compiled, decl, catalog, readIssues, loadIssues} = await compileWorldbook(root, {fs, path});
   const issues = [...readIssues, ...loadIssues];
   const run = async (stage, module, callback) => {
     try {

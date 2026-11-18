@@ -1,7 +1,6 @@
 import * as defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
-import {readDeclarations, validateDeclarations} from '../core/declarations.mjs';
-import {loadWorldbook} from '../core/catalog.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {whatIf} from '../core/what-if.mjs';
 import {codepointCompare} from '../core/utils.mjs';
 
@@ -20,12 +19,10 @@ export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout,
 
   const root = path.resolve(cwd, parsed.世界书);
   try {
-    const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
-    const compiled = validateDeclarations(raw);
-    const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-    const result = whatIf(catalog, compiled.decl, {
+    const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
+    const result = whatIf(catalog, decl, {
       世界书: parsed.世界书, 方案: parsed.方案, 排除: parsed.排除, 分支: parsed.分支,
-      停用角色组: parsed.停用角色组, issues: [...readIssues, ...compiled.issues, ...loadIssues],
+      停用角色组: parsed.停用角色组, issues,
     });
     const failed = result.异常.some(item => item?.级别 === '错误');
     if (parsed.json) stdout.write(`${JSON.stringify(result, null, 2)}\n`);

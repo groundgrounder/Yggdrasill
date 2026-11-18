@@ -2,8 +2,7 @@
 import defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
 import {createHash} from 'node:crypto';
-import {readDeclarations, validateDeclarations} from '../core/declarations.mjs';
-import {loadWorldbook} from '../core/catalog.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {createCalendar} from '../core/calendar.mjs';
 import {analyzeEventTree, chainStructure, impactOf} from '../core/graph.mjs';
 import {buildReferenceIndex, queryReference} from '../core/references.mjs';
@@ -33,10 +32,9 @@ function calendarInfo(decl) {
     const calendar = createCalendar(declaration);
     const months = Array.isArray(declaration.每月天数)
       ? [...declaration.每月天数] : Array(declaration.月数).fill(declaration.每月天数);
-    const yearDays = months.reduce((sum, days) => sum + days, 0);
-    return {calendar: Object.assign(calendar, {yearDays}),
+    return {calendar,
       info: {前缀: declaration.前缀, 年位数: declaration.年位数, 月数: declaration.月数,
-        每月天数: months, 年天数: yearDays, 表达式: calendar.pattern}, error: null};
+        每月天数: months, 年天数: calendar.yearDays, 表达式: calendar.pattern}, error: null};
   }
   catch (error) { return {calendar: null, info: null, error: error.message}; }
 }
@@ -67,11 +65,7 @@ async function readPending(root, {fs, path}) {
  */
 export async function loadProject(root, {fs = defaultFs, path = defaultPath} = {}) {
   root = path.resolve(root);
-  const {raw, issues: readIssues} = await readDeclarations(root, {fs, path});
-  const compiled = validateDeclarations(raw);
-  const {catalog, issues: loadIssues} = await loadWorldbook(root, {fs, path, decl: compiled.decl});
-  const decl = compiled.decl;
-  const issues = [...readIssues, ...compiled.issues, ...loadIssues];
+  const {raw, decl, catalog, issues} = await compileWorldbook(root, {fs, path});
   const {calendar, info: calendarMeta, error: calendarError} = calendarInfo(decl);
 
   let settings = structuredClone(DEFAULT_SETTINGS), settingsSource = '默认', settingsError = null;

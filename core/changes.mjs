@@ -1,7 +1,8 @@
-import {checkField, dimensionKeys, resolveDomain} from './fields.mjs';
+import {checkField, dimensionKeys, referenceExists, resolveDomain} from './fields.mjs';
 import {has, isMap, isText, list, pairs, issue} from './utils.mjs';
 
 const RESERVED_ROLE_FIELDS = new Set(['能力移除记录', '已初始化']);
+const REFERENCE = {allowPlayer: true, uniqueEntry: false};
 
 export function checkChange(change, context = {}) {
   const {decl = {}, catalog = {}, file = '', position = '变化'} = context;
@@ -33,7 +34,7 @@ export function checkChange(change, context = {}) {
       for (const found of checkField(value, schema, {catalog, decl, allowPlayer: true})) if (found.级别 === '错误') add('变化.取值', found.说明);
     } else if (schema?.取值) validateDomain(value, resolveDomain(schema.取值, decl));
     else if (schema?.引用) {
-      if (!isText(value) || !referenceExists(value, schema.引用, catalog)) add('变化.取值', `值“${String(value)}”不能引用“${schema.引用}”`);
+      if (!isText(value) || !referenceExists(value, schema.引用, catalog, REFERENCE)) add('变化.取值', `值“${String(value)}”不能引用“${schema.引用}”`);
     } else if (schema?.集合) validateMember(value, schema.集合);
     else if (schema?.数值 && (!Number.isSafeInteger(value) || value < schema.数值[0] || value > schema.数值[1])) add('变化.取值', '值须为范围内整数');
     else if (!isMap(schema) || value === undefined) add('变化.取值', '值与字段声明不符');
@@ -93,7 +94,7 @@ export function checkPendingPath(path, context = {}) {
 
 function checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText) {
   if (parts.length !== 4) { add('变化.路径', '装备路径必须写到装备ID'); return; }
-  if (!referenceExists(parts[3], '装备', catalog)) add('变化.映射键', `装备“${parts[3]}”不存在`);
+  if (!referenceExists(parts[3], '装备', catalog, REFERENCE)) add('变化.映射键', `装备“${parts[3]}”不存在`);
   if (!['设定', '新增', '移除'].includes(change.操作)) add('变化.操作', '装备只允许设定、新增、移除');
   if (change.操作 === '移除') { forbidValue(); return; }
   requireValue();
@@ -119,7 +120,7 @@ function checkDimension(parts, change, dimension, decl, catalog, add, validateOp
       const member = dimension.成员;
       if (member === '文本') { if (typeof change.值 !== 'string' || !change.值.trim()) add('变化.取值', '集合成员须为非空文本'); }
       else if (isMap(member) && member.条目库) {
-        if (!referenceExists(change.值, member.条目库, catalog)) add('变化.取值', `集合成员“${change.值}”不存在`);
+        if (!referenceExists(change.值, member.条目库, catalog, REFERENCE)) add('变化.取值', `集合成员“${change.值}”不存在`);
         const entry = list(catalog.entries?.[member.条目库]).find(item => item.id === change.值);
         if (entry && member.条件 && Object.entries(member.条件).some(([key, value]) => entry.内容?.[key] !== value)) add('变化.取值', `集合成员“${change.值}”不符合成员条件`);
       } else validateMember(change.值, member);
@@ -183,15 +184,10 @@ function checkVariable(parts, change, schema, decl, catalog, add, validateOperat
 }
 
 function validMappingKey(schema, key, catalog) {
-  if (schema?.引用) return referenceExists(key, schema.引用, catalog);
+  if (schema?.引用) return referenceExists(key, schema.引用, catalog, REFERENCE);
   return isText(key);
 }
 
-function referenceExists(value, target, catalog) {
-  if (!isText(value)) return false;
-  if (target === '角色组') return value === '玩家' || list(catalog.groups).some(group => group.id === value);
-  return list(catalog.entries?.[target]).some(entry => entry.id === value);
-}
 
 // 按声明识别角色引用，不把普通文本中的“玩家”当成保留引用。
 export function changeRoleReferences(change, decl) {

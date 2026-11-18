@@ -15,11 +15,13 @@ export function resolveDomain(domain, decl) {
   return [];
 }
 
-export function referenceExists(value, target, catalog) {
+export function referenceExists(value, target, catalog, {allowPlayer = false, uniqueEntry = true} = {}) {
   if (!isText(value)) return false;
-  if (target === '角色组') return list(catalog?.groups).some(group => group.id === value);
+  if (target === '角色组') return (allowPlayer && value === '玩家') || list(catalog?.groups).some(group => group.id === value);
   if (target === '事件') return list(catalog?.eventIds).includes(value);
-  return has(catalog?.entries, target) && list(catalog.entries[target]).filter(entry => entry.id === value).length === 1;
+  if (!has(catalog?.entries, target)) return false;
+  const entries = list(catalog.entries[target]).filter(entry => entry.id === value);
+  return uniqueEntry ? entries.length === 1 : entries.length > 0;
 }
 
 export function checkField(value, schema, context = {}) {
