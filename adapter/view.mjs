@@ -1,10 +1,10 @@
 // 本局的视图：玩家面板、调试面板与每楼一行的记录。只产出数据，不碰 DOM，可在 node 中测试；页面上怎样画见 ui.mjs。
 // 玩家看到的只有已经发生的：此刻、在场与认识的人、经历。候选、将到与已排除的事件只在调试面板里。
 // 段落：{标题, 标记: [文本], 展开, 项: [[名, 值]], 行: [文本], 表: {列, 行}, 原文, 子段: [段落]}。值为文本，或文本列表（画成标签）。
-import {createCalendar} from '../../core/calendar.mjs';
-import {stringifyYaml} from '../../core/yaml.mjs';
+import {createCalendar} from '../core/calendar.mjs';
+import {stringifyYaml} from '../core/yaml.mjs';
+import {isMap} from '../core/utils.mjs';
 
-const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const empty = value => value === undefined || value === null || (Array.isArray(value) ? !value.length : isMap(value) && !Object.keys(value).length);
 // 在场与所在由“此刻”显示，已初始化只是标记。

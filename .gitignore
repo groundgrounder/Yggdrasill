@@ -1,9 +1,8 @@
 node_modules/
 
-# 开发过程记录与派生产物只留本地；酒馆适配源文件随仓库冻结。
-任务/*
-!任务/原型/
-任务/原型/dist/
-任务/原型/bundle.generated.json
+# 开发过程记录与派生产物只留本地；酒馆适配源码已转正到 adapter/。
+任务/
+adapter/dist/
+adapter/bundle.generated.json
 审查/
 工作规划.md

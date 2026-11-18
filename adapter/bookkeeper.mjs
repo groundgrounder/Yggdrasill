@@ -1,16 +1,15 @@
 // 记账：叙事模型只写正文，每轮之后另调一次模型，按程序给出的 JSON schema 填这一轮的变化，由程序转成命令交协议执行。
 // 本文件不依赖酒馆的全局，可在 node 中测试。记账一方能看到未到的事件，它不写正文，不会剧透。
-import {applyCommands} from '../../core/commands.mjs';
-import {eventStatus} from '../../core/protocol.mjs';
-import {createCalendar} from '../../core/calendar.mjs';
-import {formatCalendar, writableFields, locationList} from '../../core/text.mjs';
-import {stringifyYaml} from '../../core/yaml.mjs';
-import {codepointCompare} from '../../core/utils.mjs';
+import {applyCommands} from '../core/commands.mjs';
+import {eventStatus} from '../core/protocol.mjs';
+import {createCalendar} from '../core/calendar.mjs';
+import {formatCalendar, writableFields, locationList} from '../core/text.mjs';
+import {stringifyYaml} from '../core/yaml.mjs';
+import {codepointCompare, isMap} from '../core/utils.mjs';
 
 const UPCOMING = 15;
 // 事件与分支是引用而不是封闭枚举：由转换层按所属事件核对，才能把“未知引用”与“JSON 形状/枚举错误”分开。
 const REFERENCE_PATHS = new Set(['时间.事件ID', '发生的事件[].事件ID', '发生的事件[].分支ID']);
-const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const joinPath = (path, key) => path ? `${path}.${key}` : key;
 
 // 按 bookkeeper.schema() 实际使用的 JSON Schema 子集校验：type/required/additionalProperties/enum/items。
@@ -56,13 +55,8 @@ const RULES = `你是本局的记账员，不是叙述者。读最新的一段�
 
 export function createBookkeeper({protocol, catalog, decl}) {
   const calendar = createCalendar(decl.calendar);
-  const months = Array.isArray(decl.calendar.每月天数) ? decl.calendar.每月天数 : Array(decl.calendar.月数).fill(decl.calendar.每月天数);
-  const offsets = months.reduce((list, days) => [...list, list.at(-1) + days], [0]), yearDays = offsets.at(-1);
-  const dayText = day => {
-    const year = Math.floor(day / yearDays), rest = day - year * yearDays;
-    const month = offsets.findIndex((offset, index) => rest < offsets[index + 1]) + 1;
-    return `${decl.calendar.前缀}${String(year).padStart(decl.calendar.年位数, '0')}年${String(month).padStart(2, '0')}月${String(rest - offsets[month - 1] + 1).padStart(2, '0')}日`;
-  };
+  // 日期文本直接取内核日历；越界（年位数不够）返回 null，交给调用方跳过。
+  const dayText = day => calendar.formatDay(day);
   const events = new Map(catalog.events.map(event => [event.id, event]));
   const groups = new Map(catalog.groups.map(group => [group.id, group]));
   const windowOf = id => {
@@ -131,12 +125,41 @@ export function createBookkeeper({protocol, catalog, decl}) {
     return {prompts: [{role: 'system', content: system}, {role: 'user', content: user}], schema: {name: '世界树记账', value: schema(state, scope), strict: true}};
   }
 
+  // 变化路径落点的字段声明：只沿映射值与子字段下钻；集合成员、词表、引用、剧情标记与能力维度都视为文本。
+  function schemaOf(path) {
+    const parts = String(path ?? '').split('.');
+    if (parts[0] === '世界' && parts[1] !== '剧情标记') return descend(decl.variables?.世界?.[parts[1]], parts.slice(2));
+    if (parts[0] === '角色' && parts.length >= 3 && parts[2] !== '装备' && !decl.ability?.维度?.[parts[2]])
+      return descend(decl.variables?.角色?.[parts[2]], parts.slice(3));
+    return null;
+  }
+  function descend(schema, parts) {
+    let current = schema;
+    for (const key of parts) {
+      if (current?.映射) current = current.映射.值;
+      else if (current?.子字段?.[key]) current = current.子字段[key];
+      else return null;
+    }
+    return current?.集合 ? current.集合 : current ?? null;
+  }
+  // 装备值只认恰好两段的“状态/位置”；不含斜杠或段数不对时保持原文，交协议拒绝并保留说明。
+  const equipmentPath = path => {
+    const parts = String(path ?? '').split('.');
+    return parts.length === 4 && parts[0] === '角色' && parts[2] === '装备';
+  };
+
   // 记账结果 → 命令。发生的事件按窗口的起点排序，同起点按事件ID码点；起点晚于当前时间的先把时间写到起点再确认。
   // 终点时间、地点与在场分别生成写场景，任一项被协议拒绝不拖垮其它合法变化。
   function toCommands(state, result) {
     const commands = [], errors = [], roleplay = roleplayOf(state);
     let cursor = now(state);
-    const advance = day => { if (day > cursor) { commands.push({写场景: {当前时间: dayText(day)}}); cursor = day; } };
+    const advance = day => {
+      if (day <= cursor) return;
+      const text = dayText(day);
+      if (text === null) return;
+      commands.push({写场景: {当前时间: text}});
+      cursor = day;
+    };
     // 在场差异先算：同回合新角色的确认初始化必须先于事件推进，按事件前状态选择档案。
     const listed = new Set((result?.在场 ?? []).filter(id => groups.has(id) && id !== roleplay));
     const presence = {}, leaving = [];
@@ -178,8 +201,10 @@ export function createBookkeeper({protocol, catalog, decl}) {
       else target = time.方式 === '到事件开始' ? window.start : window.end;
     }
     const previousLocation = state.世界.当前地点?.地标;
-    if (target !== null && target > cursor) commands.push({写场景: {当前时间: dayText(target)}});
-    else if (target !== null && target < cursor) errors.push(`时间早于当前：${targetText}（本局当前 ${dayText(cursor)}）`);
+    if (target !== null && target > cursor) {
+      const text = dayText(target);
+      if (text !== null) commands.push({写场景: {当前时间: text}});
+    } else if (target !== null && target < cursor) errors.push(`时间早于当前：${targetText}（本局当前 ${dayText(cursor) ?? state.世界.当前时间}）`);
     // 场景取模型给的短语；模型留空时，只有地标没变才继承旧场景，否则用新地标，避免把旧地标的场景带到新地标。
     if (result?.地点?.地标) {
       const landmark = result.地点.地标, previous = state.世界.当前地点;
@@ -192,9 +217,14 @@ export function createBookkeeper({protocol, catalog, decl}) {
       if (previousLocation) scene.所在 = Object.fromEntries(leaving.map(id => [id, previousLocation]));
       commands.push({写场景: scene});
     }
+    // 变化值按声明转类型：只有落点是数值字段时才把整数文本转成数字；其余（文本、词表、引用、剧情标记、等级）保持字符串。
     const value = (path, text) => {
-      if (/\.装备\./.test(path) && typeof text === 'string' && text.includes('/')) { const [状态, 位置] = text.split('/'); return {状态, 位置}; }
-      return /^-?\d+$/.test(String(text)) ? Number(text) : text;
+      if (equipmentPath(path)) {
+        const parts = typeof text === 'string' ? text.split('/') : [];
+        return parts.length === 2 && parts.every(part => part.trim()) ? {状态: parts[0], 位置: parts[1]} : text;
+      }
+      const schema = schemaOf(path);
+      return isMap(schema) && Array.isArray(schema.数值) && /^-?\d+$/.test(String(text)) ? Number(text) : text;
     };
     for (const item of result?.新情况 ?? []) {
       const changes = (item?.变化 ?? []).map(change => ({路径: change.路径, 操作: change.操作,
@@ -217,4 +247,29 @@ export function createBookkeeper({protocol, catalog, decl}) {
   }
 
   return {request, run, toCommands, upcoming};
+}
+
+// ---------- 调用侧辅助 ----------
+// 另设模型时用设置里的连接；这些字段只用于请求，不进入楼层记录。
+export function customApi(config) {
+  const connection = config.方式 !== '另设模型' ? {}
+    : config.代理预设 ? {proxy_preset: config.代理预设} : {apiurl: config.地址, key: config.密钥};
+  const extra = config.方式 === '另设模型' ? {model: config.模型, source: config.来源} : {};
+  const temperature = Number(config.温度), length = Number(config.最大长度);
+  return Object.fromEntries(Object.entries({...connection, ...extra, temperature: Number.isFinite(temperature) ? temperature : 0.2,
+    ...(length > 0 ? {max_tokens: Math.round(length)} : {})}).filter(([, item]) => item !== '' && item !== undefined));
+}
+
+// 模型输出可能带 ``` 围栏或前后闲聊；只取最外层的 JSON 对象。
+export function parseJson(text) {
+  if (typeof text !== 'string') throw new Error('模型没有返回文本');
+  const body = text.replace(/^\s*\u0060{3}[^\n]*\n/, '').replace(/\n\u0060{3}\s*$/, '');
+  const start = body.indexOf('{'), end = body.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('找不到 JSON 对象');
+  return JSON.parse(body.slice(start, end + 1));
+}
+
+// 带序号的失败来自协议执行；其余是转换阶段的问题。
+export function keeperFailures(items) {
+  return items.map(item => ({...item, 阶段: Number.isSafeInteger(item.序号) ? '协议执行' : '转换'}));
 }

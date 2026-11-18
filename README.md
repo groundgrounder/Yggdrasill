@@ -81,7 +81,18 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 
 [`presets/yggdrasill.json`](presets/yggdrasill.json) 是配合酒馆使用的 SillyTavern 补全预设：主提示词限定叙述者身份与正文边界，另有一条可编辑的输出长度提示。在酒馆的「预设 → 导入」中载入该文件即可。世界书内容仍由角色卡与脚本注入，预设只影响正文如何生成。
 
-<!-- 建议：如果你有其他常用子命令（如初始化预览、YAML 排版、构建角色卡等），可以在这里补一个简短的 CLI 常用命令速查表 -->
+### 4. 常用命令速查
+
+| 命令 | 用途 |
+| --- | --- |
+| `node cli/ygg.mjs check examples/雾港/世界书` | 静态检查；`--json` 输出机器可读结果，`--static-only` 只跑静态规则 |
+| `node cli/ygg.mjs format examples/雾港/世界书 --check` | 检查 YAML 排版；`--write` 就地改写 |
+| `node cli/ygg.mjs trace examples/雾港/世界书 <对象键>` | 追查一个事件、角色组或条目的引用与影响面 |
+| `node cli/ygg.mjs if examples/雾港/世界书 --排除 大雾之夜` | 按方案、分支或排除项计算如果视图 |
+| `node cli/ygg.mjs preview examples/雾港/世界书 灯塔学徒 --开局 潮历071年04月01日` | 预览开局初始化会交给模型的内容 |
+| `node cli/ygg.mjs view --worldbook examples/雾港/世界书 --port 0` | 启动本地作者视图 |
+
+酒馆适配层的打包与冒烟脚本用 `npm run prepare:adapter`、`npm run build:adapter`、`npm run smoke:adapter` 调用，源码在 [`adapter/`](adapter/)。
 
 ---
 
@@ -142,12 +153,14 @@ Yggdrasill/
 ├── checker/         # 静态检查与检查规则
 ├── cli/             # 命令行入口（ygg.mjs）
 ├── view/            # 本地作者视图服务端与前端页面
+├── adapter/         # 酒馆适配源码、角色卡打包与冒烟脚本
 ├── skills/          # 面向编程代理的写卡与检查工作流 Skill
 ├── presets/         # 酒馆补全预设
 ├── templates/       # 世界书与相关配置模板
 ├── defaults/设定/   # 默认基础设定
 ├── examples/雾港/   # 完整示例世界书
 ├── docs/            # 作者指南、规范正本与酒馆适配文档
+├── legacy/          # 旧实现，只读参考
 └── test/            # 自动化测试（基于 node:test）
 ```
 

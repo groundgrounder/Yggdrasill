@@ -1,12 +1,13 @@
 // 原型的冒烟测试：在 node 中模拟酒馆助手的全局与酒馆的事件顺序，运行 runtime.mjs（未经打包），核对注入、楼层变量、每楼一行与本局面板。
-// 先运行 node 任务/原型/build.mjs --prepare-only。传入 ./dist/runtime.js 则测打包后的脚本。
+// 先运行 node adapter/build.mjs --prepare-only。传入打包后的脚本（如 ./adapter/dist/runtime.js）则测打包产物。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createHash} from 'node:crypto';
-import {loadRouter, seal, applyCommands, route, renderContext, parseYaml} from '../../core/index.mjs';
-import {createProtocol} from '../../core/protocol.mjs';
+import {pathToFileURL} from 'node:url';
+import {loadRouter, seal, applyCommands, route, renderContext, parseYaml} from '../core/index.mjs';
+import {createProtocol} from '../core/protocol.mjs';
 import {createMemFs} from './memfs.mjs';
 import {manifestIssue, storedManifest, MANIFEST_FIELDS} from './records.mjs';
 import {createOpeningDraft, adaptOpeningCommands} from './opening.mjs';
@@ -22,7 +23,7 @@ const clone = value => value === undefined ? undefined : structuredClone(value);
 const foreign = value => value === undefined ? undefined : vm.runInNewContext('JSON.parse(text)', {text: JSON.stringify(value)});
 
 // ---------- 卡面、清单与路径：不调用构建侧 helper，按规范独立复算 ----------
-const repo = path.resolve(import.meta.dirname, '../..');
+const repo = path.resolve(import.meta.dirname, '..');
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const compare = (left, right) => {
   const a = [...left].map(char => char.codePointAt(0)), b = [...right].map(char => char.codePointAt(0));
@@ -69,13 +70,10 @@ assert.equal(digest(manifest.世界书文件), manifest.世界书哈希);
 
 const programPaths = manifest.程序文件.map(item => item.路径);
 assert.deepEqual(programPaths, [...programPaths].sort(compare));
-assert.ok(programPaths.includes('任务/原型/runtime.mjs'));
-assert.ok(programPaths.includes('任务/原型/memfs.mjs'));
-assert.ok(programPaths.includes('任务/原型/bookkeeper.mjs'));
-assert.ok(programPaths.includes('任务/原型/records.mjs'));
-assert.ok(programPaths.includes('任务/原型/opening.mjs'));
+for (const name of ['runtime', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui'])
+  assert.ok(programPaths.includes(`adapter/${name}.mjs`), name);
 for (const name of ['变量更新规则', '角色通用约束', '扮演准则']) assert.ok(programPaths.includes(`templates/${name}.txt`));
-assert.ok(programPaths.every(file => !/^(?:任务\/原型\/(?:build|smoke|bundle\.generated)|dist\/|证据\/|test\/|日志|截图)/.test(file)));
+assert.ok(programPaths.every(file => !/^(?:adapter\/(?:build|smoke|bundle\.generated)|adapter\/dist\/|证据\/|test\/|日志|截图)/.test(file)));
 for (const item of manifest.程序文件) {
   assert.doesNotMatch(item.路径, /(?:^|\/)\.\.?(?:\/|$)|^\/|\\/);
   const content = await fs.readFile(path.join(repo, item.路径));
@@ -222,7 +220,7 @@ async function send(userText, replyText) {
 }
 
 // ---------- 对照：用内核在 node 中直接算 ----------
-const {protocol, router} = await loadRouter(path.resolve(import.meta.dirname, '../../examples/雾港/世界书'), {fs, path});
+const {protocol, router} = await loadRouter(path.resolve(import.meta.dirname, '../examples/雾港/世界书'), {fs, path});
 const strip = text => text.replace(/<命令>\s*\n?([\s\S]*?)<\/命令>/g, '').trim();
 
 // 开局纯计算：自由组合使用雾港真实选项声明，只在内存里把开关打开，不改世界书。
@@ -313,7 +311,8 @@ push(face.开场白, false);
 const greeting = applyCommands(protocol, seal(protocol, face.开局), face.开场命令);
 const initialChat = JSON.stringify(chat);
 holdPopup = true;
-await import(process.argv[2] ?? './runtime.mjs');
+const entry = process.argv[2];
+await import(entry ? pathToFileURL(path.resolve(process.cwd(), entry)).href : new URL('./runtime.mjs', import.meta.url).href);
 await waitUntil(() => popupNodes.length >= 1, '新聊天打开开局界面');
 assert.equal(record(0), undefined, '确认开局前不得创建第 0 楼记录');
 assert.equal(injected['yggdrasill-context'], undefined, '确认开局前不得注入叙事上下文');
@@ -1554,7 +1553,7 @@ await recoverPermission();
 console.log('24 脚本缺失/停用/ID 不符、宿主 API 缺失均报 权限.脚本；关闭记账时正则缺失/停用/placement/未授权报 权限.正则；均清除注入并阻断，恢复后继续；开启记账不受正则故障影响；缺少 $ 或 toastr 时诊断不抛错，仍清理注入并停止生成');
 
 // ---------- 25. 模式无关的卡面、预设与共享模板 ----------
-const preset = JSON.parse(await fs.readFile(new URL('../../presets/yggdrasill.json', import.meta.url), 'utf8'));
+const preset = JSON.parse(await fs.readFile(new URL('../presets/yggdrasill.json', import.meta.url), 'utf8'));
 const presetMain = preset.prompts.find(item => item.identifier === 'main')?.content ?? '';
 assert.doesNotMatch(face.描述, /只写正文/);
 assert.doesNotMatch(face.描述, /另行记账/, '卡面不得把独立记账写成关闭模式的工作');

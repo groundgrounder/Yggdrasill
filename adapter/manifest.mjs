@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {codepointCompare} from '../core/utils.mjs';
 
 export const HASH_ALGORITHM = 'SHA-256';
 export const RECORD_FORMAT = 1;
@@ -17,15 +18,6 @@ const fail = message => {
 
 export function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-export function compareCodePoints(left, right) {
-  const a = [...left].map(char => char.codePointAt(0));
-  const b = [...right].map(char => char.codePointAt(0));
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return a.length - b.length;
 }
 
 // 源相对路径必须以 / 分段，拒绝宿主绝对路径、反斜杠、空段、.、.. 与 NUL。
@@ -54,7 +46,7 @@ export function digestEntries(entries) {
       : normalizeSourcePath(item.路径, '摘要路径');
     if (!/^[0-9a-f]{64}$/.test(item.SHA256)) fail(`摘要中的 SHA-256 不合法：${entryPath}`);
     return [entryPath, item.SHA256];
-  }).sort((a, b) => compareCodePoints(a[0], b[0]));
+  }).sort((a, b) => codepointCompare(a[0], b[0]));
   for (let index = 1; index < ordered.length; index++) {
     if (ordered[index - 1][0] === ordered[index][0]) fail(`规范化路径重复：${ordered[index][0]}`);
   }
@@ -82,7 +74,7 @@ function textEntry(file, buffer) {
 
 async function walkWorldbook(directory, relative, realRoot, entries) {
   const children = await fs.readdir(directory, {withFileTypes: true});
-  children.sort((a, b) => compareCodePoints(a.name, b.name));
+  children.sort((a, b) => codepointCompare(a.name, b.name));
   for (const child of children) {
     if (child.isSymbolicLink()) fail(`不跟随符号链接：${path.join(directory, child.name)}`);
     const full = path.join(directory, child.name);
@@ -123,22 +115,56 @@ export async function collectWorldbook(project) {
     entries.push({路径: virtualPath('yggdrasill.yaml'), 长度: item.bytes, SHA256: item.SHA256, text: item.text});
   }
 
-  entries.sort((a, b) => compareCodePoints(a.路径, b.路径));
+  entries.sort((a, b) => codepointCompare(a.路径, b.路径));
   for (let index = 1; index < entries.length; index++) {
     if (entries[index - 1].路径 === entries[index].路径) fail(`规范化路径重复：${entries[index].路径}`);
   }
   return entries;
 }
 
-function importSpecifiers(source) {
+// 剥离 // 与 /* */ 注释；字符串与模板字面量原样保留，注释里的示例 import 不参与收集。
+export function stripComments(source) {
+  let result = '', index = 0;
+  while (index < source.length) {
+    const char = source[index], next = source[index + 1];
+    if (char === '/' && next === '/') {
+      while (index < source.length && source[index] !== '\n') index += 1;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1;
+      index += 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      const quote = char;
+      result += char;
+      index += 1;
+      while (index < source.length) {
+        const inner = source[index];
+        result += inner;
+        if (inner === '\\' && index + 1 < source.length) { result += source[index + 1]; index += 2; continue; }
+        index += 1;
+        if (inner === quote) break;
+      }
+      continue;
+    }
+    result += char;
+    index += 1;
+  }
+  return result;
+}
+
+export function importSpecifiers(source) {
   const found = [];
   const pattern = /(?:\bimport\s+(?:[^;]*?\s+from\s+)?|\bexport\s+[^;]*?\s+from\s+|\bimport\s*\(\s*)['"]([^'"]+)['"]/g;
-  for (const match of source.matchAll(pattern)) found.push(match[1]);
+  for (const match of stripComments(source).matchAll(pattern)) found.push(match[1]);
   return found;
 }
 
 // 程序指纹只收运行入口递归导入的本地源码、esbuild 的 node:url 替换件和固定模板。
-export async function collectProgram(repo, {entry = '任务/原型/runtime.mjs', templates = PROGRAM_TEMPLATES} = {}) {
+export async function collectProgram(repo, {entry = 'adapter/runtime.mjs', templates = PROGRAM_TEMPLATES} = {}) {
   const realRepo = await fs.realpath(repo);
   const files = new Map();
 
@@ -163,10 +189,10 @@ export async function collectProgram(repo, {entry = '任务/原型/runtime.mjs',
   }
 
   await visit(normalizeSourcePath(entry));
-  await visit('任务/原型/node-url-shim.mjs');
+  await visit('adapter/node-url-shim.mjs');
   for (const name of templates) await visit(normalizeSourcePath(`templates/${name}.txt`, '模板路径'));
 
-  return [...files.values()].sort((a, b) => compareCodePoints(a.路径, b.路径));
+  return [...files.values()].sort((a, b) => codepointCompare(a.路径, b.路径));
 }
 
 export function createManifest({cardId, cardVersion, programVersion, worldbook, program, compatible = []}) {
@@ -186,4 +212,31 @@ export function createManifest({cardId, cardVersion, programVersion, worldbook, 
     程序文件: program.map(({text, ...item}) => item),
     哈希算法: HASH_ALGORITHM,
   };
+}
+
+// esbuild metafile 的本地输入：排除 node_modules、构建产物、alias 替换件与单独纳入的模板。
+const FIXED_INPUTS = [/^adapter\/bundle\.generated\.json$/, /^adapter\/node-url-shim\.mjs$/, /^templates\/[^/]+\.txt$/];
+
+export function programInputs(inputs, {repo, cwd = repo} = {}) {
+  return Object.keys(inputs ?? {}).map(key => path.relative(repo, path.resolve(cwd, key)).split(path.sep).join('/'))
+    .filter(relative => relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+    .filter(relative => !relative.split('/').includes('node_modules'))
+    .filter(relative => !FIXED_INPUTS.some(pattern => pattern.test(relative)))
+    .sort(codepointCompare);
+}
+
+// 清单程序集合必须与 esbuild 实际打包的本地模块严格一致：漏算会让指纹认不出真实模块，多算会让指纹随未打包文件漂移。
+export function assertProgramMatches(program, inputs, {repo, cwd = repo} = {}) {
+  const collected = program.map(item => item.路径)
+    .filter(item => /\.(?:mjs|js)$/.test(item) && item !== 'adapter/node-url-shim.mjs')
+    .sort(codepointCompare);
+  const bundled = programInputs(inputs, {repo, cwd});
+  const extra = collected.filter(item => !bundled.includes(item));
+  const missing = bundled.filter(item => !collected.includes(item));
+  if (!extra.length && !missing.length) return {bundled};
+  const error = new Error('构建失败：esbuild 实际打包的本地模块与程序清单不一致'
+    + (extra.length ? `；清单多出未打包文件：${extra.join('、')}` : '')
+    + (missing.length ? `；清单漏掉实际打包文件：${missing.join('、')}` : ''));
+  error.code = '清单.程序覆盖';
+  throw error;
 }

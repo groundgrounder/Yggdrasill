@@ -1,10 +1,10 @@
 // 开局草稿：把卡面初值、方案与玩家改动整理成 seal 的输入，并在内存中预演或准备第 0 楼记录。
 // 这里不处理历史求解、排斥检查或命令语义；这些仍由 protocol.seal 与 applyCommands 决定。
-import {createCalendar} from '../../core/calendar.mjs';
-import {applyCommands} from '../../core/commands.mjs';
-import {parseYaml, stringifyYaml} from '../../core/yaml.mjs';
+import {createCalendar} from '../core/calendar.mjs';
+import {applyCommands} from '../core/commands.mjs';
+import {parseYaml, stringifyYaml} from '../core/yaml.mjs';
+import {isMap} from '../core/utils.mjs';
 
-const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const has = (value, key) => Object.hasOwn(value ?? {}, key);
 const clone = value => value === undefined ? undefined : structuredClone(value);
 const FIELDS = ['开局时间', '方案', '角色组', '玩家', '历史选择'];
@@ -303,4 +303,125 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
       错误: failure ? clone(failure) : null,
     }),
   };
+}
+
+// ---------- 开局流程 ----------
+// 弹窗、提交与失败提示：宿主函数（聊天读写、记录写入、队列与路由刷新）由调用方注入，草稿与预演仍用本文件上方的纯函数。
+export function createOpeningFlow({protocol, catalog, decl, defaults, commands, messages, chatId, ownershipOf, recordOf,
+  validateRecord, manifest, store, taskFor, enqueue, refresh, audit, session, status, nodeOf, popup}) {
+  function openingFailure(draft, message, error = null) {
+    const failure = error ? {code: error.code ?? '开局.失败', 说明: error.说明 ?? error.message ?? String(error)}
+      : {code: '开局.失败', 说明: message};
+    draft.fail(failure);
+    status.pendingOpening(message);
+    toastr.error(failure.说明, '世界树：无法开局');
+    return false;
+  }
+
+  // 第 0 楼提交是原子的：最后一次检查在完整封卷与命令执行之后、变量写入之前；写入失败时回滚原变量。
+  async function commit(draft, origin) {
+    return enqueue(async () => {
+      if (chatId() !== origin.聊天ID) return openingFailure(draft, '聊天已切换，本次开局草稿已作废');
+      let list = messages(), first = list[0];
+      if (!first || first.role !== 'assistant') return openingFailure(draft, '新聊天缺少开场白，不能在其它楼层上补开局');
+      if (ownershipOf(first).正文指纹 !== origin.正文指纹) return openingFailure(draft, '开场白已改变，本次开局草稿已作废');
+
+      const existing = recordOf(first);
+      if (existing !== undefined) {
+        const checked = validateRecord(existing, first, manifest);
+        if (!checked.ok) { status.blocked({...checked, 楼号: 0}); return false; }
+        session.openingPending = false;
+        session.integrity = null;
+        refresh();
+        toastr.warning('第 0 楼已经有有效开局记录，本次重复提交未写入。', '世界树：开局已存在');
+        return true;
+      }
+      if (list.length !== 1) return openingFailure(draft, '新聊天已有其它楼层，不能把开局写进第 0 楼');
+
+      const task = taskFor(0, '开场命令');
+      const prepared = draft.prepare();
+      if (!prepared.ok) return openingFailure(draft, prepared.error?.说明 ?? '开局准备失败', prepared.error);
+
+      // 最后一次检查放在完整封卷与命令执行之后、变量写入之前，避免并发提交覆盖。
+      list = messages(); first = list[0];
+      if (chatId() !== origin.聊天ID || !first || first.role !== 'assistant'
+        || ownershipOf(first).正文指纹 !== origin.正文指纹) return openingFailure(draft, '聊天或开场白已变化，本次开局草稿已作废');
+      if (recordOf(first) !== undefined) return openingFailure(draft, '第 0 楼已经出现记录，本次开局草稿已作废');
+
+      const original = structuredClone(getVariables({type: 'message', message_id: 0}));
+      try {
+        const written = await store(0, prepared.record, task);
+        if (!written) throw new Error('开场记录写入前，聊天或正文已经变化');
+        const checked = validateRecord(recordOf(messages()[0]), messages()[0], manifest);
+        if (!checked.ok) throw new Error('开场记录写入后校验失败：' + checked.说明);
+      } catch (error) {
+        try { await replaceVariables(original, {type: 'message', message_id: 0}); }
+        catch (rollbackError) {
+          return openingFailure(draft, '开局保存失败，且原变量回滚失败：' + rollbackError.message, error);
+        }
+        return openingFailure(draft, '开局保存失败，原变量已保留：' + error.message, error);
+      }
+
+      session.openingPending = false;
+      session.integrity = null;
+      refresh();
+      toastr.success('第 0 楼已原子写入；开场命令、记录与路由均已就绪。', '世界树：开局完成');
+      return true;
+    });
+  }
+
+  function modal(node, options) {
+    if (typeof SillyTavern.Popup !== 'function') return popup(node, options);
+    const instance = new SillyTavern.Popup(node, SillyTavern.POPUP_TYPE.TEXT, '', {...options, allowVerticalScrolling: true});
+    session.openingPopup = instance;
+    return instance.show().finally(() => { if (session.openingPopup === instance) session.openingPopup = null; });
+  }
+
+  async function open() {
+    const list = messages(), first = list[0];
+    if (!first || first.role !== 'assistant') return status.pendingOpening('尚未开局：缺少开场白');
+    if (recordOf(first) !== undefined) {
+      session.integrity = null;
+      session.openingPending = false;
+      const auditResult = audit(list);
+      if (!auditResult.ok) return status.blocked(auditResult);
+      if (!session.openingOpen) toastr.info('本局已经开局；如需新选择，请新建聊天。', '世界树：开局已存在');
+      refresh();
+      return false;
+    }
+    if (list.length !== 1) return status.blocked({code: '记录.缺失', 说明: '第 0 楼缺少开局记录，后面的楼层不能越过缺口', 楼号: 0});
+    session.openingPending = true;
+    session.integrity = null;
+    if (session.openingOpen) { status.renderFloors(); return false; }
+    session.openingOpen = true;
+    const draft = createOpeningDraft({protocol, catalog, decl, defaults, commands});
+    const origin = {聊天ID: chatId(), 正文指纹: ownershipOf(first).正文指纹};
+    try {
+      await modal(nodeOf(draft), {
+        wide: true, large: true, okButton: '提交开局', cancelButton: '取消',
+        onClosing: async dialog => {
+          if (session.openingClosingForChat) return true;
+          const affirmative = SillyTavern.POPUP_RESULT?.AFFIRMATIVE ?? 1;
+          if (dialog?.result !== affirmative) {
+            status.pendingOpening('已取消，可从“世界树：开局”重新打开');
+            toastr.info('尚未开局；没有执行开场命令、创建记录或发送叙事请求。', '世界树：已取消开局');
+            return true;
+          }
+          return commit(draft, origin);
+        },
+        onClose: () => {
+          session.openingOpen = false;
+          if (session.openingPending) status.renderFloors();
+        },
+      });
+    } catch (error) {
+      openingFailure(draft, '开局界面失败：' + error.message, error);
+    } finally {
+      session.openingOpen = false;
+      if (session.openingPending) status.renderFloors();
+    }
+    return false;
+  }
+
+  return {open};
 }

@@ -16,7 +16,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepare:adapter": "node adapter/build.mjs --prepare-only",
+    "build:adapter": "node adapter/build.mjs",
+    "smoke:adapter": "node adapter/smoke.mjs"
   },
   "dependencies": {
     "yaml": "2.9.1"

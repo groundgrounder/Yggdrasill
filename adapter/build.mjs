@@ -1,20 +1,22 @@
-// 原型打包：node 任务/原型/build.mjs [项目目录，缺省 examples/雾港] [--face 卡面文件，缺省 卡面.yaml] [--prepare-only] [--compatible <旧程序指纹>]...
+// 原型打包：node adapter/build.mjs [项目目录，缺省 examples/雾港] [--face 卡面文件，缺省 卡面.yaml] [--prepare-only] [--compatible <旧程序指纹>]...
 // --prepare-only 只生成 bundle.generated.json，不调用 esbuild（供 smoke.mjs 在 node 中直接运行 runtime.mjs）。
 // 世界书、程序依赖与卡面先规范化并校验，再由同一份构建清单驱动 bundle 与角色卡。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {checkWorldbook} from '../../checker/index.mjs';
-import {parseYaml} from '../../core/yaml.mjs';
-import {loadRouter} from '../../core/router.mjs';
-import {seal} from '../../core/protocol.mjs';
-import {applyCommands} from '../../core/commands.mjs';
-import {collectProgram, collectWorldbook, createManifest, PROGRAM_TEMPLATES, RUNTIME_ROOT} from './manifest.mjs';
+import {checkWorldbook} from '../checker/index.mjs';
+import {parseYaml} from '../core/yaml.mjs';
+import {loadRouter} from '../core/router.mjs';
+import {seal} from '../core/protocol.mjs';
+import {applyCommands} from '../core/commands.mjs';
+import {isMap} from '../core/utils.mjs';
+import {assertProgramMatches, collectProgram, collectWorldbook, createManifest, PROGRAM_TEMPLATES, RUNTIME_ROOT} from './manifest.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.resolve(here, '../..');
+const repo = path.resolve(here, '..');
 const args = process.argv.slice(2);
 let projectArg = null, faceArg = '卡面.yaml', prepareOnly = false;
 const compatible = [];
@@ -37,7 +39,6 @@ const faceFile = path.resolve(here, faceArg);
 const project = path.resolve(repo, projectArg ?? 'examples/雾港');
 const ESBUILD = 'esbuild@0.28.2';
 
-const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const nonEmptyText = (value, label) => {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`卡面字段“${label}”须为非空文本`);
 };
@@ -103,8 +104,17 @@ catch {
 const dist = path.join(here, 'dist');
 await fs.mkdir(dist, {recursive: true});
 const out = path.join(dist, 'runtime.js');
-execFileSync(esbuild, [path.join(here, 'runtime.mjs'), '--bundle', '--format=esm', '--platform=browser',
-  `--alias:node:url=${path.join(here, 'node-url-shim.mjs')}`, '--charset=utf8', '--legal-comments=none', `--outfile=${out}`], {stdio: 'inherit'});
+// 读回 esbuild 的 metafile，核对实际打包的本地模块与清单程序集合严格一致。
+const metafileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'yggdrasill-metafile-'));
+try {
+  const metafile = path.join(metafileDir, 'meta.json');
+  execFileSync(esbuild, [path.join(here, 'runtime.mjs'), '--bundle', '--format=esm', '--platform=browser',
+    `--alias:node:url=${path.join(here, 'node-url-shim.mjs')}`, '--charset=utf8', '--legal-comments=none',
+    `--outfile=${out}`, `--metafile=${metafile}`], {stdio: 'inherit', cwd: repo});
+  assertProgramMatches(program, JSON.parse(await fs.readFile(metafile, 'utf8')).inputs, {repo, cwd: repo});
+} finally {
+  await fs.rm(metafileDir, {recursive: true, force: true});
+}
 // 脚本内容放在 iframe 的 <script type="module"> 中，不能出现 </script。
 const script = (await fs.readFile(out, 'utf8')).replace(/<\/script/gi, '<\\/script');
 

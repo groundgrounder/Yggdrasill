@@ -1,5 +1,7 @@
-// 正式楼层记录：正文归属、运行清单兼容、字段完整性与快照重放。这里只做纯计算，不读写酒馆。
+// 正式楼层记录：正文归属、运行清单兼容、字段完整性、历史裁决与快照重放。这里只做纯计算，不读写酒馆。
 // 正文指纹使用 UTF-8 字节的 SHA-256；浏览器与 node 共用，不能依赖 node:crypto。
+import {applyCommands} from '../core/commands.mjs';
+import {isMap} from '../core/utils.mjs';
 
 export const RECORD_KEY = '世界树';
 export const RECORD_FORMAT = 1;
@@ -17,7 +19,6 @@ const K = [
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-const isMap = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const rotate = (value, bits) => (value >>> bits) | (value << (32 - bits));
 const hex = value => (value >>> 0).toString(16).padStart(8, '0');
 
@@ -166,4 +167,110 @@ export function sanitizeRaw(value, key = '') {
   if (Array.isArray(value)) return value.map(item => sanitizeRaw(item));
   if (isMap(value)) return Object.fromEntries(Object.entries(value).map(([child, item]) => [child, sanitizeRaw(item, child)]));
   return typeof value === 'string' ? sanitizeText(value) : value;
+}
+
+// 任务的楼层记录挂在 message.data 的固定键下；玩家楼即使带着复制变量也不是助手记录。
+export const recordOf = message => message?.data?.[RECORD_KEY];
+
+// 失败项与记账摘要的固定形状；说明先去掉连接凭据再写入记录。
+export const failure = (阶段, 错误码, 说明, extra = {}) => ({阶段, 错误码, 说明: sanitizeRaw(String(说明 ?? '')), ...extra});
+export const bookkeepingMeta = (方式, 应答格式, 状态, 尝试次数, extra = {}) => ({方式, 应答格式, 状态, 尝试次数, ...extra});
+
+function mergeFailures(...groups) {
+  const seen = new Set(), result = [];
+  for (const item of groups.flat()) {
+    const key = JSON.stringify(item);
+    if (!seen.has(key)) { seen.add(key); result.push(item); }
+  }
+  return result;
+}
+
+// 历史裁决：载入审计、逐楼重放与归属核对都只读记录，调用方负责写入。
+export function createHistoryAudit({protocol, manifest}) {
+  // 按记录重放；执行器异常时保留底本，并把执行失败并入记录失败。
+  function replay(base, record) {
+    let replayed;
+    try { replayed = replayRecord(record, base, (state, commands) => applyCommands(protocol, state, commands)); }
+    catch (error) {
+      return {本局: base, 命令: null, 失败: mergeFailures(record.失败 ?? [], [failure('执行', error.code ?? '执行.异常', error.message)]),
+        已写入: [], 记账: {...record.记账, 状态: '执行失败'}, replayFailed: true};
+    }
+    const failures = (replayed.失败 ?? []).map(item => failure('协议执行', item.错误码, item.说明,
+      {...(Number.isSafeInteger(item.序号) ? {序号: item.序号} : {}), ...(item.命令 ? {命令: item.命令} : {})}));
+    const allFailures = mergeFailures(record.失败 ?? [], failures);
+    return {...record, 本局: replayed.state, 命令: replayed.commands, 失败: allFailures, 已写入: replayed.已写入,
+      ...(failures.length ? {记账: {...record.记账, 状态: '部分失败'}} : {}), replayFailed: failures.length > 0};
+  }
+
+  // 所有已有助手楼的记录结构都必须兼容；快照是否相同由载入审计单独核对。
+  function checkRecords(list, {from = 0, skip = null, shifted = false} = {}) {
+    for (let id = from; id < list.length; id++) {
+      const message = list[id];
+      if (message.role !== 'assistant' || id === skip) continue;
+      const stored = recordOf(message);
+      // 删除前置楼层会让酒馆重排楼号；只在这个用户触发的传播入口核对正文、角色与 swipe，写入时换新楼号。
+      const candidate = shifted && stored?.归属 && typeof stored.归属 === 'object'
+        ? {...stored, 归属: {...stored.归属, 楼号: message.message_id}} : stored;
+      const checked = validateRecord(candidate, message, manifest);
+      if (!checked.ok) return {...checked, 楼号: id};
+    }
+    return {ok: true};
+  }
+
+  // 本楼正文已变化时，只在内存里把归属换成当前正文，先验证旧记录仍属于兼容格式；不补字段、不迁移。
+  function checkChangedAssistant(message) {
+    const stored = recordOf(message);
+    if (stored === undefined) return {ok: true};
+    if (!stored?.归属 || typeof stored.归属 !== 'object') return validateRecord(stored, message, manifest);
+    return validateRecord({...stored, 归属: ownershipOf(message)}, message, manifest);
+  }
+
+  // 载入只读校验：第 0 楼是已封卷的选择结果，作为本局根；后续楼逐楼重放并比对快照。
+  // 不同聊天可以选择不同开局，不能再拿卡面默认封卷去重放每一份第 0 楼记录。
+  function audit(list, {end = list.length, skip = null, ignoreOwnership = null} = {}) {
+    let state = null;
+    for (let id = 0; id < end; id++) {
+      const message = list[id];
+      if (message.role !== 'assistant' || id === skip) continue;
+      const record = recordOf(message);
+      const candidate = id === ignoreOwnership && record?.归属 && typeof record.归属 === 'object'
+        ? {...record, 归属: ownershipOf(message)} : record;
+      const checked = validateRecord(candidate, message, manifest);
+      if (!checked.ok) return {...checked, 楼号: id};
+      if (id === 0) {
+        if (candidate.本局?.开局?.已封卷 !== true)
+          return {ok: false, code: '开局.封卷', 说明: '第 0 楼没有已封卷的开局设定', 楼号: 0};
+        let replayed;
+        try {
+          const opening = candidate.本局.开局;
+          const seeded = protocol.seal({开局时间: opening.开局时间, 角色组: opening.角色组, 玩家: opening.玩家,
+            历史选择: opening.历史选择, ...(opening.方案 ? {方案: opening.方案} : {})});
+          replayed = replayRecord(candidate, seeded, (base, commands) => applyCommands(protocol, base, commands));
+          protocol.createReadView(candidate.本局);
+        } catch (error) {
+          return {ok: false, code: error.code ?? '开局.封卷', 说明: '第 0 楼不是可重放的已封卷本局：' + error.message, 楼号: 0};
+        }
+        if (replayed.失败.length) return {ok: false, code: '重放.命令', 说明: '第 0 楼保存的开场命令重放失败', 楼号: 0};
+        if (!sameSnapshot(replayed.state, candidate.本局))
+          return {ok: false, code: '重放.失配', 说明: '第 0 楼命令重放结果与保存的本局不一致', 楼号: 0};
+        if (JSON.stringify(replayed.已写入) !== JSON.stringify(candidate.已写入))
+          return {ok: false, code: '重放.写入', 说明: '第 0 楼开场命令写入摘要与记录不一致', 楼号: 0};
+        state = candidate.本局;
+        continue;
+      }
+      if (state === null) return {ok: false, code: '记录.缺失', 说明: '第 0 楼没有可用的开局记录', 楼号: 0};
+      let replayed;
+      try { replayed = replayRecord(candidate, state, (base, commands) => applyCommands(protocol, base, commands)); }
+      catch (error) { return {ok: false, code: '重放.执行', 说明: error.message, 楼号: id}; }
+      if (replayed.失败.length) return {ok: false, code: '重放.命令', 说明: '保存的成功命令在当前底本上执行失败', 楼号: id};
+      if (!sameSnapshot(replayed.state, record.本局))
+        return {ok: false, code: '重放.失配', 说明: '命令重放结果与保存的本局不一致', 楼号: id};
+      if (JSON.stringify(replayed.已写入) !== JSON.stringify(record.已写入))
+        return {ok: false, code: '重放.写入', 说明: '命令重放写入摘要与记录不一致', 楼号: id};
+      state = record.本局;
+    }
+    return {ok: true, state};
+  }
+
+  return {replay, checkRecords, checkChangedAssistant, audit};
 }

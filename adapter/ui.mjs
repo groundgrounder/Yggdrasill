@@ -282,3 +282,111 @@ export function settingsNode({current, save, presets = [], activeModel = '', pul
   sync();
   return form;
 }
+
+// 状态、弹窗与每楼一行：运行时状态由调用方持有（session），这里只按状态画提示并处理权限/只读的展示。
+export const popup = (node, options = {wide: true, large: true}) =>
+  SillyTavern.callGenericPopup(node, SillyTavern.POPUP_TYPE.TEXT, '', {...options, allowVerticalScrolling: true});
+
+export function createStatusView({session, injectId, messages, recordOf, checkRecord, floorOf, keeperSettings, openOpening, rekeepFor}) {
+  const show = (title, text) => popup(textNode(title, text));
+  const showSections = (title, sections) => popup(panelNode(title, sections));
+  const showBlocked = () => showSections('存档不可用（只读）', [{标题: '世界树', 展开: true,
+    行: [session.integrity.说明, '错误码：' + session.integrity.code
+      + (Number.isSafeInteger(session.integrity.楼号) ? '，楼号：' + session.integrity.楼号 : ''),
+    '原始变量保持不变；不会自动迁移、补记账、提交命令或继续生成。']}]);
+
+  // 权限诊断自身可能运行在残缺宿主上：toast 缺失时保留控制台诊断，不把诊断变成新的异常。
+  function toastError(body, title) {
+    try {
+      if (typeof globalThis.toastr?.error === 'function') { globalThis.toastr.error(body, title); return; }
+    } catch (error) { console.warn('世界树：toast 失败', error); }
+    console.error(title + '：' + body);
+  }
+
+  function clearInjection() {
+    if (typeof globalThis.uninjectPrompts !== 'function') return;
+    try { globalThis.uninjectPrompts([injectId]); } catch (error) { console.warn('世界树：注入清理失败', error); }
+  }
+
+  function attachFloor(id, node) {
+    const box = retrieveDisplayedMessage(id);
+    if (box.length) box.after(node); else $('#chat').append(node);
+  }
+
+  function renderFloors() {
+    if (typeof globalThis.$ !== 'function') return;
+    $('#chat .ygg-floor').remove();
+    if (session.permission) {
+      const id = messages().at(-1)?.message_id;
+      const node = permissionNode('权限不足：' + session.permission.说明 + '\n原因：' + session.permission.code
+        + '\n原始聊天与楼层变量未被改写；恢复权限后重新生成即可继续。');
+      if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
+      return;
+    }
+    if (session.openingPending) {
+      const id = messages()[0]?.message_id, node = openingStatusNode({open: openOpening,
+        reason: session.last?.error?.startsWith('已取消') ? '上一次开局已取消，选择仍可重新打开。' : '请先打开开局并确认。'});
+      if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
+      return;
+    }
+    if (session.integrity) {
+      const id = Number.isSafeInteger(session.integrity.楼号) ? session.integrity.楼号 : messages().at(-1)?.message_id;
+      const node = readOnlyNode('存档只读：' + session.integrity.说明,
+        ['原因：' + session.integrity.code, '原始楼层变量保持不变；不会自动迁移、补记账、提交命令或继续生成。',
+         '继续游玩请新建兼容聊天，或切换到合法的聊天。'].join('\n'));
+      if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
+      return;
+    }
+    if (!keeperSettings().每楼记录) return;
+    const verbose = keeperSettings().调试 === true, rekeep = keeperSettings().方式 !== '关闭';
+    let before = null;
+    for (const message of messages()) {
+      const id = message.message_id;
+      if (id === session.keepingFloor) { attachFloor(id, floorNode(null, {pending: true})); continue; }
+      if (message.role !== 'assistant') continue;
+      const record = recordOf(message);
+      if (!checkRecord(record, message)) continue;
+      try {
+        if (id === 0) before = {世界: {当前时间: record.本局?.世界?.当前时间, 剧情标记: record.本局?.世界?.剧情标记 ?? {}},
+          开局: record.本局?.开局 ?? {}, 角色: {}, 事件: {}, 待定项: []};
+        if (before === null) continue;
+        const line = floorOf(before, record.本局, record, verbose);
+        const again = rekeep && id > 0 ? rekeepFor(id) : null;
+        attachFloor(id, floorNode(line, {rekeep: again}));
+        before = record.本局;
+      } catch (error) { console.warn('世界树：每楼记录', error); }
+    }
+  }
+
+  function blocked(result) {
+    session.openingPending = false;
+    session.integrity = {code: result.code ?? '校验.失败', 说明: result.说明 ?? '楼层记录不可用', 楼号: result.楼号};
+    session.last = {error: session.integrity.说明, code: session.integrity.code, floor: session.integrity.楼号};
+    uninjectPrompts([injectId]);
+    renderFloors();
+    toastr.error(session.integrity.说明, '世界树：存档只读（' + session.integrity.code + '）');
+    return false;
+  }
+
+  function permissionBlocked(result) {
+    const changed = !session.permission || session.permission.code !== result.code || session.permission.说明 !== result.说明;
+    session.permission = {code: result.code ?? '权限.失败', 说明: result.说明 ?? '卡内脚本或局部正则未获准'};
+    session.integrity = null;
+    session.last = {error: session.permission.说明, code: session.permission.code, floor: null};
+    clearInjection();
+    try { renderFloors(); } catch (error) { console.warn('世界树：权限提示渲染失败', error); }
+    if (changed) toastError(session.permission.说明, '世界树：权限不足（' + session.permission.code + '）');
+    return false;
+  }
+
+  function pendingOpening(reason = '尚未开局') {
+    session.openingPending = true;
+    session.integrity = null;
+    session.last = {error: reason, code: '开局.未完成', floor: 0};
+    uninjectPrompts([injectId]);
+    renderFloors();
+    return false;
+  }
+
+  return {show, showSections, showBlocked, toastError, clearInjection, renderFloors, attachFloor, blocked, permissionBlocked, pendingOpening};
+}
