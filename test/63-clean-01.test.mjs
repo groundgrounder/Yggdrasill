@@ -246,12 +246,13 @@ test('清理-01-A3：预览缺省时间轴错误、开局缺省与非法时间�
   assert.match(invalidValue.异常[0].说明, /潮历坏/u);
 });
 
-test('清理-01-A4：静态白名单返回四个脚本模块，穿越仍 404', async t => {
+test('清理-01-A4：静态白名单返回九个脚本模块，穿越仍 404', async t => {
   const root = await fixture(t);
   const storage = path.join(path.dirname(root), '审阅');
   const app = await startViewServer({worldbook: root, storage, port: 0, repoRoot: project});
   t.after(() => app.close());
-  for (const asset of ['/app.js', '/dom.js', '/canvas-views.js', '/inspector.js']) {
+  for (const asset of ['/app.js', '/dom.js', '/canvas-views.js', '/inspector.js', '/context-view.js',
+    '/stats-view.js', '/condition-editor.js', '/event-editor.js', '/position-editor.js']) {
     const response = await fetch(app.url + asset);
     assert.equal(response.status, 200, asset);
     assert.match(response.headers.get('content-type'), /^text\/javascript/u, asset);

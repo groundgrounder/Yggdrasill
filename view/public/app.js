@@ -1,6 +1,9 @@
 import {$, button, details, el, notice, selectOptions} from './dom.js';
 import {renderCharacterSummary, renderIfView, renderLocalGraph, renderTimeline, runIf} from './canvas-views.js';
 import {renderInspector, saveEvent, saveReview} from './inspector.js';
+import {renderContextView} from './context-view.js';
+import {bindStatsDialog, openStatsDialog} from './stats-view.js';
+import {bindCreateEventDialog, openCreateEventDialog} from './event-editor.js';
 
 const state = {
   data: null, token: null, review: {revision: '', value: {notes: {}, layout: {}}}, server: null,
@@ -11,6 +14,7 @@ const state = {
   preview: null, previewError: null, saveReport: null, ifResult: null, ifBusy: false, ifError: null,
   ifForm: {方案: '', 选择: {}, 停用: new Set()}, ifQueued: false,
   groupView: {groupID: '', versionID: '', profileID: '', compareA: '', compareB: ''},
+  positionDrafts: new Map(), positionTarget: null, createDraft: null,
   localFocus: '', error: null,
   toastTimer: null,
 };
@@ -148,6 +152,7 @@ function renderViews() {
     ['local', '局部关系', `层 ${state.depth}`],
     ['characters', '角色汇总', `${groups().length} 组`],
     ['if', '如果视图', `${state.data?.开局?.方案?.length ?? 0} 方案`],
+    ['context', '上下文预览', '只读'],
   ];
   view.replaceChildren(...entries.map(([key, label, note]) => el('button', {type: 'button',
     class: state.view === key ? 'active' : '', 'aria-pressed': state.view === key ? 'true' : 'false',
@@ -183,6 +188,8 @@ function renderToolbar() {
     items.push(button('＋', () => { state.zoom = Math.min(240, state.zoom + 16); renderCanvas(); renderToolbar(); }, ''));
     items.push(button('折叠全部', () => { for (const chain of state.data?.事件串 ?? []) state.collapsed.add(chain.事件串ID); renderCanvas(); }));
     items.push(button('展开全部', () => { state.collapsed.clear(); renderCanvas(); }));
+    items.push(button('台词统计 / 导出树', () => openStatsDialog(app), ''));
+    items.push(button('＋ 新建事件', () => openCreateEventDialog(app), 'primary'));
   }
   else if (state.view === 'local') {
     ensureLocalFocus();
@@ -193,6 +200,9 @@ function renderToolbar() {
   }
   else if (state.view === 'characters') {
     items.push(el('span', {class: 'caption'}, '档案初始值、事件变化与暂存分区显示'));
+  }
+  else if (state.view === 'context') {
+    items.push(el('span', {class: 'caption'}, '只读推演一局；运行按钮在表单底部'));
   }
   else if (state.view === 'if') {
     items.push(button(state.ifBusy ? '计算中…' : '运行如果视图', guarded(() => runIf(app)), 'primary'));
@@ -216,6 +226,10 @@ function renderLegend() {
     legend.replaceChildren(el('span', {}, '档案初始值'), el('span', {}, '事件变化（定义，不等于已发生）'),
       el('span', {}, '暂存未接回（不计入当前档案）'), el('span', {}, '手动查阅，不读本局快照'));
   }
+  else if (state.view === 'context') {
+    legend.replaceChildren(el('span', {}, '唯一事实来源：core/context-preview.mjs'),
+      el('span', {}, '只读推演，不写世界书与本局'), el('span', {}, '预算审计与 ygg context 同源'));
+  }
   else {
     legend.replaceChildren(el('span', {}, '唯一事实来源：core/what-if.mjs'), el('span', {}, '不另写路径计算'),
       el('span', {}, '影响面是提示，不是新门槛'));
@@ -238,6 +252,7 @@ function renderCanvas() {
   if (state.view === 'world') renderTimeline(app, canvas);
   else if (state.view === 'local') renderLocalGraph(app, canvas);
   else if (state.view === 'characters') renderCharacterSummary(app, canvas);
+  else if (state.view === 'context') renderContextView(app, canvas);
   else renderIfView(app, canvas);
 }
 
@@ -275,14 +290,17 @@ function renderAll() {
   renderCanvas();
   renderInspector(app);
   renderLegend();
-  $('#viewTitle').textContent = {world: '世界主树', local: '局部关系', characters: '角色汇总', if: '如果视图'}[state.view] ?? '';
+  $('#viewTitle').textContent = {world: '世界主树', local: '局部关系', characters: '角色汇总',
+    if: '如果视图', context: '上下文预览'}[state.view] ?? '';
   $('#viewSubtitle').textContent = state.view === 'world'
     ? '按事件串分组的时间轴；缩放、折叠、搜索与筛选只影响显示。'
     : state.view === 'local'
       ? `围绕焦点展开 1–5 层；条件、排斥与普通关联来自现行引用索引。`
       : state.view === 'characters'
         ? '档案初始值、事件变化与暂存未接回项分区显示；替代旧成长树。'
-        : '开局方案、排除、指定分支与停用角色组；结果由 whatIf 唯一计算。';
+        : state.view === 'context'
+          ? '封卷并路由一局，展示分块字符、预算占用与审计明细；单飞防重入。'
+          : '开局方案、排除、指定分支与停用角色组；结果由 whatIf 唯一计算。';
 }
 
 async function loadData(quiet = false) {
@@ -300,6 +318,8 @@ async function loadData(quiet = false) {
     ensureGroupView();
     ensureLocalFocus();
     if (state.preview?.eventID && !eventByID(state.preview.eventID)) state.preview = null;
+    for (const [key, draft] of state.drafts) if (!draft.dirty) state.drafts.delete(key);
+    for (const [key, draft] of state.positionDrafts) if (!draft.dirty) state.positionDrafts.delete(key);
   }
   catch (error) {
     state.error = error.message;
@@ -322,7 +342,7 @@ const app = {
 
 function bindControls() {
   $('#reload').addEventListener('click', guarded(() => loadData(true)));
-  $('#search').addEventListener('input', event => { state.filters.search = event.target.value; renderCanvas(); });
+  $('#search').addEventListener('input', event => { state.filters.search = event.target.value; renderViews(); renderCanvas(); });
   $('#characterFilter').addEventListener('change', event => {
     state.filters.character = event.target.value;
     state.filters.version = '';
@@ -330,26 +350,30 @@ function bindControls() {
     state.groupView.versionID = '';
     state.groupView.profileID = '';
     ensureGroupView();
-    renderFilters(); renderCanvas();
+    renderViews(); renderFilters(); renderCanvas();
   });
   $('#versionFilter').addEventListener('change', event => {
     state.filters.version = event.target.value;
     state.groupView.versionID = event.target.value;
     state.groupView.profileID = '';
     ensureGroupView();
-    renderCanvas();
+    renderViews(); renderCanvas();
   });
-  $('#primaryFilter').addEventListener('change', event => { state.filters.primary = event.target.value; renderCanvas(); });
-  $('#tagFilter').addEventListener('change', event => { state.filters.tag = event.target.value; renderCanvas(); });
-  $('#resultFilter').addEventListener('change', event => { state.filters.result = event.target.value; renderCanvas(); });
+  $('#primaryFilter').addEventListener('change', event => { state.filters.primary = event.target.value; renderViews(); renderCanvas(); });
+  $('#tagFilter').addEventListener('change', event => { state.filters.tag = event.target.value; renderViews(); renderCanvas(); });
+  $('#resultFilter').addEventListener('change', event => { state.filters.result = event.target.value; renderViews(); renderCanvas(); });
   for (const tab of document.querySelectorAll('[data-tab]')) tab.addEventListener('click', () => {
     state.tab = tab.dataset.tab;
     renderInspector(app);
   });
-  $('#closePreview').addEventListener('click', () => $('#previewDialog').close());
   $('#saveEvent').addEventListener('click', guarded(() => saveEvent(app)));
+  bindCreateEventDialog(app);
+  bindStatsDialog();
+  $('#closePreview').addEventListener('click', () => $('#previewDialog').close());
   window.addEventListener('beforeunload', event => {
-    if (state.drafts.size || state.notesDirty || state.layoutDirty) { event.preventDefault(); event.returnValue = ''; }
+    const draftDirty = [...state.drafts.values()].some(draft => draft.dirty)
+      || [...state.positionDrafts.values()].some(draft => draft.dirty);
+    if (draftDirty || state.notesDirty || state.layoutDirty) { event.preventDefault(); event.returnValue = ''; }
   });
 }
 

@@ -241,6 +241,16 @@ export function renderCharacterSummary(app, canvas) {
     el('h3', {}, '档案初始值'), profile ? el('div', {}, profileMeta(profile),
       profile.初始能力 ? details('初始能力', pre(profile.初始能力), true) : null,
       profile.初始装备 ? details('初始装备', pre(profile.初始装备), true) : null) : notice('该版本没有适用档案。')));
+  const quotes = app.state.data.台词统计?.按角色组?.find(item => item.角色组ID === group.角色组ID);
+  if (quotes) canvas.append(el('div', {class: 'card', style: {marginTop: '14px'}},
+    el('h3', {}, '台词统计'),
+    el('dl', {class: 'fields'},
+      el('dt', {}, '角色位置'), el('dd', {}, `${quotes.有台词角色位置数}/${quotes.角色位置数} 有台词`),
+      el('dt', {}, '候选台词'), el('dd', {}, String(quotes.候选台词总数)),
+      el('dt', {}, '原台词'), el('dd', {}, String(quotes.原台词数)),
+      el('dt', {}, '作者台词'), el('dd', {}, String(quotes.作者台词数)),
+      el('dt', {}, '原台词占比'), el('dd', {}, `${(Number(quotes.原台词占比 ?? 0) * 100).toFixed(2)}%`)),
+    notice('原台词按 作者资料/出处 记录匹配；不读取 来源资料/。')));
   const changes = group.事件变化 ?? [];
   canvas.append(el('div', {class: 'card', style: {marginTop: '14px'}},
     el('h3', {}, '事件变化（分支定义，不等于默认已发生）'),

@@ -1,4 +1,6 @@
 import {$, append, button, details, el, field, notice, pill, pre, section, selectOptions, source} from './dom.js';
+import {renderEventEditor} from './event-editor.js';
+import {renderPositionEditor} from './position-editor.js';
 
 export function profileDocuments(profile) {
   const parts = [];
@@ -95,10 +97,22 @@ function renderEventDetail(app, panel, event) {
       ...outgoing.map(relation => button(`本事件 → ${relation.to}\n${relation.种类} · ${relation.字段}${relation.极性 === '排斥' ? ' · 排斥' : ''}`,
         () => app.selectEvent(relation.to), 'related-link')),
     ]) : notice('没有直接事件引用。')));
+  const quotes = app.state.data.台词统计?.按事件?.find(item => item.事件ID === event.事件ID);
+  if (quotes) panel.append(section('本事件台词统计', el('dl', {class: 'fields'},
+    el('dt', {}, '候选台词'), el('dd', {}, String(quotes.候选台词总数)),
+    el('dt', {}, '原台词'), el('dd', {}, String(quotes.原台词数)),
+    el('dt', {}, '作者台词'), el('dd', {}, String(quotes.作者台词数)),
+    el('dt', {}, '事件级出处'), el('dd', {}, quotes.有事件级出处 ? '有' : '无')),
+    notice('原台词按 作者资料/出处 记录匹配；不读取 来源资料/。')));
   panel.append(section('角色位置', (event.角色位置 ?? []).length
     ? el('div', {class: 'list'}, event.角色位置.map(position => details(
       `${position.角色组ID ?? '未知角色'} · ${position.文件}`,
-      el('div', {}, pre(position.内容 ?? position.原文 ?? null), source(position.文件)))))
+      el('div', {}, pre(position.内容 ?? position.原文 ?? null), source(position.文件),
+        button('在编辑面板编辑此角色位置', () => {
+          app.state.tab = 'edit';
+          app.state.positionTarget = {eventID: event.事件ID, groupID: position.角色组ID};
+          app.renderInspector();
+        }, 'related-link')))))
     : notice('本事件没有角色位置文件。')));
   panel.append(details('完整原文', el('div', {}, pre(event.原文), source(event.文件))));
 }
@@ -208,29 +222,9 @@ function renderEditPanel(app, panel) {
 
   const event = app.selectedEvent();
   if (!event) { panel.append(notice('本节点只支持批注与布局；事件正文、档案与其他文件在对应视图中查阅。')); return; }
-  const draft = app.state.drafts.get(event.事件ID) ?? {raw: event.原文, revision: event.revision};
-  const rawEditor = el('textarea', {class: 'raw-editor', spellcheck: 'false', 'aria-label': '事件原文编辑'});
-  rawEditor.value = draft.raw;
-  rawEditor.addEventListener('input', () => {
-    if (rawEditor.value === event.原文) app.state.drafts.delete(event.事件ID);
-    else app.state.drafts.set(event.事件ID, {raw: rawEditor.value, revision: event.revision});
-    app.state.preview = null;
-    $('#saveEvent').disabled = true;
-    app.renderHeader();
-  });
-  panel.append(section('编辑正式事件',
-    notice('候选是现行事件 .txt 的 YAML 原文；不要添加 <事件> 外壳。事件ID固定，其他文档只读。'),
-    rawEditor,
-    el('div', {class: 'edit-actions'},
-      button('检查并预览差异', app.guarded(() => previewEvent(app, event)), 'primary'),
-      button('恢复已读取原文', () => {
-        if (rawEditor.value !== event.原文 && !confirm('丢弃这个事件尚未保存的编辑？')) return;
-        app.state.drafts.delete(event.事件ID);
-        app.state.preview = null;
-        app.renderInspector();
-      })),
-    source(event.文件),
-    app.state.layoutDirty ? notice('图节点位置已修改；保存批注与布局会一并写入。', 'warn') : null));
+  renderEventEditor(app, panel, event);
+  renderPositionEditor(app, panel, event);
+  if (app.state.layoutDirty) panel.append(notice('图节点位置已修改；保存批注与布局会一并写入。', 'warn'));
 }
 
 export function renderInspector(app) {
@@ -256,15 +250,13 @@ export function renderInspector(app) {
   renderEditPanel(app, edit);
 }
 
-async function previewEvent(app, event) {
-  const draft = app.state.drafts.get(event.事件ID);
-  const raw = draft?.raw ?? event.原文;
+export async function submitPreview(app, {route, body, raw, afterSave = null}) {
   const buttonNode = $('#saveEvent');
   buttonNode.disabled = true;
   try {
     app.state.previewError = null;
-    const result = await app.request('/api/preview', {eventID: event.事件ID, raw, revision: event.revision});
-    app.state.preview = {...result, raw, eventID: event.事件ID};
+    const result = await app.request(route, body);
+    app.state.preview = {...result, raw, route, afterSave, eventID: result.eventID ?? body.eventID};
     app.state.saveReport = null;
     renderPreview(app);
     const dialog = $('#previewDialog');
@@ -343,10 +335,11 @@ export async function saveEvent(app) {
     app.state.saveReport = result;
     app.state.preview = null;
     app.state.previewError = null;
-    app.state.drafts.delete(preview.eventID);
+    if (preview.route === '/api/preview') app.state.drafts.delete(preview.eventID);
     renderPreview(app);
     app.toast(result.message);
-    await app.loadData(true);
+    if (preview.afterSave) await preview.afterSave(result);
+    else await app.loadData(true);
   }
   catch (error) {
     app.state.previewError = error.message;

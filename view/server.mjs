@@ -5,8 +5,13 @@ import defaultPath from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {whatIf} from '../core/what-if.mjs';
+import {previewContext, ContextError} from '../core/context-preview.mjs';
+import {exportEventTreeMarkdown} from '../core/tree-export.mjs';
+import {parseYaml, stringifyYaml} from '../core/yaml.mjs';
+import {formatYamlText} from '../core/format.mjs';
+import {isMap, isText, list} from '../core/utils.mjs';
 import {loadProject, loadViewData} from './data.mjs';
-import {assertStorage, createViewStore, MAX_BODY, ViewError} from './store.mjs';
+import {assertSafeValue, assertStorage, createViewStore, MAX_BODY, MAX_CANDIDATE, ViewError} from './store.mjs';
 
 const PUBLIC_DIR = defaultPath.join(defaultPath.dirname(fileURLToPath(import.meta.url)), 'public');
 const STATIC = new Map([
@@ -16,6 +21,11 @@ const STATIC = new Map([
   ['/dom.js', ['dom.js', 'text/javascript; charset=utf-8']],
   ['/canvas-views.js', ['canvas-views.js', 'text/javascript; charset=utf-8']],
   ['/inspector.js', ['inspector.js', 'text/javascript; charset=utf-8']],
+  ['/context-view.js', ['context-view.js', 'text/javascript; charset=utf-8']],
+  ['/stats-view.js', ['stats-view.js', 'text/javascript; charset=utf-8']],
+  ['/condition-editor.js', ['condition-editor.js', 'text/javascript; charset=utf-8']],
+  ['/event-editor.js', ['event-editor.js', 'text/javascript; charset=utf-8']],
+  ['/position-editor.js', ['position-editor.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -28,10 +38,72 @@ function headers(extra = {}) {
     'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': CSP, ...extra};
 }
 
-function send(res, status, body, type = 'application/json; charset=utf-8') {
+function send(res, status, body, type = 'application/json; charset=utf-8', extra = {}) {
   const text = type.startsWith('application/json') ? JSON.stringify(body) : body;
-  res.writeHead(status, headers({'Content-Type': type, 'Content-Length': Buffer.byteLength(text)}));
+  res.writeHead(status, headers({'Content-Type': type, 'Content-Length': Buffer.byteLength(text), ...extra}));
   res.end(text);
+}
+
+const CONTEXT_KEYS = ['开局', '方案', '地点', '场景', '在场', '消息', '自动初始化', 'raw'];
+
+function contextOptions(input) {
+  assertObject(input);
+  const unknown = Object.keys(input).filter(key => !CONTEXT_KEYS.includes(key));
+  if (unknown.length) throw new ViewError(`上下文预览含未知字段：${unknown.join('、')}`, 400);
+  const options = {};
+  if (isText(input.开局)) options.开局 = input.开局;
+  if (input.方案 !== undefined && input.方案 !== null && input.方案 !== '') {
+    if (!isText(input.方案)) throw new ViewError('方案须为文本', 400);
+    options.方案 = input.方案;
+  }
+  if (isText(input.地点)) options.地点 = input.地点;
+  if (isText(input.场景)) options.场景 = input.场景;
+  const present = list(input.在场);
+  if (present.length) options.在场 = present;
+  const messages = list(input.消息);
+  if (messages.length) options.消息 = messages;
+  options.自动初始化 = input.自动初始化 !== false;
+  options.raw = input.raw === true;
+  return options;
+}
+
+const YAML_KINDS = ['event', 'position'];
+
+function assertKeys(input, keys, label = '输入') {
+  if (!isMap(input)) throw new ViewError(`${label}须为对象`, 400);
+  const unknown = Object.keys(input).filter(key => !keys.includes(key));
+  if (unknown.length) throw new ViewError(`${label}含未知字段：${unknown.join('、')}`, 400);
+}
+
+function assertYamlKind(kind) {
+  if (!YAML_KINDS.includes(kind)) throw new ViewError('kind 须为 event 或 position', 400);
+  return kind;
+}
+
+function yamlParse(input) {
+  assertKeys(input, ['kind', 'raw'], 'YAML 解析输入');
+  const kind = assertYamlKind(input.kind);
+  if (typeof input.raw !== 'string') throw new ViewError('YAML 原文须为文本', 400);
+  if (Buffer.byteLength(input.raw, 'utf8') > MAX_CANDIDATE) throw new ViewError('YAML 原文须小于 256KB', 400);
+  let value;
+  try { value = parseYaml(input.raw); }
+  catch (error) { throw new ViewError(`YAML 解析失败：${error.message}`, 400); }
+  if (!isMap(value)) throw new ViewError('YAML 根节点须为映射', 400);
+  assertSafeValue(value, kind === 'event' ? '候选事件' : '候选角色位置');
+  return {value};
+}
+
+function yamlFormat(input) {
+  assertKeys(input, ['kind', 'value'], 'YAML 格式化输入');
+  const kind = assertYamlKind(input.kind);
+  if (!isMap(input.value)) throw new ViewError('YAML 值须为对象', 400);
+  assertSafeValue(input.value, kind === 'event' ? '候选事件' : '候选角色位置');
+  let formatted;
+  try {
+    formatted = formatYamlText(stringifyYaml(input.value), {kind: {种类: kind === 'event' ? '事件' : '角色位置'}});
+  }
+  catch (error) { throw new ViewError(`YAML 格式化失败：${error.message}`, 400); }
+  return {raw: formatted.text};
 }
 
 function sendError(res, error) {
@@ -105,6 +177,14 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
           服务: {地址: `http://${hostHeader}`, 端口: server.address().port,
             存储: resolved.storage, 世界书: resolved.worldbook}});
       }
+      if (url.pathname === '/api/tree.md') {
+        const project = await loadProject(resolved.worldbook, {fs, path});
+        const markdown = exportEventTreeMarkdown(project.catalog, project.decl,
+          {标题: path.basename(resolved.worldbook)});
+        const extra = url.searchParams.get('download') === '1'
+          ? {'Content-Disposition': `attachment; filename="event-tree.md"; filename*=UTF-8''event-tree.md`} : {};
+        return send(res, 200, markdown, 'text/markdown; charset=utf-8', extra);
+      }
       return send(res, 404, {error: '没有此资源'});
     }
 
@@ -128,6 +208,22 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
       const options = ifOptions(input, path.basename(resolved.worldbook));
       const result = whatIf(project.catalog, project.decl, {...options, issues: project.issues});
       return send(res, 200, result);
+    }
+    if (url.pathname === '/api/yaml/parse') return send(res, 200, yamlParse(input));
+    if (url.pathname === '/api/yaml/format') return send(res, 200, yamlFormat(input));
+    if (url.pathname === '/api/event/create/preview')
+      return send(res, 200, await store.previewCreateEvent(input));
+    if (url.pathname === '/api/position/preview')
+      return send(res, 200, await store.previewPosition(input));
+    if (url.pathname === '/api/context') {
+      const options = contextOptions(input);
+      try {
+        return send(res, 200, await previewContext(resolved.worldbook, {...options, fs, path}));
+      }
+      catch (error) {
+        if (error instanceof ContextError) return send(res, 400, {error: error.message, code: error.code});
+        throw error;
+      }
     }
     return send(res, 404, {error: '没有此操作'});
   };

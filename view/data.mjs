@@ -2,8 +2,10 @@
 import defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
 import {createHash} from 'node:crypto';
+import {CONFIRMATION_POLICIES} from '../core/contract.mjs';
 import {compileWorldbook} from '../core/catalog.mjs';
 import {createCalendar} from '../core/calendar.mjs';
+import {summarizeQuotes} from '../core/tree-export.mjs';
 import {analyzeEventTree, chainStructure, impactOf} from '../core/graph.mjs';
 import {buildReferenceIndex, queryReference} from '../core/references.mjs';
 import {readSettings, DEFAULT_SETTINGS} from '../core/settings.mjs';
@@ -206,6 +208,7 @@ function eventProjection(event, catalog, index, analysis, calendar) {
   const positions = list(event.角色位置).map(position => ({
     角色组ID: position.角色组ID ?? position.内容?.角色组ID ?? null,
     文件: position.文件, 原文: position.原文 ?? null, 内容: position.内容 ?? null,
+    revision: digest(position.原文 ?? ''),
   }));
   const chainIDs = list(catalog.chains).filter(chain => list(chain.内容?.事件).includes(event.id))
     .map(chain => chain.id).sort(ORDER);
@@ -266,6 +269,80 @@ function checkProjection(result) {
     摘要: result.summary, 错误列表: result.errors, 提示列表: result.hints};
 }
 
+// 从声明派生结构化表单的自动补全建议；只作建议，不限制手动输入。
+function variablePaths(variables) {
+  const paths = [];
+  const walk = (schema, prefix) => {
+    if (!isMap(schema)) return;
+    if (isMap(schema.映射)) {
+      const key = isMap(schema.映射.键) && isText(schema.映射.键.引用) ? schema.映射.键.引用 : '键';
+      walk(schema.映射.值, `${prefix}.{${key}}`);
+      return;
+    }
+    if (isMap(schema.子字段)) {
+      for (const [name, child] of Object.entries(schema.子字段)) walk(child, `${prefix}.${name}`);
+      return;
+    }
+    paths.push(prefix);
+  };
+  for (const [name, schema] of pairs(variables)) walk(schema, name);
+  return paths;
+}
+
+function stateFields(variables) {
+  const fields = ['所在'];
+  const walk = (schema, prefix) => {
+    if (!isMap(schema)) return;
+    if (isMap(schema.映射)) {
+      if (isMap(schema.映射.值)) {
+        const key = isMap(schema.映射.键) && isText(schema.映射.键.引用) ? schema.映射.键.引用 : '键';
+        walk(schema.映射.值, `${prefix}.{${key}}`);
+      }
+      return;
+    }
+    if (isMap(schema.子字段)) {
+      for (const [name, child] of Object.entries(schema.子字段)) walk(child, `${prefix}.${name}`);
+      return;
+    }
+    if (has(schema, '取值')) fields.push(prefix);
+  };
+  for (const [name, schema] of pairs(variables)) walk(schema, name);
+  return fields;
+}
+
+function abilityPaths(decl) {
+  const paths = [];
+  for (const [name, dimension] of pairs(isMap(decl?.ability?.维度) ? decl.ability.维度 : {})) {
+    if (!isMap(dimension)) continue;
+    if (dimension.类型 === '等级映射' && isMap(dimension.键)) {
+      const keys = Object.values(dimension.键).flatMap(group => list(group)).filter(isText).sort(ORDER);
+      for (const key of keys) paths.push(`角色.{角色组ID}.${name}.${key}`);
+    }
+    else paths.push(`角色.{角色组ID}.${name}`);
+  }
+  return paths;
+}
+
+function declarationProjection(decl) {
+  const marks = isMap(decl?.marks) ? decl.marks : {};
+  const 剧情标记 = {};
+  for (const id of Object.keys(marks).sort(ORDER)) 剧情标记[id] = list(marks[id]).filter(isText);
+  const dimension = isText(decl?.ability?.综合实力) && isMap(decl?.ability?.维度?.[decl.ability.综合实力])
+    ? decl.ability.维度[decl.ability.综合实力] : null;
+  const ladder = isMap(dimension) && isText(dimension.等级) ? dimension.等级 : null;
+  const 综合实力等级 = isText(ladder) && Array.isArray(decl?.ladders?.[ladder]) ? [...decl.ladders[ladder]] : [];
+  const roleVariables = isMap(decl?.variables?.角色) ? decl.variables.角色 : {};
+  const worldVariables = isMap(decl?.variables?.世界) ? decl.variables.世界 : {};
+  const 角色可写字段 = [`角色.{角色组ID}.所在`, ...abilityPaths(decl), `角色.{角色组ID}.装备.{装备ID}`,
+    ...variablePaths(roleVariables).map(name => `角色.{角色组ID}.${name}`)].sort(ORDER);
+  const 世界可写字段 = [...Object.keys(worldVariables).map(name => `世界.${name}`),
+    ...Object.keys(剧情标记).map(id => `世界.剧情标记.${id}`)].sort(ORDER);
+  return {
+    剧情标记, 综合实力等级, 确认策略: [...CONFIRMATION_POLICIES],
+    角色状态字段: stateFields(roleVariables).sort(ORDER), 角色可写字段, 世界可写字段,
+  };
+}
+
 /**
  * 为页面、预览与保存共用的完整数据面。所有写入只由 store 负责。
  */
@@ -305,6 +382,7 @@ export async function loadViewData(root, {fs = defaultFs, path = defaultPath} = 
       暂存: {文件: pending.file, 数量: pending.items.length, 异常: pending.issues},
     },
     事件: events, 事件串: chains, 角色组: groups, 关系: relationProjection(index),
+    台词统计: summarizeQuotes(catalog), 声明: declarationProjection(decl),
     开局: {
       选项: catalog.openingOptions ? {文件: catalog.openingOptions.文件, 内容: catalog.openingOptions.内容} : null,
       方案: list(catalog.openingPlans).map(plan => ({方案ID: plan.id, 文件: plan.文件,

@@ -90,6 +90,26 @@
     </div>
   </dialog>
 
+  <dialog id="createEventDialog" aria-labelledby="createEventTitle">
+    <div class="dialog-head">
+      <h2 id="createEventTitle">新建事件</h2>
+      <button id="closeCreateEvent" type="button">关闭</button>
+    </div>
+    <div id="createEventBody" class="dialog-body"></div>
+    <div class="dialog-footer">
+      <span>创建走与编辑相同的静态检查、令牌与原子写管线。</span>
+      <button id="createEventPreview" class="primary" type="button">检查并预览创建</button>
+    </div>
+  </dialog>
+
+  <dialog id="statsDialog" aria-labelledby="statsTitle">
+    <div class="dialog-head">
+      <h2 id="statsTitle">台词统计 / 导出树</h2>
+      <button id="closeStats" type="button">关闭</button>
+    </div>
+    <div id="statsBody" class="dialog-body"></div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script type="module" src="/app.js"></script>
 </body>
