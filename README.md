@@ -25,7 +25,7 @@ Yggdrasill 用**时间和门槛**把剧情组织成事件树，用**时期档案
 ```text
   世界书源文件（事件树 / 时期档案 / 设定条目）
          │
-         ├──▶ [校验与维护] CLI 静态检查 · 引用溯源 · 影响面分析 · YAML 排版
+         ├──▶ [校验与维护] CLI 静态检查 · 引用溯源 · 影响面分析 · 上下文预览 · 事件树导出 · 项目诊断 · YAML 排版
          │
          ├──▶ [可视与编辑] 本地作者视图 (view) —— 浏览主树 · 对比 if 线 · 编辑单事件
          │
@@ -39,7 +39,7 @@ Yggdrasill 用**时间和门槛**把剧情组织成事件树，用**时期档案
 - **保留完整叙事与分支**：用同一套结构管理主线与 if 线，事件前后因果清晰可控。
 - **角色状态随剧情演进**：按本局历史选择对应的角色时期档案，减少跨阶段串戏与剧透。
 - **可追溯的游玩记录**：协议命令写入本局，支持楼层记录的检查、重放与回档。
-- **长篇世界书工程化维护**：内置检查器、引用溯源、影响面分析、初始化预览与 YAML 排版工具。
+- **长篇世界书工程化维护**：内置检查器、引用溯源、影响面分析、初始化预览、上下文预算预览、事件树导出与台词统计、项目诊断与脚手架初始化工具。
 - **可视化的作者视图**：无需提前生成额外索引，直接在本地网页查看世界主树、局部关系、角色汇总、如果视图并编辑单个事件。
 - **AI 辅助写卡流程**：仓库内置 9 个作者 `skills`（统筹 + 第 0–5 层分层建卡 + 日常修订），可引导编程代理按分层流程建卡、检查与打包。
 
@@ -90,6 +90,10 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 | `node cli/ygg.mjs trace examples/雾港/世界书 <对象键>` | 追查一个事件、角色组或条目的引用与影响面 |
 | `node cli/ygg.mjs if examples/雾港/世界书 --排除 大雾之夜` | 按方案、分支或排除项计算如果视图 |
 | `node cli/ygg.mjs preview examples/雾港/世界书 灯塔学徒 --开局 潮历071年04月01日` | 预览开局初始化会交给模型的内容 |
+| `node cli/ygg.mjs context examples/雾港/世界书 --地点 灯塔 --在场 灯塔学徒 --raw` | 预演一局的路由上下文与预算占用；`--json` 输出机器可读结果 |
+| `node cli/ygg.mjs tree examples/雾港/世界书 --stats-only` | 导出 Markdown 事件树并统计候选台词；`--out` 写入仓库外文件 |
+| `node cli/ygg.mjs status examples/雾港` | 只读诊断项目所处第 0–5 层与缺口 |
+| `node cli/ygg.mjs init ../新项目` | 生成新项目骨架，可直接通过 `check --static-only` |
 | `node cli/ygg.mjs view --worldbook examples/雾港/世界书 --port 0` | 启动本地作者视图 |
 
 酒馆适配层的打包与冒烟脚本用 `npm run prepare:adapter`、`npm run build:adapter`、`npm run smoke:adapter` 调用，源码在 [`adapter/`](adapter/)。

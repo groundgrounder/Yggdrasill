@@ -1,3 +1,4 @@
+import os from 'node:os';
 import {
   test, assert, fs, path, project, example, fixture, edit,
 } from './helpers.mjs';
@@ -126,7 +127,10 @@ test('清理-01-A2：state 非法且 params 非法时仍先报 state 校验错�
 
 test('清理-01-A3：runCli 对 trace/if/preview/format/check 透传注入的 fs 与 path', async t => {
   const root = await fixture(t);
+  const projectTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'ygg-init-virtual-'));
+  t.after(() => fs.rm(projectTarget, {recursive: true, force: true}));
   const logical = '/虚拟世界';
+  const logicalProject = '/虚拟项目';
   const map = value => {
     const resolved = path.resolve(String(value));
     const worldbook = `${logical}/世界书`, author = `${logical}/作者资料`;
@@ -135,9 +139,13 @@ test('清理-01-A3：runCli 对 trace/if/preview/format/check 透传注入的 fs
     if (resolved.startsWith(`${worldbook}/`)) return path.join(root, resolved.slice(worldbook.length + 1));
     if (resolved === author) return path.join(path.dirname(root), '作者资料');
     if (resolved.startsWith(`${author}/`)) return path.join(path.dirname(root), '作者资料', resolved.slice(author.length + 1));
+    if (resolved === `${logical}/虚拟项目`) return projectTarget;
+    if (resolved.startsWith(`${logical}/虚拟项目/`)) return path.join(projectTarget, resolved.slice(`${logical}/虚拟项目`.length + 1));
+    if (resolved === logicalProject) return projectTarget;
+    if (resolved.startsWith(`${logicalProject}/`)) return path.join(projectTarget, resolved.slice(logicalProject.length + 1));
     throw Object.assign(new Error(`ENOENT: ${resolved}`), {code: 'ENOENT'});
   };
-  const counts = {readFile: 0, readdir: 0, stat: 0, lstat: 0, access: 0};
+  const counts = {readFile: 0, readdir: 0, stat: 0, lstat: 0, access: 0, writeFile: 0, mkdir: 0};
   const virtualFs = {};
   for (const name of Object.keys(counts)) virtualFs[name] = (value, ...args) => {
     counts[name]++;
@@ -180,6 +188,39 @@ test('清理-01-A3：runCli 对 trace/if/preview/format/check 透传注入的 fs
   assert.equal(check.code, 0, check.stdout + check.stderr);
   assert.equal(JSON.parse(check.stdout).errors.length, 0);
   assert.ok(pathCalls > 0 && counts.readFile > 0 && counts.readdir > 0);
+  reset();
+  const context = await cli(['context', '世界书', '--json'], environment);
+  assert.equal(context.code, 0, context.stdout + context.stderr);
+  const contextValue = JSON.parse(context.stdout);
+  assert.ok(contextValue.汇总.总字符 > 0);
+  assert.deepEqual(contextValue.异常, []);
+  assert.ok(pathCalls > 0 && counts.readFile > 0 && counts.readdir > 0);
+  reset();
+  const tree = await cli(['tree', '世界书', '--json'], environment);
+  assert.equal(tree.code, 0, tree.stdout + tree.stderr);
+  assert.equal(JSON.parse(tree.stdout).摘要.事件, 13);
+  assert.ok(pathCalls > 0 && counts.readFile > 0 && counts.readdir > 0);
+  reset();
+  const status = await cli(['status', '世界书', '--json'], environment);
+  assert.equal(status.code, 0, status.stdout + status.stderr);
+  const statusValue = JSON.parse(status.stdout);
+  assert.equal(statusValue.项目.识别, '世界书目录');
+  assert.equal(statusValue.当前阶段, '第 4 层：档案与填景待补');
+  assert.ok(pathCalls > 0 && counts.readFile > 0 && counts.readdir > 0);
+  reset();
+  const init = await cli(['init', '虚拟项目', '--json'], environment);
+  assert.equal(init.code, 0, init.stdout + init.stderr);
+  const initValue = JSON.parse(init.stdout);
+  assert.equal(initValue.已写入文件.length, 4);
+  assert.equal(initValue.已创建目录.length, 16);
+  assert.ok(pathCalls > 0 && counts.writeFile > 0 && counts.mkdir > 0);
+  assert.match(await fs.readFile(path.join(projectTarget, '世界书', '设定', '纪年.yaml'), 'utf8'), /^前缀: 纪元/u);
+  const scaffoldCheck = await cli(['check', `${logicalProject}/世界书`, '--json', '--static-only'], environment);
+  assert.equal(scaffoldCheck.code, 0, scaffoldCheck.stdout + scaffoldCheck.stderr);
+  const scaffoldValue = JSON.parse(scaffoldCheck.stdout);
+  assert.equal(scaffoldValue.errors.length, 0);
+  assert.equal(scaffoldValue.hints.length, 0);
+  reset();
   const view = await cli(['view', '--help'], environment);
   assert.equal(view.code, 0);
   assert.match(view.stdout, /用法：ygg view/u);
@@ -225,9 +266,9 @@ test('清理-01-A5：概述两个命令清单一致，docs 相对链接全部有
   const overview = await fs.readFile(path.join(project, 'docs/00-概述.md'), 'utf8');
   const lines = overview.split('\n');
   const first = lines.find(line => line.includes('命令行工具 `ygg`'));
-  const second = lines.find(line => line.includes('作者工具已交付六个命令行子命令'));
+  const second = lines.find(line => line.includes('作者工具已交付十个命令行子命令'));
   assert.ok(first && second);
-  for (const command of ['check', 'trace', 'if', 'preview', 'view', 'format']) {
+  for (const command of ['check', 'trace', 'if', 'preview', 'context', 'tree', 'status', 'init', 'view', 'format']) {
     assert.ok(first.includes(`\`${command}\``), command);
     assert.ok(second.includes(`\`${command}\``), command);
   }

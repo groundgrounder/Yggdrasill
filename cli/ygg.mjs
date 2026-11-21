@@ -6,9 +6,14 @@ import {runIf} from './if.mjs';
 import {runTrace} from './trace.mjs';
 import {runFormat} from './format.mjs';
 import {runPreview} from './preview.mjs';
+import {runContext} from './context.mjs';
+import {runTree} from './tree.mjs';
+import {runStatus} from './status.mjs';
+import {runInit} from './init.mjs';
 import {runView} from './view.mjs';
 
-const SUBCOMMANDS = {view: runView, if: runIf, trace: runTrace, preview: runPreview, format: runFormat};
+const SUBCOMMANDS = {view: runView, if: runIf, trace: runTrace, preview: runPreview, context: runContext,
+  tree: runTree, status: runStatus, init: runInit, format: runFormat};
 
 export async function runCli(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr, fs, path: injectedPath} = {}) {
   const context = {cwd, stdout, stderr, ...(fs ? {fs} : {}), ...(injectedPath ? {path: injectedPath} : {})};

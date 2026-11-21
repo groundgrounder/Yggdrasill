@@ -16,3 +16,6 @@ export {readSettings, DEFAULT_SETTINGS} from './settings.mjs';
 export * from './commands.mjs';
 export {formatWorldbook, formatYamlText, recognizeWorldbookFile} from './format.mjs';
 export {createRouter, route, renderContext, DEFAULT_TAGS, loadRouter} from './router.mjs';
+export {TreeExportError, summarizeQuotes, exportEventTreeMarkdown} from './tree-export.mjs';
+export {ContextError, previewContext} from './context-preview.mjs';
+export {inspectProjectStatus, StatusError} from './project-status.mjs';

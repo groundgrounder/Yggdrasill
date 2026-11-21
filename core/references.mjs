@@ -3,7 +3,7 @@ import {conditionReferences} from './conditions.mjs';
 import {analyzeEventTree} from './graph.mjs';
 import {codepointCompare, has, isMap, isText, issue, list, pairs} from './utils.mjs';
 
-const OBJECT_TYPES = new Set(['事件', '事件串', '角色组', '档案', '条目', '剧情标记']);
+const OBJECT_TYPES = new Set(['事件', '事件串', '角色组', '档案', '条目', '剧情标记', '开局选项', '开局方案']);
 const QUERYABLE_TARGETS = new Set(OBJECT_TYPES);
 const CONDITION_TYPES_SET = new Set(CONDITION_TYPES);
 
@@ -55,8 +55,15 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
     key: markKey(id), type: '剧情标记', id, file: '设定/剧情标记.yaml', content: decl.marks[id], source: decl.marks[id],
   });
 
-  objects.sort(compareObjects);
+  if (catalog.openingOptions) list(catalog.openingOptions.内容?.选项).forEach((option, index) => register({
+    key: `开局选项:${index + 1}`, type: '开局选项', id: String(index + 1), file: catalog.openingOptions.文件,
+    content: isMap(option) ? option : null, source: option,
+  }));
+  for (const plan of list(catalog.openingPlans)) register({
+    key: `开局方案:${plan.id}`, type: '开局方案', id: plan.id, file: plan.文件, content: plan.内容, source: plan,
+  });
 
+  objects.sort(compareObjects);
   for (const group of list(catalog.groups)) indexGroup(group);
   for (const event of list(catalog.events)) indexEvent(event);
   for (const chain of list(catalog.chains)) indexChain(chain);
@@ -309,9 +316,11 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
       addTarget({sourceKey, sourceType, sourceFile, field: `${field}.路径`, kind: '变化.角色组路径',
         type: '角色组', id: parts[1],
       });
-      if (parts[2] === '所在') addTarget({sourceKey, sourceType, sourceFile, field: `${field}.值`, kind: '变化.地点',
-        type: '条目', id: change.值, library: '地点',
-      });
+      if (parts[2] === '所在') {
+        if (has(change, '值')) addTarget({sourceKey, sourceType, sourceFile, field: `${field}.值`, kind: '变化.地点',
+          type: '条目', id: change.值, library: '地点',
+        });
+      }
       else if (parts[2] === '装备' && isText(parts[3])) addTarget({sourceKey, sourceType, sourceFile,
         field: `${field}.路径`, kind: '变化.装备', type: '条目', id: parts[3], library: '装备',
       });
@@ -326,8 +335,7 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
             schema = schema.映射.值;
           } else schema = schema?.子字段?.[segment];
         }
-        collectSchemaReferences({value: change.值, schema, sourceKey, sourceType, sourceFile,
-          path: `${field}.值`, kind: '变化.声明引用'});
+        indexChangeValue({change, schema, field, sourceKey, sourceType, sourceFile});
       }
       return;
     }
@@ -348,9 +356,25 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
           schema = schema.映射.值;
         } else schema = schema?.子字段?.[segment];
       }
-      collectSchemaReferences({value: change.值, schema, sourceKey, sourceType, sourceFile,
-        path: `${field}.值`, kind: '变化.声明引用'});
+      indexChangeValue({change, schema, field, sourceKey, sourceType, sourceFile});
     }
+  }
+
+  // 变化表里集合的“新增/移除”值是单个成员而非数组；普通列表引用仍按数组展开。
+  function indexChangeValue({change, schema, field, sourceKey, sourceType, sourceFile}) {
+    if (!has(change, '值')) return;
+    const path = `${field}.值`;
+    if (schema?.类型 === '集合' && isMap(schema.成员) && isText(schema.成员.条目库)) {
+      addTarget({sourceKey, sourceType, sourceFile, field: path, kind: '变化.声明引用',
+        type: '条目', id: change.值, library: schema.成员.条目库});
+      return;
+    }
+    if (isMap(schema?.集合)) {
+      collectSchemaReferences({value: change.值, schema: schema.集合, sourceKey, sourceType, sourceFile,
+        path, kind: '变化.声明引用'});
+      return;
+    }
+    collectSchemaReferences({value: change.值, schema, sourceKey, sourceType, sourceFile, path, kind: '变化.声明引用'});
   }
 
   function collectSchemaReferences({value, schema, sourceKey, sourceType, sourceFile, path, kind}) {
@@ -411,6 +435,10 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
       const sourceKey = `开局方案:${plan.id}`, sourceType = '开局方案', sourceFile = plan.文件;
       for (const eventID of Object.keys(isMap(plan.内容?.历史选择) ? plan.内容.历史选择 : {})) addTarget({
         sourceKey, sourceType, sourceFile, field: `历史选择.${eventID}`, kind: '历史选择', type: '事件', id: eventID,
+      });
+      if (isText(plan.内容?.玩家?.扮演角色组)) addTarget({
+        sourceKey, sourceType, sourceFile, field: '玩家.扮演角色组', kind: '开局扮演角色组', type: '角色组',
+        id: plan.内容.玩家.扮演角色组,
       });
       for (const [groupID, choice] of pairs(plan.内容?.角色组)) {
         addTarget({sourceKey, sourceType, sourceFile, field: `角色组.${groupID}`, kind: '开局角色组', type: '角色组', id: groupID});
@@ -506,7 +534,7 @@ export function traceCatalog(catalog, decl = {}, objectKey, options = {}) {
 }
 
 export function isTraceFailure(result) {
-  return list(result?.异常).some(item => typeof item?.规则 === 'string' && item.规则.startsWith('trace.'));
+  return list(result?.异常).some(item => item?.级别 === '错误');
 }
 
 function incomingReference(reference) {

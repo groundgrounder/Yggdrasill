@@ -6,6 +6,10 @@ export const USAGE = '用法：ygg check [世界书目录] [--json] [--static-on
   + '      ygg trace <世界书目录> <对象键> [--json]\n'
   + '      ygg if <世界书目录> [--方案 <方案ID>] [--排除 <事件ID>]... [--分支 <事件ID>:<分支ID>]... [--停用角色组 <角色组ID>]... [--json]\n'
   + '      ygg preview <世界书目录> <角色组ID> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--json]\n'
+  + '      ygg context <世界书目录> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--地点 <地标ID>] [--场景 <场景文本>] [--在场 <角色组ID>]... [--消息 <文本>]... [--不自动初始化] [--raw] [--json]\n'
+  + '      ygg tree <世界书目录> [--out <文件路径>] [--stats-only] [--json]\n'
+  + '      ygg status [项目目录或世界书目录] [--json]\n'
+  + '      ygg init <项目目录> [--纪年前缀 <前缀>] [--年位数 <整数>] [--月数 <整数>] [--每月天数 <整数>] [--force] [--json]\n'
   + '      ygg view --worldbook <世界书目录> [--storage <审阅存储目录>] [--port <端口>]\n';
 
 export async function runCheck(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,

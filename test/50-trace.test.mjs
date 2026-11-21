@@ -22,7 +22,7 @@ async function loadIndex(root = example) {
   return {catalog, decl: compiled.decl, index};
 }
 
-test('溯源-1：六类对象键均通过真实 CLI 查询', async () => {
+test('溯源-1：八类对象键均通过真实 CLI 查询', async () => {
   const cases = [
     ['事件:拜师', '事件'],
     ['事件串:学徒修习', '事件串'],
@@ -30,6 +30,8 @@ test('溯源-1：六类对象键均通过真实 CLI 查询', async () => {
     ['档案:灯塔学徒:林澜·学徒期', '档案'],
     ['条目:技能:灯语·短讯', '条目'],
     ['剧情标记:灯塔状态', '剧情标记'],
+    ['开局方案:码头少年', '开局方案'],
+    ['开局选项:1', '开局选项'],
   ];
   for (const [key, type] of cases) {
     const {status, value, stderr} = await runJson([example, key]);
@@ -219,11 +221,11 @@ test('溯源-9：索引只读且保留 ID 内额外冒号', async () => {
   ]) assert.equal(synthetic.query(key).对象.类型, type, key);
 });
 
-test('溯源-10：未知核心参与者报引用.目标不存在并保留当前退出码', async t => {
+test('溯源-10：未知核心参与者报引用.目标不存在并退出非零', async t => {
   const root = await fixture(t);
   await edit(root, '历史/事件/拜师/事件.txt', event => { event.核心参与者 = ['秦守', '不存在组']; });
   const result = await runJson([root, '事件:拜师']);
-  assert.equal(result.status, 0, '当前实现只在 trace.* 失败时退出非零');
+  assert.equal(result.status, 1, '错误级异常应退出非零');
   assertIssues(result.value.异常, [finding('引用.目标不存在', '历史/事件/拜师/事件.txt',
     {说明: ['核心参与者[2]', '角色组:不存在组']})], '溯源-10');
 });
@@ -232,7 +234,7 @@ test('溯源-11：缺引用目标ID报引用.结构而非目标不存在', async
   const root = await fixture(t);
   await edit(root, '历史/事件/拜师/事件.txt', event => { event.门槛 = {角色启用: {}}; });
   const result = await runJson([root, '事件:拜师']);
-  assert.equal(result.status, 0);
+  assert.equal(result.status, 1);
   assertIssues(result.value.异常, [finding('引用.结构', '历史/事件/拜师/事件.txt',
     {说明: ['门槛', '引用目标 ID 缺失或不是文本']})], '溯源-11');
 });
@@ -248,7 +250,7 @@ test('溯源-12：多键、空none与未知条件类型分别报引用.条件结
     const root = await fixture(t);
     await edit(root, '历史/事件/接手商会账目/事件.txt', event => { event.门槛 = condition; });
     const result = await runJson([root, '事件:接手商会账目']);
-    assert.equal(result.status, 0, label);
+    assert.equal(result.status, 1, label);
     const expected = [finding('引用.条件结构', '历史/事件/接手商会账目/事件.txt', {说明: [fragment]})];
     if (unreachable) expected.push(hint('事件树.不可达', '历史/事件/接手商会账目/事件.txt',
       {说明: ['按乐观假设', '门槛不可能成立']}));
@@ -272,7 +274,7 @@ test('溯源-13：事件、角色组与台词记录缺陷报出处.结构', asyn
     const root = await fixture(t);
     await edit(path.dirname(root), '作者资料/出处/雾港.yaml', records => { records.push(record); });
     const result = await runJson([root, key]);
-    assert.equal(result.status, 0, label);
+    assert.equal(result.status, 1, label);
     const expected = [finding('出处.结构', '作者资料/出处/雾港.yaml', {说明: fragments})];
     if (label === '台词记录缺角色组ID') expected.push(finding('出处.角色位置不符', '作者资料/出处/雾港.yaml',
       {说明: ['第 15 条台词记录未对应本事件的实际角色位置']}));
@@ -288,7 +290,7 @@ test('溯源-14：出处角色位置不符在事件查询保留、角色组查�
     records.push({事件ID: '拜师', 角色组ID: '白棠', 台词: '潮水要退了。', 来源: '作者原创'});
   });
   const event = await runJson([eventRoot, '事件:拜师']);
-  assert.equal(event.status, 0);
+  assert.equal(event.status, 1);
   assertIssues(event.value.异常, [finding('出处.角色位置不符', '作者资料/出处/雾港.yaml',
     {说明: ['第 15 条', '未对应本事件的实际角色位置']})], '溯源-14 事件');
   assert.ok(event.value.出处.some(item => item.记录序号 === 15 && item.角色组ID === '白棠'),
@@ -299,8 +301,102 @@ test('溯源-14：出处角色位置不符在事件查询保留、角色组查�
     records.push({事件ID: '潮汐号首航', 角色组ID: '秦守', 台词: '灯不等人，明早天亮前上来。', 来源: '作者原创'});
   });
   const group = await runJson([groupRoot, '角色组:秦守']);
-  assert.equal(group.status, 0);
+  assert.equal(group.status, 1);
   assertIssues(group.value.异常, [finding('出处.角色位置不符', '作者资料/出处/雾港.yaml',
     {说明: ['第 15 条', '潮汐号首航', '实际角色位置']})], '溯源-14 角色组');
   assert.equal(group.value.出处.some(item => item.记录序号 === 15), false, '角色组查询跳过记录');
+});
+
+test('溯源-15：开局对象可查询并登记玩家扮演角色组', async () => {
+  const plan = await runJson([example, '开局方案:码头少年']);
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.ok(plan.value.它引用.some(item => item.目标对象 === '事件:拜师' && item.字段 === '历史选择.拜师'));
+  const option = await runJson([example, '开局选项:1']);
+  assert.equal(option.status, 0, option.stderr);
+  assert.ok(option.value.它引用.some(item => item.目标对象 === '事件:拜师' && item.引用种类 === '开局选项'));
+  const reverse = await runJson([example, '事件:拜师']);
+  assert.ok(reverse.value.引用它.some(item => item.来源对象 === '开局选项:1' && item.引用种类 === '开局选项'));
+  assert.ok(reverse.value.引用它.some(item => item.来源对象 === '开局方案:码头少年' && item.引用种类 === '历史选择'));
+
+  const synthetic = buildReferenceIndex({
+    events: [], chains: [], groups: [{id: '秦守', 文件: '角色/秦守/角色组.yaml', 内容: {}, 版本清单: ['秦守'], 档案: []}],
+    entries: {}, openingOptions: null,
+    openingPlans: [{id: '扮演方案', 文件: '历史/开局方案/扮演方案.yaml', 内容: {玩家: {模式: '扮演', 扮演角色组: '秦守'}}}],
+    sources: null,
+  }, {marks: {}, variables: {角色: {}, 世界: {}}, libraries: {}, ability: {维度: {}}});
+  assert.deepEqual(synthetic.query('开局方案:扮演方案').它引用
+    .map(item => [item.目标对象, item.字段, item.引用种类]),
+  [['角色组:秦守', '玩家.扮演角色组', '开局扮演角色组']]);
+  assert.ok(synthetic.query('角色组:秦守').引用它
+    .some(item => item.来源对象 === '开局方案:扮演方案' && item.引用种类 === '开局扮演角色组'));
+});
+
+test('溯源-16：变化表值中的对象引用可正向与反向查询', async t => {
+  const root = await fixture(t);
+  await edit(root, '设定/本局变量.yaml', variables => { variables.角色.信物 = {集合: {引用: '装备'}}; });
+  await edit(root, '历史/事件/拜师/事件.txt', event => {
+    event.分支[0].变化.push(
+      {路径: '角色.灯塔学徒.天赋', 操作: '新增', 值: '雾中视·辨影'},
+      {路径: '角色.灯塔学徒.信物', 操作: '新增', 值: '灯具·风暴灯'},
+      {路径: '角色.灯塔学徒.职位.港务署', 操作: '设定', 值: '守灯人'},
+    );
+  });
+  const event = await runJson([root, '事件:拜师']);
+  assert.equal(event.status, 0, event.stderr);
+  const outgoing = item => [item.目标对象, item.字段, item.引用种类].join('|');
+  assert.ok(event.value.它引用.some(item => outgoing(item) === '条目:技能:雾中视·辨影|分支.拜师.变化[6].值|变化.声明引用'));
+  assert.ok(event.value.它引用.some(item => outgoing(item) === '条目:装备:灯具·风暴灯|分支.拜师.变化[7].值|变化.声明引用'));
+  assert.ok(event.value.它引用.some(item => outgoing(item) === '条目:势力:港务署|分支.拜师.变化[8].路径|变化.映射键'));
+  for (const [key, field] of [
+    ['条目:技能:雾中视·辨影', '分支.拜师.变化[6].值'],
+    ['条目:装备:灯具·风暴灯', '分支.拜师.变化[7].值'],
+    ['条目:势力:港务署', '分支.拜师.变化[8].路径'],
+  ]) {
+    const target = await runJson([root, key]);
+    assert.equal(target.status, 0, key);
+    assert.ok(target.value.引用它.some(item => item.来源对象 === '事件:拜师' && item.字段 === field), key);
+  }
+  const location = await runJson([example, '条目:地点:灯塔']);
+  assert.ok(location.value.引用它.some(item => item.来源对象 === '事件:拜师'
+    && item.字段 === '分支.拜师.变化[1].值' && item.引用种类 === '变化.地点'), '单值引用已在示例数据中登记');
+
+  // 映射值引用与列表引用用合成声明核对，普通列表在变化表中仍按数组展开。
+  const synthetic = buildReferenceIndex({
+    events: [{id: '盟约', 文件: '历史/事件/盟约/事件.txt', 内容: {分支: [{分支ID: '盟约', 变化: [
+      {路径: '世界.盟约.灯塔', 操作: '设定', 值: '白帆商会'},
+      {路径: '角色.灯塔学徒.旧识', 操作: '设定', 值: ['秦守', '白棠']},
+    ]}]}, 角色位置: []}],
+    chains: [], groups: ['灯塔学徒', '秦守', '白棠'].map(id => ({id, 文件: `角色/${id}/角色组.yaml`,
+      内容: {}, 版本清单: [id], 档案: []})),
+    entries: {势力: [{id: '白帆商会', 文件: '势力/商会/白帆商会.txt', 内容: {}, 上级: null}],
+      地点: [{id: '灯塔', 文件: '地点/北湾/灯塔.txt', 内容: {}, 上级: null}]},
+    openingOptions: null, openingPlans: [], sources: null,
+  }, {marks: {}, libraries: {势力: {}, 地点: {}}, ability: {维度: {}},
+    variables: {角色: {旧识: {引用: '角色组', 列表: true}},
+      世界: {盟约: {映射: {键: {引用: '地点'}, 值: {引用: '势力'}}}}}});
+  const references = synthetic.query('事件:盟约').它引用.map(item => `${item.字段}|${item.目标对象}`);
+  assert.ok(references.includes('分支.盟约.变化[1].路径|条目:地点:灯塔'));
+  assert.ok(references.includes('分支.盟约.变化[1].值|条目:势力:白帆商会'));
+  assert.ok(references.includes('分支.盟约.变化[2].值[1]|角色组:秦守'));
+  assert.ok(references.includes('分支.盟约.变化[2].值[2]|角色组:白棠'));
+  assert.deepEqual(synthetic.query('事件:盟约').异常, []);
+});
+
+test('溯源-17：合法移除不误报，仅提示级异常仍退出零', async t => {
+  const root = await fixture(t);
+  await edit(root, '历史/事件/拜师/事件.txt', event => {
+    event.分支[0].变化.push({路径: '角色.灯塔学徒.知识', 操作: '移除'});
+  });
+  const removal = await runJson([root, '事件:拜师']);
+  assert.equal(removal.status, 0, removal.stderr);
+  assert.deepEqual(removal.value.异常, []);
+
+  const hintRoot = await fixture(t);
+  await edit(hintRoot, '历史/事件/学修船/事件.txt', event => {
+    event.门槛 = {事件确认: {事件ID: '拜师', 分支ID: '不存在的分支'}};
+  });
+  const hintOnly = await runJson([hintRoot, '事件:学修船']);
+  assert.equal(hintOnly.status, 0, hintOnly.stderr);
+  assertIssues(hintOnly.value.异常, [hint('事件树.不可达', '历史/事件/学修船/事件.txt',
+    {说明: ['按乐观假设', '门槛不可能成立']})], '溯源-17');
 });
