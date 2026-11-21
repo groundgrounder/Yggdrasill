@@ -212,7 +212,7 @@ test('视图-02-存储-2：新建事件保存、只增不删备份、0o644 与�
   assert.equal(saved.saved, true);
   assert.equal(await fs.readFile(path.join(root, '历史/事件/新事件/事件.txt'), 'utf8'), raw);
   assert.equal((await fs.stat(path.join(root, '历史/事件/新事件/事件.txt'))).mode & 0o777, 0o644);
-  assert.equal(saved.检查.模式, '完整检查');
+  assert.equal(saved.检查.模式, '全量检查');
   assert.equal(saved.检查.通过, true, JSON.stringify(saved.检查.错误列表));
   const metadata = JSON.parse(await fs.readFile(path.join(storage, saved.backup, '修改说明.json'), 'utf8'));
   assert.equal(metadata.操作, '新建事件');

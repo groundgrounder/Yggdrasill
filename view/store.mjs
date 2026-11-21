@@ -319,12 +319,12 @@ export function createViewStore({worldbook, storage, fs = defaultFs, path = defa
   const fullCheck = async () => {
     try {
       const result = await check(root, {sampling: true, fs, path});
-      return {模式: '完整检查', 通过: result.errors.length === 0, 错误: result.errors.length,
+      return {模式: '全量检查', 通过: result.errors.length === 0, 错误: result.errors.length,
         提示: result.hints.length, 摘要: result.summary, 错误列表: result.errors, 提示列表: result.hints};
     }
     catch (error) {
-      return {模式: '完整检查', 通过: false, 错误: 1, 提示: 0, 摘要: null,
-        错误列表: [issue('视图.完整检查失败', '错误', '.', error.message)], 提示列表: []};
+      return {模式: '全量检查', 通过: false, 错误: 1, 提示: 0, 摘要: null,
+        错误列表: [issue('视图.全量检查失败', '错误', '.', error.message)], 提示列表: []};
     }
   };
 
@@ -630,7 +630,7 @@ export function createViewStore({worldbook, storage, fs = defaultFs, path = defa
       backup: normalizeRelative(storeRoot, backupDirectory), 备份说明: metadata,
       静态预览: {模式: stored.validation.模式, 通过: stored.validation.通过, 摘要: stored.validation.摘要},
       检查: full,
-      message: full.通过 ? '已保存；完整检查通过。' : `已保存；完整检查未通过：${full.错误} 错误、${full.提示} 提示。`,
+      message: full.通过 ? '已保存；全量检查通过。' : `已保存；全量检查未通过：${full.错误} 错误、${full.提示} 提示。`,
     };
     if (stored.groupID) result.角色组ID = stored.groupID;
     return result;

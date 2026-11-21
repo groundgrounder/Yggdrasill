@@ -94,7 +94,7 @@ test('视图-存储-5：包裹标签、危险路径与改名都不能签发令�
   assert.equal(renamedResult.token, null);
 });
 
-test('视图-存储-6：保存写回、备份说明、完整检查与恢复演练', async t => {
+test('视图-存储-6：保存写回、备份说明、全量检查与恢复演练', async t => {
   const {root, storage, store, event, changed, file} = await setup(t);
   const result = await preview(store, event, changed);
   assert(result.token);
@@ -102,7 +102,7 @@ test('视图-存储-6：保存写回、备份说明、完整检查与恢复演�
   assert.equal(saved.saved, true);
   assert.equal(await fs.readFile(file, 'utf8'), changed);
   assert.equal(saved.静态预览.模式, '静态检查');
-  assert.equal(saved.检查.模式, '完整检查');
+  assert.equal(saved.检查.模式, '全量检查');
   assert.equal(saved.检查.通过, true, JSON.stringify(saved.检查.错误列表));
   const backup = path.join(storage, saved.backup);
   assert.equal(await fs.readFile(path.join(backup, '事件.txt'), 'utf8'), event.原文);
@@ -196,7 +196,7 @@ test('视图-存储-9：批注与布局独立保存，冲突、结构与原型�
   assert.equal((await store.readState()).damaged, false);
 });
 
-test('视图-存储-10：保存保留文件权限，完整检查失败不被隐藏', async t => {
+test('视图-存储-10：保存保留文件权限，全量检查失败不被隐藏', async t => {
   {
     const {store, event, changed, file} = await setup(t);
     await fs.chmod(file, 0o640);
@@ -209,16 +209,16 @@ test('视图-存储-10：保存保留文件权限，完整检查失败不被隐�
     const storage = path.join(path.dirname(root), '审阅');
     const store = createViewStore({worldbook: root, storage,
       check: (target, options) => options?.sampling === false
-        ? checkWorldbook(target, options) : Promise.reject(new Error('模拟完整检查失败'))});
+        ? checkWorldbook(target, options) : Promise.reject(new Error('模拟全量检查失败'))});
     const data = await loadViewData(root);
     const event = data.事件.find(item => item.事件ID === '拜师');
     const changed = event.原文.replace('让他到灯塔学习灯语。', '让他到灯塔学习灯语与潮汐。');
     const result = await preview(store, event, changed);
     const saved = await store.save({token: result.token, raw: changed});
     assert.equal(saved.saved, true);
-    assert.equal(saved.检查.模式, '完整检查');
+    assert.equal(saved.检查.模式, '全量检查');
     assert.equal(saved.检查.通过, false);
-    assert(saved.检查.错误列表.some(item => item.规则 === '视图.完整检查失败'));
+    assert(saved.检查.错误列表.some(item => item.规则 === '视图.全量检查失败'));
   }
 });
 

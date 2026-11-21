@@ -1,15 +1,15 @@
 # 作者视图 `ygg view`
 
-本地作者可视化工具。以现行世界书为输入，复用 `core/`、`checker/` 与 `cli/ygg.mjs` 的检查、引用、事件树与 `if` 语义；不读取旧创作项目、旧 forge 解析器或旧索引文件。
+本地作者可视化工具。以现行世界书为输入，复用 `core/`、`checker/` 与 `cli/ygg.mjs` 的检查、引用、事件树、`if`、`context` 与 `tree` 语义；不读取旧创作项目、旧 forge 解析器或旧索引文件。
 
 ## 启动
 
-在世界树代码仓库根执行：
+在任意创作项目目录直接执行；未把 CLI 链接到 PATH 时，把 `ygg` 换成 `node <世界树仓库>/cli/ygg.mjs`：
 
 ```sh
 ygg view --worldbook <世界书目录> [--storage <审阅存储目录>] [--port <端口>]
 # 未把 CLI 链接到 PATH 时
-node cli/ygg.mjs view --worldbook <世界书目录> [--storage <审阅存储目录>] [--port <端口>]
+node <世界树仓库>/cli/ygg.mjs view --worldbook <世界书目录> [--storage <审阅存储目录>] [--port <端口>]
 ```
 
 | 参数 | 缺省 | 说明 |
@@ -50,7 +50,7 @@ node cli/ygg.mjs view --worldbook <世界书目录> [--storage <审阅存储目�
 
 - 预览在「世界书 + 作者资料/出处 + yggdrasill.yaml」的临时副本中执行，使用 `checkWorldbook(..., {sampling: false})` 静态检查；预览不写世界书、不写存储目录。
 - 预览令牌 15 分钟有效，绑定候选原文、整树输入指纹与令牌种类（编辑事件、新建事件、编辑角色位置、新建角色位置）。原文或依赖变化、预览后再编辑、并发保存、目标文件在保存前被外部创建均返回 409。
-- 保存前写入 `<storage>/修改备份/<时间戳_UUID>/` 只增不删：编辑事件备份 `事件.txt`；编辑角色位置备份 `角色位置.txt`，`修改说明.json` 记录 `操作`、`事件ID`、`角色组ID`、`源文件`、`备份文件`、保存时间与前后哈希；新建事件/角色位置 `修改前哈希` 为 `null`。写回使用同目录临时文件与 `rename` 原子替换，保留原文件权限；新建文件以 `0o644` 原子创建。保存后运行现行完整 `checkWorldbook` 并报告错误/提示。
+- 保存前写入 `<storage>/修改备份/<时间戳_UUID>/` 只增不删：编辑事件备份 `事件.txt`；编辑角色位置备份 `角色位置.txt`，`修改说明.json` 记录 `操作`、`事件ID`、`角色组ID`、`源文件`、`备份文件`、保存时间与前后哈希；新建事件/角色位置 `修改前哈希` 为 `null`。写回使用同目录临时文件与 `rename` 原子替换，保留原文件权限；新建文件以 `0o644` 原子创建。保存后运行现行全量检查（`checkWorldbook`）并报告错误/提示。
 - `view/store.mjs` 提供 `restore(backup)` 供测试/人工恢复演练：事件编辑、角色位置编辑与新建回滚三类各自核对前后哈希；新建回滚只删除新建文件并清理其自身留下的空目录，绝不删除非空目录或 `历史/事件` 本身。
 - 批注与布局写入 `<storage>/审阅状态.json`，schema 为 `{notes:{key:{text,status}}, layout:{key:{x,y}}}`；与事件正文完全分离，写操作串行化，冲突返回 409。
 
@@ -69,4 +69,4 @@ ygg check examples/雾港/世界书 --json
 ygg check <当前世界书> --json
 ```
 
-相关测试：`test/60-view-data.test.mjs`、`test/61-view-store.test.mjs`、`test/62-view-server.test.mjs`、`test/67-view-02.test.mjs`。浏览器验收证据与迁移覆盖矩阵见二级工作区 `reports/YG-VIEW-01-v1/`；YG-VIEW-02 端到端证据见 `reports/YG-VIEW-02-v2/`。真实世界书与旧创作项目只读；本工具不提交、不推送。
+相关测试：`test/60-view-data.test.mjs`、`test/61-view-store.test.mjs`、`test/62-view-server.test.mjs`、`test/67-view-02.test.mjs`。浏览器验收证据与迁移覆盖矩阵见二级工作区 `reports/YG-VIEW-01-v1/`；YG-VIEW-02 端到端证据见 `reports/YG-VIEW-02-v2/`。保存仅在界面显式确认后写回目标事件或角色位置，不读取 `来源资料/`，不提交、不推送。

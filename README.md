@@ -85,7 +85,7 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 
 | 命令 | 用途 |
 | --- | --- |
-| `node cli/ygg.mjs check examples/雾港/世界书` | 静态检查；`--json` 输出机器可读结果，`--static-only` 只跑静态规则 |
+| `node cli/ygg.mjs check examples/雾港/世界书` | 全量检查（静态检查与抽样）；`--json` 输出机器可读结果，`--static-only` 只跑静态规则 |
 | `node cli/ygg.mjs format examples/雾港/世界书 --check` | 检查 YAML 排版；`--write` 就地改写 |
 | `node cli/ygg.mjs trace examples/雾港/世界书 <对象键>` | 追查一个事件、角色组或条目的引用与影响面 |
 | `node cli/ygg.mjs if examples/雾港/世界书 --排除 大雾之夜` | 按方案、分支或排除项计算如果视图 |
@@ -94,7 +94,7 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 | `node cli/ygg.mjs tree examples/雾港/世界书 --stats-only` | 导出 Markdown 事件树并统计候选台词；`--out` 写入仓库外文件 |
 | `node cli/ygg.mjs status examples/雾港` | 只读诊断项目所处第 0–5 层与缺口 |
 | `node cli/ygg.mjs init ../新项目` | 生成新项目骨架，可直接通过 `check --static-only` |
-| `node cli/ygg.mjs view --worldbook examples/雾港/世界书 --port 0` | 启动本地作者视图 |
+| `node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-审阅 --port 0` | 启动本地作者视图 |
 
 酒馆适配层的打包与冒烟脚本用 `npm run prepare:adapter`、`npm run build:adapter`、`npm run smoke:adapter` 调用，源码在 [`adapter/`](adapter/)。
 
@@ -158,7 +158,7 @@ Yggdrasill/
 ├── adapter/         # 酒馆适配源码、角色卡打包与冒烟脚本
 ├── skills/          # 面向编程代理的写卡与检查工作流 Skill
 ├── presets/         # 酒馆补全预设
-├── templates/       # 世界书与相关配置模板
+├── templates/       # 协议文本模板
 ├── defaults/设定/   # 默认基础设定
 ├── examples/雾港/   # 完整示例世界书
 ├── docs/            # 作者指南、规范正本与酒馆适配文档
