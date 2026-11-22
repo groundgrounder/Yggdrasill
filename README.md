@@ -61,21 +61,26 @@ npm ci
 
 ### 2. 用内置示例体验检查与可视化视图
 
-仓库附带了完整的《雾港》世界书示例，可以直接运行以下命令体验：
+仓库内置主示例 **`examples/三国演义`**（基于维基文库公版《三国演义》第一至三回，零门槛理解世界树结构：37 角色组、45 时期档案、150 事件、15 事件串、双开局方案 `榜前长叹` 与 `温明园盛宴`、跨回分期与真实 `if` 分支——如 `张飞怒欲杀卓:提刀杀卓` 会截断后续 30 个事件），可直接运行以下命令体验：
 
 ```bash
-# 检查雾港示例世界书的引用与规范
-node cli/ygg.mjs check examples/雾港/世界书
+# 全量检查《三国演义》示例世界书的引用、规则与抽样
+node cli/ygg.mjs check examples/三国演义/世界书
+
+# 对比默认主线与 if 分支（提刀杀卓）的事件路径差异
+node cli/ygg.mjs if examples/三国演义/世界书 --分支 张飞怒欲杀卓:提刀杀卓
 
 # 启动本地作者视图（自动分配空闲端口；审阅状态写在仓库外）
-node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-审阅 --port 0
+node cli/ygg.mjs view --worldbook examples/三国演义/世界书 --storage ../三国演义-审阅 --port 0
 ```
 
-执行第二条命令后，终端会输出一个本机访问地址（仅监听 `127.0.0.1`），在浏览器中打开即可浏览事件树、查看引用关系、对比 if 路线或编辑单个事件。终端按 `Ctrl + C` 即可停止服务。
+执行第三条命令后，终端会输出一个本机访问地址（仅监听 `127.0.0.1`），在浏览器中打开即可浏览事件树、查看引用关系、对比 if 路线、预演上下文或编辑单个事件。终端按 `Ctrl + C` 即可停止服务。
 
 审阅状态（批注与布局）必须写在世界书与实现仓库之外；示例写到仓库上一级，真实项目可省略 `--storage`，默认是 `<世界书父目录>/作者资料/审阅器`。
 
 > 作者视图会直接读取你的世界书文件。关于视图的保存范围、自动备份与并发规则，请见[作者视图文档](view/README.md)。
+>
+> 仓库另保留 **`examples/雾港`** 作为**最小语法与单元测试示例**（覆盖全部基础字段、自定义条目大类与自动化单测基线，适合快速查阅最小结构）。
 
 ### 3. 载入配套预设
 
@@ -85,18 +90,18 @@ node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-
 
 | 命令 | 用途 |
 | --- | --- |
-| `node cli/ygg.mjs check examples/雾港/世界书` | 全量检查（静态检查与抽样）；`--json` 输出机器可读结果，`--static-only` 只跑静态规则 |
-| `node cli/ygg.mjs format examples/雾港/世界书 --check` | 检查 YAML 排版；`--write` 就地改写 |
-| `node cli/ygg.mjs trace examples/雾港/世界书 <对象键>` | 追查一个事件、角色组或条目的引用与影响面 |
-| `node cli/ygg.mjs if examples/雾港/世界书 --排除 大雾之夜` | 按方案、分支或排除项计算如果视图 |
-| `node cli/ygg.mjs preview examples/雾港/世界书 灯塔学徒 --开局 潮历071年04月01日` | 预览开局初始化会交给模型的内容；`--状态` 另输出封卷后该角色组状态 |
-| `node cli/ygg.mjs context examples/雾港/世界书 --地点 灯塔 --在场 灯塔学徒 --raw` | 预演一局的路由上下文与预算占用；`--json` 输出机器可读结果 |
-| `node cli/ygg.mjs tree examples/雾港/世界书 --stats-only` | 导出 Markdown 事件树并统计候选台词；`--out` 写入仓库外文件 |
-| `node cli/ygg.mjs status examples/雾港` | 只读诊断项目所处第 0–5 层与缺口 |
+| `node cli/ygg.mjs check examples/三国演义/世界书` | 全量检查（静态检查与抽样）；`--json` 输出机器可读结果，`--static-only` 只跑静态规则 |
+| `node cli/ygg.mjs format examples/三国演义/世界书 --check` | 检查 YAML 排版；`--write` 就地改写 |
+| `node cli/ygg.mjs trace examples/三国演义/世界书 事件:桃园结义` | 追查一个事件、角色组或条目的引用与影响面 |
+| `node cli/ygg.mjs if examples/三国演义/世界书 --分支 张飞怒欲杀卓:提刀杀卓` | 按方案、分支或排除项计算如果视图 |
+| `node cli/ygg.mjs preview examples/三国演义/世界书 刘备 --方案 温明园盛宴 --状态` | 预览开局初始化会交给模型的内容；`--状态` 另输出封卷后该角色组状态 |
+| `node cli/ygg.mjs context examples/三国演义/世界书 --方案 榜前长叹 --地点 涿县 --在场 刘备 --在场 张飞 --raw` | 预演一局的路由上下文与预算占用；`--json` 输出机器可读结果 |
+| `node cli/ygg.mjs tree examples/三国演义/世界书 --stats-only` | 导出 Markdown 事件树并统计候选台词；`--out` 写入仓库外文件 |
+| `node cli/ygg.mjs status examples/三国演义` | 只读诊断项目所处第 0–5 层与缺口 |
 | `node cli/ygg.mjs init ../新项目` | 生成新项目骨架，可直接通过 `check --static-only` |
-| `node cli/ygg.mjs view --worldbook examples/雾港/世界书 --storage ../雾港-审阅 --port 0` | 启动本地作者视图 |
+| `node cli/ygg.mjs view --worldbook examples/三国演义/世界书 --storage ../三国演义-审阅 --port 0` | 启动本地作者视图 |
 
-酒馆适配层的打包与冒烟脚本用 `npm run prepare:adapter`、`npm run build:adapter`、`npm run smoke:adapter` 调用，源码在 [`adapter/`](adapter/)。
+酒馆适配层的打包与冒烟脚本用 `npm run prepare:adapter`、`npm run build:adapter`、`npm run smoke:adapter` 调用，源码在 [`adapter/`](adapter/)。构建《三国演义》角色卡（`--face` 相对 `adapter/` 解析）：`node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml`。
 
 ---
 
@@ -159,9 +164,10 @@ Yggdrasill/
 ├── skills/          # 面向编程代理的写卡与检查工作流 Skill
 ├── presets/         # 酒馆补全预设
 ├── templates/       # 协议文本模板
-├── defaults/设定/   # 默认基础设定
-├── examples/雾港/   # 完整示例世界书
-├── docs/            # 作者指南、规范正本与酒馆适配文档
+├── defaults/设定/     # 默认基础设定
+├── examples/三国演义/ # 主示例世界书（公版《三国演义》第一至三回）
+├── examples/雾港/     # 最小语法与单元测试示例世界书
+├── docs/              # 作者指南、规范正本与酒馆适配文档
 ├── legacy/          # 旧实现，只读参考
 └── test/            # 自动化测试（基于 node:test）
 ```
