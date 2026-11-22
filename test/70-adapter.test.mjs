@@ -11,6 +11,11 @@ import {
 } from '../adapter/bookkeeper.mjs';
 import {applyCommands} from '../core/commands.mjs';
 import {createCalendar} from '../core/calendar.mjs';
+import {createProtocol} from '../core/protocol.mjs';
+import {
+  RECORD_FORMAT, createHistoryAudit, manifestIssue, ownershipOf, storedManifest, validateRecord,
+} from '../adapter/records.mjs';
+import {diffWorldbookState} from '../adapter/upgrade.mjs';
 
 const ids = {脚本ID: '11111111-1111-4111-8111-111111111111', 正则ID: '22222222-2222-4222-8222-222222222222'};
 const script = (extra = {}) => ({id: ids.脚本ID, enabled: true, ...extra});
@@ -144,7 +149,7 @@ test('适配-09-A3：manifest 剥离注释后收集 import，程序集合与 esb
 
   const program = await collectProgram(project);
   const paths = program.map(item => item.路径);
-  for (const name of ['runtime', 'settings', 'commands-parser', 'bookkeeper', 'records', 'opening', 'view', 'ui', 'memfs'])
+  for (const name of ['runtime', 'settings', 'commands-parser', 'bookkeeper', 'records', 'opening', 'view', 'ui', 'memfs', 'upgrade'])
     assert.ok(paths.includes(`adapter/${name}.mjs`), name);
   assert.ok(paths.includes('core/utils.mjs'));
   assert.ok(paths.includes('templates/变量更新规则.txt'));
@@ -452,4 +457,230 @@ test('适配-10-A2/A3：手动修补（留空增量优先、空增量/顺序冲�
   });
   assert.equal(stillBad.ok, false);
   assert.equal(stillBad.code, '修补.仍有失败');
+});
+
+test('适配-11-A1：世界书更新 A/B/C 分级、封闭白名单、前置门禁优先级与升级记录生成', async () => {
+  const {protocol: oldProtocol, catalog: baseCatalog, decl: baseDecl} = await loadProtocol();
+  const clone = value => structuredClone(value);
+  const oldManifest = {
+    卡ID: 'fog.test.card', 卡版本: '1.0.0', 程序版本: '0.1.0', 记录格式: RECORD_FORMAT,
+    程序指纹: '1'.repeat(64), 世界书哈希: 'a'.repeat(64), 兼容程序: ['2'.repeat(64)],
+  };
+  const newManifest = {...oldManifest, 世界书哈希: 'b'.repeat(64)};
+
+  const makeMsg = (id, role, text, record = undefined) => ({
+    message_id: id, role, message: text, swipe_id: 0,
+    ...(record ? {data: {世界树: record}} : {}),
+  });
+  const makeRecord = ({msg, state, commands, written, manifest}) => ({
+    记录格式: RECORD_FORMAT,
+    运行清单: storedManifest(manifest),
+    归属: ownershipOf(msg),
+    本局: state,
+    命令: commands,
+    失败: [],
+    已写入: written,
+    记账: {方式: '正文', 应答格式: '正文命令', 状态: '成功', 尝试次数: 1},
+  });
+
+  // 1. manifestIssue 严格默认值、allowWorldbookDiff 开关与前置硬门禁优先级
+  const oldStored = storedManifest(oldManifest);
+  assert.equal(manifestIssue(oldStored, newManifest).ok, false);
+  assert.equal(manifestIssue(oldStored, newManifest).code, '运行清单.世界书哈希');
+  assert.equal(manifestIssue(oldStored, newManifest, {allowWorldbookDiff: true}).ok, true);
+  assert.equal(manifestIssue({...oldStored, 世界书哈希: 'not-hex'}, newManifest, {allowWorldbookDiff: true}).code, '运行清单.世界书哈希');
+  assert.equal(manifestIssue({...oldStored, 世界书哈希: 'A'.repeat(64)}, newManifest, {allowWorldbookDiff: true}).code, '运行清单.世界书哈希');
+  assert.equal(manifestIssue({...oldStored, 卡ID: 'other.card'}, newManifest, {allowWorldbookDiff: true}).code, '运行清单.卡ID');
+  assert.equal(manifestIssue({...oldStored, 程序指纹: '9'.repeat(64)}, newManifest, {allowWorldbookDiff: true}).code, '运行清单.程序指纹');
+  assert.equal(manifestIssue({...oldStored, 记录格式: 2}, newManifest, {allowWorldbookDiff: true}).code, '运行清单.记录格式');
+
+  // 2. diffWorldbookState 封闭白名单纯测试（A / B / C 及前 10 条截断）
+  const sealed0 = oldProtocol.seal({开局时间: '潮历071年04月01日', 玩家: {模式: '自建', 档案: {姓名: '海生'}}});
+  assert.equal(diffWorldbookState(sealed0, clone(sealed0), 0).级别, 'A');
+
+  const bOnlyGroup = clone(sealed0);
+  bOnlyGroup.开局.角色组.新增角色甲 = {启用: false, 版本ID: '新增角色甲'};
+  const bGroupDiff = diffWorldbookState(sealed0, bOnlyGroup, 0);
+  assert.equal(bGroupDiff.级别, 'B');
+  assert.deepEqual(bGroupDiff.新增角色组.map(item => item.id), ['新增角色甲']);
+  assert.deepEqual(bGroupDiff.新增剧情标记, []);
+
+  const bOnlyMark = clone(sealed0);
+  bOnlyMark.世界.剧情标记.潮汐暗流 = '平静';
+  const bMarkDiff = diffWorldbookState(sealed0, bOnlyMark, 0);
+  assert.equal(bMarkDiff.级别, 'B');
+  assert.deepEqual(bMarkDiff.新增角色组, []);
+  assert.deepEqual(bMarkDiff.新增剧情标记, [{id: '潮汐暗流', 初值: '平静'}]);
+
+  const delGroup = clone(sealed0);
+  delete delGroup.开局.角色组.白棠;
+  const delGroupDiff = diffWorldbookState(sealed0, delGroup, 0);
+  assert.equal(delGroupDiff.级别, 'C');
+  assert.match(delGroupDiff.差异[0], /^#0 缺失原角色组：开局\.角色组\.白棠/);
+
+  const delMark = clone(sealed0);
+  delete delMark.世界.剧情标记.灯塔状态;
+  const delMarkDiff = diffWorldbookState(sealed0, delMark, 0);
+  assert.equal(delMarkDiff.级别, 'C');
+  assert.match(delMarkDiff.差异[0], /^#0 缺失原剧情标记：世界\.剧情标记\.灯塔状态/);
+
+  const modMark = clone(sealed0);
+  modMark.世界.剧情标记.灯塔状态 = '熄灭';
+  const modMarkDiff = diffWorldbookState(sealed0, modMark, 2);
+  assert.equal(modMarkDiff.级别, 'C');
+  assert.match(modMarkDiff.差异[0], /^#2 字段变化：世界\.剧情标记\.灯塔状态（运转 → 熄灭）/);
+
+  const modRole = clone(sealed0);
+  modRole.角色 = {秦守: {好感度: {灯塔学徒: 10}}};
+  const baseWithFavor = clone(sealed0);
+  baseWithFavor.角色 = {秦守: {好感度: {灯塔学徒: 5}}};
+  const modRoleDiff = diffWorldbookState(baseWithFavor, modRole, 2);
+  assert.equal(modRoleDiff.级别, 'C');
+  assert.equal(modRoleDiff.差异[0], '#2 字段变化：角色.秦守.好感度.灯塔学徒（5 → 10）');
+
+  const manyDiffsSaved = clone(sealed0), manyDiffsNew = clone(sealed0);
+  manyDiffsSaved.角色 = {秦守: {}};
+  manyDiffsNew.角色 = {秦守: {}};
+  for (let i = 0; i < 12; i++) {
+    manyDiffsSaved.角色.秦守[`k${String(i).padStart(2, '0')}`] = i;
+    manyDiffsNew.角色.秦守[`k${String(i).padStart(2, '0')}`] = i + 100;
+  }
+  const truncated = diffWorldbookState(manyDiffsSaved, manyDiffsNew, 4);
+  assert.equal(truncated.级别, 'C');
+  assert.equal(truncated.差异.length, 10);
+  assert.equal(truncated.差异总数, 12);
+
+  // 构造一套在旧世界书下合法的两楼聊天（#0 开场 + #2 秦守讲旧事）
+  const cmd0 = [{写场景: {当前地点: {地标: '灯塔', 场景: '值守室'}, 在场: {灯塔学徒: true, 秦守: true}}}];
+  const run0 = applyCommands(oldProtocol, sealed0, cmd0);
+  assert.deepEqual(run0.失败, []);
+  const cmd2 = [{确认事件: {事件ID: '秦守讲旧事', 分支ID: '讲述'}}];
+  const run2 = applyCommands(oldProtocol, run0.state, cmd2);
+  assert.deepEqual(run2.失败, []);
+
+  const m0 = makeMsg(0, 'assistant', '开场白。');
+  m0.data = {世界树: makeRecord({msg: m0, state: run0.state, commands: cmd0, written: run0.已写入, manifest: oldManifest})};
+  const m1 = makeMsg(1, 'user', '询问旧事。');
+  const m2 = makeMsg(2, 'assistant', '秦守讲了旧事。');
+  m2.data = {世界树: makeRecord({msg: m2, state: run2.state, commands: cmd2, written: run2.已写入, manifest: oldManifest})};
+  const chat = [m0, m1, m2];
+
+  // 3. A 级：纯文本改动 + 新增未到期未来事件，重放快照 0 差异；混合哈希续写楼层同样通过校验
+  const aCatalog = clone(baseCatalog);
+  aCatalog.events[0].内容.事件概要 = '顺清措辞后的概要。';
+  aCatalog.events.push({
+    id: '未来航线',
+    内容: {
+      事件ID: '未来航线', 事件标题: '未来航线', 事件概要: '未来事件。', 主类型: '世界',
+      触发时间: {最早: '潮历075年01月01日', 最晚: '潮历075年04月10日'},
+      确认策略: '仅作候选', 核心参与者: [], 默认分支: '起航',
+      分支: [{分支ID: '起航', 分支条件: '条件', 分支结果: '结果', 变化: []}],
+    },
+  });
+  const aAudit = createHistoryAudit({protocol: createProtocol({catalog: aCatalog, decl: baseDecl}), manifest: newManifest});
+  const aRes = aAudit.audit(chat);
+  assert.equal(aRes.ok, true);
+  assert.equal(aRes.worldbook.级别, 'A');
+  assert.deepEqual(aRes.worldbook.差异楼号, [0, 2]);
+
+  const mixedChat = clone(chat);
+  mixedChat[2].data.世界树.运行清单 = storedManifest(newManifest);
+  assert.equal(aAudit.audit(mixedChat).ok, true);
+  assert.equal(aAudit.checkRecords(mixedChat, {allowWorldbookDiff: true}).ok, true);
+
+  // 4. B 级：仅新增角色组与剧情标记，输出精确新增摘要与合法升级计划，且原 chat 未被改写
+  const bCatalog = clone(baseCatalog);
+  const bDecl = clone(baseDecl);
+  const extraGroup = clone(bCatalog.groups[0]);
+  extraGroup.id = '新增角色甲';
+  extraGroup.内容.角色组ID = '新增角色甲';
+  extraGroup.内容.显示名 = '新增角色甲';
+  extraGroup.内容.默认启用 = false;
+  extraGroup.内容.默认版本 = '新增角色甲';
+  extraGroup.内容.版本 = undefined;
+  extraGroup.版本清单 = ['新增角色甲'];
+  extraGroup.内容.档案 = extraGroup.内容.档案.slice(0, 1).map(item => ({...item, 适用版本: undefined, 默认: true, 生效条件: undefined, 前置档案: undefined}));
+  bCatalog.groups.push(extraGroup);
+  bDecl.marks.潮汐暗流 = ['平静', '涌动'];
+  const bAudit = createHistoryAudit({protocol: createProtocol({catalog: bCatalog, decl: bDecl}), manifest: newManifest});
+  const chatBeforeB = JSON.stringify(chat);
+  const bRes = bAudit.audit(chat);
+  assert.equal(JSON.stringify(chat), chatBeforeB, 'B 级试重放绝不得修改原聊天变量');
+  assert.equal(bRes.ok, false);
+  assert.equal(bRes.code, '运行清单.世界书哈希');
+  assert.equal(bRes.级别, 'B');
+  assert.deepEqual(bRes.upgrade.新增角色组, ['新增角色甲']);
+  assert.deepEqual(bRes.upgrade.新增剧情标记, ['潮汐暗流=平静']);
+  assert.deepEqual(bRes.upgrade.待升级楼号, [0, 2]);
+  assert.equal(bRes.upgrade.升级计划.length, 2);
+
+  const upgradedChat = clone(chat);
+  for (const step of bRes.upgrade.升级计划) {
+    assert.equal(validateRecord(step.记录, upgradedChat[step.楼号], newManifest).ok, true);
+    upgradedChat[step.楼号].data.世界树 = step.记录;
+  }
+  assert.equal(bAudit.audit(upgradedChat).ok, true);
+  assert.equal(upgradedChat[2].data.世界树.本局.世界.剧情标记.潮汐暗流, '平静');
+  assert.deepEqual(upgradedChat[2].data.世界树.本局.开局.角色组.新增角色甲, {启用: false, 版本ID: '新增角色甲'});
+
+  // 5. C 级反例全拦截：删组、删标记、早于开局时间的过去事件、命令失败、已写入变化、非法哈希与卡ID/程序指纹高优先级
+  const cDeleteGroup = clone(baseCatalog);
+  cDeleteGroup.groups = cDeleteGroup.groups.filter(group => group.id !== '白棠');
+  const cDelRes = createHistoryAudit({protocol: createProtocol({catalog: cDeleteGroup, decl: baseDecl}), manifest: newManifest}).audit(chat);
+  assert.equal(cDelRes.ok, false);
+  assert.equal(cDelRes.级别, 'C');
+  assert.match(cDelRes.差异[0], /^#0 重放异常（封卷\.参数）：角色组不存在：白棠/);
+
+  const cDeleteMarkDecl = clone(baseDecl);
+  delete cDeleteMarkDecl.marks.灯塔状态;
+  const cDelMarkRes = createHistoryAudit({protocol: createProtocol({catalog: baseCatalog, decl: cDeleteMarkDecl}), manifest: newManifest}).audit(chat);
+  assert.equal(cDelMarkRes.ok, false);
+  assert.equal(cDelMarkRes.级别, 'C');
+  assert.match(cDelMarkRes.差异[0], /^#0 缺失原剧情标记：世界\.剧情标记\.灯塔状态/);
+
+  const cPastEvent = clone(baseCatalog);
+  cPastEvent.events.push({
+    id: '新增过去事件',
+    内容: {
+      事件ID: '新增过去事件', 事件标题: '旧事', 事件概要: '早于开局。', 主类型: '世界',
+      触发时间: {最早: '潮历070年01月01日', 最晚: '潮历070年01月10日'},
+      确认策略: '自动确认', 核心参与者: [], 默认分支: '发生',
+      分支: [{分支ID: '发生', 分支条件: '条件', 分支结果: '结果', 变化: []}],
+    },
+  });
+  const cPastRes = createHistoryAudit({protocol: createProtocol({catalog: cPastEvent, decl: baseDecl}), manifest: newManifest}).audit(chat);
+  assert.equal(cPastRes.ok, false);
+  assert.equal(cPastRes.级别, 'C');
+  assert.ok(cPastRes.差异.some(line => /^#0 字段变化：事件\.新增过去事件/.test(line)));
+
+  const cCmdFail = clone(baseCatalog);
+  cCmdFail.events.find(e => e.id === '秦守讲旧事').内容.分支 = cCmdFail.events.find(e => e.id === '秦守讲旧事').内容.分支.filter(b => b.分支ID !== '讲述');
+  const cFailRes = createHistoryAudit({protocol: createProtocol({catalog: cCmdFail, decl: baseDecl}), manifest: newManifest}).audit(chat);
+  assert.equal(cFailRes.ok, false);
+  assert.equal(cFailRes.级别, 'C');
+  assert.match(cFailRes.差异[0], /^#2 命令失败（协议\.参数）/);
+
+  const cWrittenChat = clone(chat);
+  cWrittenChat[2].data.世界树.已写入 = [];
+  const cWrittenRes = aAudit.audit(cWrittenChat);
+  assert.equal(cWrittenRes.ok, false);
+  assert.equal(cWrittenRes.级别, 'C');
+  assert.match(cWrittenRes.差异[0], /^#2 已写入变化：/);
+
+  const badHashChat = clone(chat);
+  badHashChat[2].data.世界树.运行清单.世界书哈希 = 'bad-hash';
+  const badHashRes = bAudit.audit(badHashChat);
+  assert.equal(badHashRes.ok, false);
+  assert.equal(badHashRes.code, '运行清单.世界书哈希');
+  assert.equal(badHashRes.级别, undefined, '非法哈希格式须在试重放前直接拒绝');
+
+  const badProgramChat = clone(chat);
+  badProgramChat[2].data.世界树.运行清单.程序指纹 = '9'.repeat(64);
+  const badProgramRes = bAudit.audit(badProgramChat);
+  assert.equal(badProgramRes.code, '运行清单.程序指纹', '程序指纹不兼容优先级须高于世界书分级');
+
+  const badCardChat = clone(chat);
+  badCardChat[2].data.世界树.运行清单.卡ID = 'other.card';
+  const badCardRes = bAudit.audit(badCardChat);
+  assert.equal(badCardRes.code, '运行清单.卡ID', '卡ID 不一致优先级须高于世界书分级');
 });

@@ -30,6 +30,7 @@ const CSS = `
 .ygg-floor { margin: 6px 0 0; font-size: 0.85em; color: var(--SmartThemeEmColor); border-left: 3px solid var(--grey30); border-radius: 4px; background: var(--black30a); }
 .ygg-floor.ygg-warn { border-left-color: var(--SmartThemeQuoteColor); }
 .ygg-floor.ygg-blocked { border-left-color: #b54848; border-left-width: 4px; }
+.ygg-floor.ygg-upgrade { border-left-color: #3f7fbf; border-left-width: 4px; }
 .ygg-floor.ygg-pending { opacity: 0.6; }
 .ygg-floor > summary { cursor: pointer; list-style: none; padding: 3px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ygg-floor > summary::-webkit-details-marker { display: none; }
@@ -241,6 +242,29 @@ export function permissionNode(text) {
   return $('<details>').addClass('ygg-floor ygg-warn ygg-blocked').prop('open', true)
     .append($('<summary>').append($('<span>').addClass('ygg-label').text('权限'), $('<span>').text('权限不足')), body);
 }
+// 世界书纯增补（B 级）待升级卡片：只读展示新增角色组、新增剧情标记与待更新楼层，确认前不写任何楼层变量。
+export function upgradeNode(upgrade, {onUpgrade = null, onInspect = null} = {}) {
+  const floors = upgrade.待升级楼号?.length ?? 0;
+  const floorList = (upgrade.待升级楼号 ?? []).map(id => `#${id}`).join('、') || '无';
+  const body = $('<div>').addClass('ygg-body').append(
+    $('<div>').addClass('ygg-line').text('世界书已增补更新（原有历史 0 冲突）：确认后将逐楼无损写入新快照与当前版本清单。'),
+    $('<div>').addClass('ygg-items').append(
+      $('<span>').addClass('ygg-key').text('新增角色组'), value(upgrade.新增角色组?.length ? upgrade.新增角色组 : '无'),
+      $('<span>').addClass('ygg-key').text('新增剧情标记'), value(upgrade.新增剧情标记?.length ? upgrade.新增剧情标记 : '无'),
+      $('<span>').addClass('ygg-key').text('将更新楼层'), value(`共 ${floors} 个助手楼（${floorList}）`),
+    ),
+  );
+  if (onUpgrade || onInspect) {
+    const actions = $('<div>').addClass('ygg-actions');
+    if (onUpgrade) actions.append($('<button>').attr('type', 'button').addClass('menu_button').text('升级本局存档')
+      .on('click', event => { event?.preventDefault?.(); return onUpgrade(); }));
+    if (onInspect) actions.append($('<button>').attr('type', 'button').addClass('menu_button').text('查看差异详情')
+      .on('click', event => { event?.preventDefault?.(); return onInspect(); }));
+    body.append(actions);
+  }
+  return $('<details>').addClass('ygg-floor ygg-upgrade').prop('open', true)
+    .append($('<summary>').append($('<span>').addClass('ygg-label').text('待升级'), $('<span>').text('世界书已增补更新（原有历史 0 冲突）')), body);
+}
 // 设置表单，分区仿 MVU 的额外模型解析：显示、记账（方式、连接、模型与拉取、参数、应答格式、测试）。改动即存。
 // current 为当前设置，save(patch) 存，presets 为酒馆的代理预设名，activeModel 为酒馆当前的模型名；
 // pull(settings) 返回模型列表，test(settings) 返回 {文本}，失败时抛出。
@@ -336,13 +360,43 @@ export function modalPopup(node, options = {wide: true, large: true}, track = nu
   return instance.show().finally(() => track?.(null, instance));
 }
 
-export function createStatusView({session, injectId, messages, recordOf, checkRecord, floorOf, keeperSettings, openOpening, rekeepFor, repairFor}) {
+export function createStatusView({session, injectId, messages, chatId, recordOf, checkRecord, floorOf, keeperSettings,
+  openOpening, rekeepFor, repairFor, runUpgrade}) {
   const show = (title, text) => popup(textNode(title, text));
   const showSections = (title, sections) => popup(panelNode(title, sections));
-  const showBlocked = () => showSections('存档不可用（只读）', [{标题: '世界树', 展开: true,
-    行: [session.integrity.说明, '错误码：' + session.integrity.code
-      + (Number.isSafeInteger(session.integrity.楼号) ? '，楼号：' + session.integrity.楼号 : ''),
-    '原始变量保持不变；不会自动迁移、补记账、提交命令或继续生成。']}]);
+  const showBlocked = () => {
+    const sections = [{标题: '世界树', 展开: true, 行: [
+      session.integrity.说明,
+      '错误码：' + session.integrity.code + (Number.isSafeInteger(session.integrity.楼号) ? '，楼号：' + session.integrity.楼号 : ''),
+      '原始变量保持不变；不会自动迁移、补记账、提交命令或继续生成。',
+    ]}];
+    if (session.integrity.差异?.length) {
+      sections.push({
+        标题: `冲突差异明细（共 ${session.integrity.差异总数 || session.integrity.差异.length} 处）`,
+        展开: true,
+        行: session.integrity.差异,
+      });
+    }
+    return showSections('存档不可用（只读）', sections);
+  };
+  const showUpgrade = () => {
+    const up = session.upgrade;
+    if (!up) return;
+    const floorList = (up.待升级楼号 ?? []).map(id => `#${id}`).join('、') || '无';
+    const groupLines = (up.新增角色组详情 ?? []).map(item => `+ 开局.角色组.${item.id}（启用=${item.启用}，版本ID=${item.版本ID}）`);
+    const markLines = (up.新增剧情标记详情 ?? []).map(item => `+ 世界.剧情标记.${item.id}=${item.初值}`);
+    return showSections('世界书已增补更新（待升级）', [
+      {标题: '升级摘要', 展开: true,
+        行: ['世界书已增补更新（原有历史 0 冲突）；确认升级前保持只读且未修改任何楼层变量。'],
+        项: [
+          ['新增角色组', up.新增角色组?.length ? up.新增角色组 : '无'],
+          ['新增剧情标记', up.新增剧情标记?.length ? up.新增剧情标记 : '无'],
+          ['将更新楼层', `共 ${up.待升级楼号?.length ?? 0} 个助手楼（${floorList}）`],
+        ]},
+      {标题: '增补差异明细（只读）', 展开: true,
+        行: [...groupLines, ...markLines].length ? [...groupLines, ...markLines] : ['无增补明细']},
+    ]);
+  };
 
   // 权限诊断自身可能运行在残缺宿主上：toast 缺失时保留控制台诊断，不把诊断变成新的异常。
   function toastError(body, title) {
@@ -378,10 +432,22 @@ export function createStatusView({session, injectId, messages, recordOf, checkRe
       if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
       return;
     }
+    if (session.upgrade) {
+      const id = Number.isSafeInteger(session.upgrade.楼号) ? session.upgrade.楼号 : messages().at(-1)?.message_id;
+      const node = upgradeNode(session.upgrade, {onUpgrade: runUpgrade, onInspect: showUpgrade});
+      if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
+      return;
+    }
     if (session.integrity) {
       const id = Number.isSafeInteger(session.integrity.楼号) ? session.integrity.楼号 : messages().at(-1)?.message_id;
+      const total = session.integrity.差异总数 || session.integrity.差异?.length || 0;
+      const diffLines = session.integrity.差异?.length
+        ? [`冲突差异（共 ${total} 处${total > session.integrity.差异.length ? `，显示前 ${session.integrity.差异.length} 处` : ''}）：`,
+           ...session.integrity.差异]
+        : [];
       const node = readOnlyNode('存档只读：' + session.integrity.说明,
-        ['原因：' + session.integrity.code, '原始楼层变量保持不变；不会自动迁移、补记账、提交命令或继续生成。',
+        ['原因：' + session.integrity.code, ...diffLines,
+         '原始楼层变量保持不变；不会自动迁移、补记账、提交命令或继续生成。',
          '继续游玩请新建兼容聊天，或切换到合法的聊天。'].join('\n'));
       if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
       return;
@@ -408,9 +474,36 @@ export function createStatusView({session, injectId, messages, recordOf, checkRe
     }
   }
 
-  function blocked(result) {
+  function upgradePending(result) {
+    const fresh = !session.upgrade;
     session.openingPending = false;
-    session.integrity = {code: result.code ?? '校验.失败', 说明: result.说明 ?? '楼层记录不可用', 楼号: result.楼号};
+    session.integrity = null;
+    session.upgrade = {
+      chatId: result.chatId ?? chatId?.() ?? '',
+      code: result.code ?? '运行清单.世界书哈希',
+      说明: result.说明 ?? '世界书已增补更新，请先确认升级本局存档',
+      楼号: result.楼号,
+      ...(result.upgrade ?? {}),
+      snapshots: result.snapshots ?? result.upgrade?.归属快照 ?? [],
+    };
+    session.last = {error: session.upgrade.说明, code: session.upgrade.code, floor: session.upgrade.楼号};
+    uninjectPrompts([injectId]);
+    renderFloors();
+    if (fresh) toastr.warning('世界书已增补更新，请先确认升级本局存档。', '世界树：待升级存档');
+    return false;
+  }
+
+  function blocked(result) {
+    if (result?.级别 === 'B') return upgradePending(result);
+    session.openingPending = false;
+    session.upgrade = null;
+    session.integrity = {
+      code: result.code ?? '校验.失败',
+      说明: result.说明 ?? '楼层记录不可用',
+      楼号: result.楼号,
+      差异: result.差异 ?? [],
+      差异总数: result.差异总数 ?? (result.差异?.length ?? 0),
+    };
     session.last = {error: session.integrity.说明, code: session.integrity.code, floor: session.integrity.楼号};
     uninjectPrompts([injectId]);
     renderFloors();
@@ -422,6 +515,7 @@ export function createStatusView({session, injectId, messages, recordOf, checkRe
     const changed = !session.permission || session.permission.code !== result.code || session.permission.说明 !== result.说明;
     session.permission = {code: result.code ?? '权限.失败', 说明: result.说明 ?? '卡内脚本或局部正则未获准'};
     session.integrity = null;
+    session.upgrade = null;
     session.last = {error: session.permission.说明, code: session.permission.code, floor: null};
     clearInjection();
     try { renderFloors(); } catch (error) { console.warn('世界树：权限提示渲染失败', error); }
@@ -432,11 +526,13 @@ export function createStatusView({session, injectId, messages, recordOf, checkRe
   function pendingOpening(reason = '尚未开局') {
     session.openingPending = true;
     session.integrity = null;
+    session.upgrade = null;
     session.last = {error: reason, code: '开局.未完成', floor: 0};
     uninjectPrompts([injectId]);
     renderFloors();
     return false;
   }
 
-  return {show, showSections, showBlocked, toastError, clearInjection, renderFloors, attachFloor, blocked, permissionBlocked, pendingOpening};
+  return {show, showSections, showBlocked, showUpgrade, toastError, clearInjection, renderFloors, attachFloor,
+    blocked, upgradePending, permissionBlocked, pendingOpening};
 }

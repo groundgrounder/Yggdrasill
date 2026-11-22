@@ -2,11 +2,15 @@
 // 正文指纹使用 UTF-8 字节的 SHA-256；浏览器与 node 共用，不能依赖 node:crypto。
 import {applyCommands} from '../core/commands.mjs';
 import {isMap} from '../core/utils.mjs';
+import {assessWorldbookCompat, canonical, sameSnapshot} from './upgrade.mjs';
+
+export {canonical, sameSnapshot};
 
 export const RECORD_KEY = '世界树';
 export const RECORD_FORMAT = 1;
 export const REQUIRED_FIELDS = ['记录格式', '运行清单', '归属', '本局', '命令', '失败', '已写入', '记账'];
 export const MANIFEST_FIELDS = ['卡ID', '卡版本', '程序版本', '记录格式', '程序指纹', '世界书哈希', '兼容程序'];
+const HEX64 = /^[0-9a-f]{64}$/;
 
 const K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -92,20 +96,46 @@ export function storedManifest(manifest) {
   return stored;
 }
 
-export function manifestIssue(stored, current) {
+export function validateManifest(value, mountedFiles = null) {
+  if (!isMap(value)) throw new Error('构建清单缺失或不是映射');
+  for (const field of MANIFEST_FIELDS) if (!Object.hasOwn(value, field)) throw new Error(`构建清单缺少字段：${field}`);
+  if (typeof value.卡ID !== 'string' || !value.卡ID || typeof value.卡版本 !== 'string' || !value.卡版本 || typeof value.程序版本 !== 'string' || !value.程序版本)
+    throw new Error('构建清单的卡ID、卡版本或程序版本不合法');
+  if (value.记录格式 !== RECORD_FORMAT) throw new Error(`不支持的记录格式：${value.记录格式}`);
+  for (const field of ['程序指纹', '世界书哈希']) if (!HEX64.test(value[field])) throw new Error(`构建清单 ${field} 不合法`);
+  if (!Array.isArray(value.兼容程序) || !Array.isArray(value.世界书文件) || !Array.isArray(value.程序文件)) throw new Error('构建清单列表字段不合法');
+  for (const item of [...value.世界书文件, ...value.程序文件]) {
+    if (!isMap(item) || typeof item.路径 !== 'string' || !Number.isSafeInteger(item.长度) || item.长度 < 0 || !HEX64.test(item.SHA256))
+      throw new Error('构建清单文件条目不合法');
+    const virtual = item.路径.startsWith('/项目/'), relative = virtual ? item.路径.slice('/项目/'.length) : item.路径;
+    if ((!virtual && item.路径.startsWith('/')) || relative.split('/').some(part => !part || part === '.' || part === '..'))
+      throw new Error(`构建清单路径逃逸：${item.路径}`);
+  }
+  if (mountedFiles) {
+    const declared = value.世界书文件.map(item => item.路径).sort();
+    const mounted = Object.keys(mountedFiles).sort();
+    if (JSON.stringify(declared) !== JSON.stringify(mounted)) throw new Error('内存世界书与构建清单文件列表不一致');
+  }
+  return value;
+}
+
+export function manifestIssue(stored, current, {allowWorldbookDiff = false} = {}) {
   if (!isMap(stored)) return issue('运行清单.缺失', '记录没有运行清单');
   for (const field of MANIFEST_FIELDS) if (!Object.hasOwn(stored, field)) return issue(`运行清单.${field}`, `运行清单缺少字段：${field}`);
   if (!isMap(current)) return issue('运行清单.当前', '当前构建清单缺失');
   if (stored.卡ID !== current.卡ID) return issue('运行清单.卡ID', `卡ID不一致：${stored.卡ID ?? '未写'} ≠ ${current.卡ID}`);
   if (stored.记录格式 !== current.记录格式) return issue('运行清单.记录格式', `运行清单记录格式不一致：${stored.记录格式} ≠ ${current.记录格式}`);
-  if (stored.世界书哈希 !== current.世界书哈希) return issue('运行清单.世界书哈希', '世界书哈希不一致');
+  if (typeof stored.世界书哈希 !== 'string' || !HEX64.test(stored.世界书哈希))
+    return issue('运行清单.世界书哈希', `世界书哈希格式不合法：${stored.世界书哈希 ?? '未写'}`);
   const compatible = Array.isArray(current.兼容程序) ? current.兼容程序 : [];
   if (stored.程序指纹 !== current.程序指纹 && !compatible.includes(stored.程序指纹))
     return issue('运行清单.程序指纹', `程序指纹不兼容：${stored.程序指纹 ?? '未写'}`);
+  if (!allowWorldbookDiff && stored.世界书哈希 !== current.世界书哈希)
+    return issue('运行清单.世界书哈希', '世界书哈希不一致');
   return {ok: true};
 }
 
-export function validateRecord(record, message, currentManifest, currentFormat = RECORD_FORMAT) {
+export function validateRecord(record, message, currentManifest, currentFormat = RECORD_FORMAT, {allowWorldbookDiff = false} = {}) {
   if (!isMap(record)) return issue('记录.缺失', message?.role === 'assistant' ? '助手楼没有记录' : '这里没有可用的世界树记录');
   if (message?.role !== 'assistant') return issue('记录.角色', `玩家楼或系统楼的记录不能作为助手记录（${message?.role ?? '未知角色'}）`);
   for (const field of REQUIRED_FIELDS) {
@@ -116,7 +146,7 @@ export function validateRecord(record, message, currentManifest, currentFormat =
   }
   if (!Number.isSafeInteger(record.记录格式)) return issue('记录.格式', '记录格式须为整数');
   if (record.记录格式 !== currentFormat) return issue('记录.格式', `记录格式不同：${record.记录格式} ≠ ${currentFormat}`);
-  const compatible = manifestIssue(record.运行清单, currentManifest);
+  const compatible = manifestIssue(record.运行清单, currentManifest, {allowWorldbookDiff});
   if (!compatible.ok) return compatible;
   if (!isMap(record.归属)) return issue('归属.格式', '记录没有正文归属');
   const expected = ownershipOf(message);
@@ -136,14 +166,6 @@ export function validateRecord(record, message, currentManifest, currentFormat =
   if (!Number.isSafeInteger(record.记账.尝试次数) || record.记账.尝试次数 < 0) return issue('记录.记账', '记账尝试次数须为非负整数');
   return {ok: true, 归属: expected};
 }
-
-export function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (isMap(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
-  return JSON.stringify(value) ?? 'undefined';
-}
-
-export const sameSnapshot = (left, right) => canonical(left) === canonical(right);
 
 // 执行记录中可重放的命令。调用方只保存成功命令；这里按执行结果再裁掉因新底本失效的命令。
 export function replayRecord(record, base, applyCommands) {
@@ -203,7 +225,7 @@ export function createHistoryAudit({protocol, manifest}) {
   }
 
   // 所有已有助手楼的记录结构都必须兼容；快照是否相同由载入审计单独核对。
-  function checkRecords(list, {from = 0, skip = null, shifted = false} = {}) {
+  function checkRecords(list, {from = 0, skip = null, shifted = false, allowWorldbookDiff = false} = {}) {
     for (let id = from; id < list.length; id++) {
       const message = list[id];
       if (message.role !== 'assistant' || id === skip) continue;
@@ -211,23 +233,47 @@ export function createHistoryAudit({protocol, manifest}) {
       // 删除前置楼层会让酒馆重排楼号；只在这个用户触发的传播入口核对正文、角色与 swipe，写入时换新楼号。
       const candidate = shifted && stored?.归属 && typeof stored.归属 === 'object'
         ? {...stored, 归属: {...stored.归属, 楼号: message.message_id}} : stored;
-      const checked = validateRecord(candidate, message, manifest);
+      const checked = validateRecord(candidate, message, manifest, RECORD_FORMAT, {allowWorldbookDiff});
       if (!checked.ok) return {...checked, 楼号: id};
     }
     return {ok: true};
   }
 
   // 本楼正文已变化时，只在内存里把归属换成当前正文，先验证旧记录仍属于兼容格式；不补字段、不迁移。
-  function checkChangedAssistant(message) {
+  function checkChangedAssistant(message, {allowWorldbookDiff = false} = {}) {
     const stored = recordOf(message);
     if (stored === undefined) return {ok: true};
-    if (!stored?.归属 || typeof stored.归属 !== 'object') return validateRecord(stored, message, manifest);
-    return validateRecord({...stored, 归属: ownershipOf(message)}, message, manifest);
+    if (!stored?.归属 || typeof stored.归属 !== 'object')
+      return validateRecord(stored, message, manifest, RECORD_FORMAT, {allowWorldbookDiff});
+    return validateRecord({...stored, 归属: ownershipOf(message)}, message, manifest, RECORD_FORMAT, {allowWorldbookDiff});
   }
 
-  // 载入只读校验：第 0 楼是已封卷的选择结果，作为本局根；后续楼逐楼重放并比对快照。
-  // 不同聊天可以选择不同开局，不能再拿卡面默认封卷去重放每一份第 0 楼记录。
+  // 载入只读校验：先过硬门禁；若存在世界书哈希差异则走内存只读试重放分级（A/B/C），同哈希仍按原严格重放。
   function audit(list, {end = list.length, skip = null, ignoreOwnership = null} = {}) {
+    let hasAssistant0 = false, hasWorldbookDiff = false;
+    for (let id = 0; id < end; id++) {
+      const message = list[id];
+      if (message.role !== 'assistant' || id === skip) continue;
+      const record = recordOf(message);
+      const candidate = id === ignoreOwnership && record?.归属 && typeof record.归属 === 'object'
+        ? {...record, 归属: ownershipOf(message)} : record;
+      const checked = validateRecord(candidate, message, manifest, RECORD_FORMAT, {allowWorldbookDiff: true});
+      if (!checked.ok) return {...checked, 楼号: id};
+      if (id === 0) {
+        hasAssistant0 = true;
+        if (candidate.本局?.开局?.已封卷 !== true)
+          return {ok: false, code: '开局.封卷', 说明: '第 0 楼没有已封卷的开局设定', 楼号: 0};
+      } else if (!hasAssistant0) {
+        return {ok: false, code: '记录.缺失', 说明: '第 0 楼没有可用的开局记录', 楼号: 0};
+      }
+      if (candidate.运行清单.世界书哈希 !== manifest.世界书哈希) hasWorldbookDiff = true;
+    }
+    if (hasWorldbookDiff) {
+      return assessWorldbookCompat({
+        list, end, skip, ignoreOwnership, protocol, manifest,
+        recordOf, replayRecord, storedManifest, ownershipOf, recordFormat: RECORD_FORMAT,
+      });
+    }
     let state = null;
     for (let id = 0; id < end; id++) {
       const message = list[id];
@@ -235,11 +281,7 @@ export function createHistoryAudit({protocol, manifest}) {
       const record = recordOf(message);
       const candidate = id === ignoreOwnership && record?.归属 && typeof record.归属 === 'object'
         ? {...record, 归属: ownershipOf(message)} : record;
-      const checked = validateRecord(candidate, message, manifest);
-      if (!checked.ok) return {...checked, 楼号: id};
       if (id === 0) {
-        if (candidate.本局?.开局?.已封卷 !== true)
-          return {ok: false, code: '开局.封卷', 说明: '第 0 楼没有已封卷的开局设定', 楼号: 0};
         let replayed;
         try {
           const opening = candidate.本局.开局;
@@ -258,7 +300,6 @@ export function createHistoryAudit({protocol, manifest}) {
         state = candidate.本局;
         continue;
       }
-      if (state === null) return {ok: false, code: '记录.缺失', 说明: '第 0 楼没有可用的开局记录', 楼号: 0};
       let replayed;
       try { replayed = replayRecord(candidate, state, (base, commands) => applyCommands(protocol, base, commands)); }
       catch (error) { return {ok: false, code: '重放.执行', 说明: error.message, 楼号: id}; }

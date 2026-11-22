@@ -70,7 +70,7 @@ assert.equal(digest(manifest.世界书文件), manifest.世界书哈希);
 
 const programPaths = manifest.程序文件.map(item => item.路径);
 assert.deepEqual(programPaths, [...programPaths].sort(compare));
-for (const name of ['runtime', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui'])
+for (const name of ['runtime', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
   assert.ok(programPaths.includes(`adapter/${name}.mjs`), name);
 for (const name of ['变量更新规则', '角色通用约束', '扮演准则']) assert.ok(programPaths.includes(`templates/${name}.txt`));
 assert.ok(programPaths.every(file => !/^(?:adapter\/(?:build|smoke|bundle\.generated)|adapter\/dist\/|证据\/|test\/|日志|截图)/.test(file)));
@@ -754,7 +754,10 @@ await blockedReload('正文归属失配', states => { states[2].mes = states[2].
 await blockedReload('跨楼复制记录', states => { states[2].variables[0].世界树 = clone(states[8].variables[0].世界树); }, '归属.失配');
 await blockedReload('快照重放失配', states => { states[2].variables[0].世界树.本局.世界.当前时间 = '损坏日期'; }, '重放.失配');
 await blockedReload('程序指纹不同', states => { states[2].variables[0].世界树.运行清单.程序指纹 = '0'.repeat(64); }, '运行清单.程序指纹');
-await blockedReload('世界书哈希不同', states => { states[2].variables[0].世界树.运行清单.世界书哈希 = '1'.repeat(64); }, '运行清单.世界书哈希');
+await blockedReload('世界书哈希不同（C 级破坏性冲突）', states => {
+  states[2].variables[0].世界树.运行清单.世界书哈希 = '1'.repeat(64);
+  states[2].variables[0].世界树.本局.世界.当前时间 = '损坏日期';
+}, '运行清单.世界书哈希');
 await blockedReload('记录格式不同', states => { states[2].variables[0].世界树.记录格式 = 2; }, '记录.格式');
 await blockedReload('无清单旧记录', states => { delete states[2].variables[0].世界树.运行清单; }, '运行清单.缺失');
 await blockedReload('无归属旧记录', states => { delete states[2].variables[0].世界树.归属; }, '归属.格式');
@@ -1907,3 +1910,173 @@ assert.doesNotMatch(JSON.stringify(chat), /sk-test|apiurl|密钥/);
 holdPopup = false;
 await restoreChat();
 console.log('32 手动修补事务保护：502/非JSON/Schema/残留局部失败均 0 覆写并原地留字重试；任务过期静默放弃且无凭据泄露');
+
+// ---------- 33. YG-ADAPTER-11：A 级无缝兼容 + 混合哈希续写与全操作闭环 ----------
+keeperReplies.length = 0;
+chat.splice(0, chat.length, ...clone(stable));
+for (const id of [0, 2, 4, 6, 8]) chat[id].variables[chat[id].swipe_id].世界树.运行清单.世界书哈希 = 'a'.repeat(64);
+const aCompatChatBefore = JSON.stringify(chat);
+const aCompatWrites = messageWrites;
+const aCompatToastsStart = toasts.length;
+await emit('chat_id_changed');
+assert.equal(messageWrites, aCompatWrites, 'A 级兼容载入旧楼写入次数必须 0 增量');
+assert.equal(JSON.stringify(chat), aCompatChatBefore, 'A 级兼容载入不得改写旧楼任何变量');
+assert.ok(content().length > 0, 'A 级兼容应正常注入上下文');
+assert.ok(![...floors.values()].some(item => item.text().includes('存档只读') || item.text().includes('待升级')));
+const compatToasts1 = toasts.slice(aCompatToastsStart).filter(item => item.level === 'info' && item.title === '世界树：存档兼容');
+assert.equal(compatToasts1.length, 1, '切换/载入 A 级聊天应弹出一次轻提示');
+
+// 普通 refresh 不反复刷屏轻提示
+await emit('message_sent', chat.length - 1);
+const compatToasts2 = toasts.slice(aCompatToastsStart).filter(item => item.level === 'info' && item.title === '世界树：存档兼容');
+assert.equal(compatToasts2.length, 1, '同一聊天会话后续普通 refresh 不得反复刷屏');
+
+// 续写新助手楼写入当前清单新世界书哈希（混合哈希：0–8 旧哈希，10 新哈希）
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+keeperReplies.push(noCommands(record(8).本局));
+await send('我回头望向灯塔值守室。', '灯室窗口在夜色里重新亮起微光。');
+assert.equal(record(10).运行清单.世界书哈希, manifest.世界书哈希, '新助手楼应写入当前构建的世界书哈希');
+assert.equal(record(0).运行清单.世界书哈希, 'a'.repeat(64), '旧楼仍保持原世界书哈希');
+
+// 混合哈希聊天重载、编辑玩家楼、编辑助手楼、切 swipe、手动修补、重新记账、删除传播全闭环
+await emit('chat_id_changed');
+assert.ok(content().length > 0, '混合哈希重载应通过审计并注入');
+assert.ok(![...floors.values()].some(item => item.text().includes('存档只读')));
+const compatToastsReload = toasts.slice(aCompatToastsStart).filter(item => item.level === 'info' && item.title === '世界树：存档兼容');
+assert.equal(compatToastsReload.length, 2, '再次重载/切聊应重新弹出一次轻提示');
+
+chat[9].mes = chat[9].swipes[0] = '我仔细端详灯塔。';
+await emit('message_edited', 9);
+assert.ok(content().length > 0, '混合哈希编辑玩家楼应正常通过');
+
+chat[6].mes = chat[6].swipes[0] = chat[6].mes + '（混合哈希编辑助手楼）';
+keeperReplies.push(noCommands(record(4).本局));
+await emit('message_edited', 6);
+assert.equal(record(6).运行清单.世界书哈希, manifest.世界书哈希);
+assert.ok(content().length > 0, '混合哈希编辑助手楼应正常通过');
+
+chat[10].swipes.push('');
+chat[10].swipe_id = 1;
+chat[10].mes = '';
+await emit('message_swiped', 10);
+chat[10].mes = chat[10].swipes[1] = '另一条分支正文';
+keeperReplies.push(noCommands(record(8).本局));
+await emit('message_received', 10, 'swipe');
+chat[10].swipe_id = 0;
+chat[10].mes = chat[10].swipes[0];
+await emit('message_swiped', 10);
+assert.ok(content().length > 0, '混合哈希切 swipe 应正常通过');
+
+holdPopup = true;
+const openRepair10 = find(floors.get(10), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 10 楼记账'), '混合哈希打开第 10 楼修补');
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '补记一条知识'}});
+keeperReplies.push(keepWithChanges(record(8).本局, {
+  新情况: [{事件ID: '灯室微光', 摘要: '补记微光线索。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '灯室留有余火'}]}],
+}));
+assert.equal(await closePopup(1), true);
+await openRepair10;
+holdPopup = false;
+assert.ok(record(10).本局.角色.灯塔学徒.知识.includes('灯室留有余火'), '混合哈希手动修补应成功');
+
+keeperReplies.push(noCommands(record(8).本局));
+await find(floors.get(10), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(record(10).记账.状态, '成功', '混合哈希重新记账应成功');
+
+chat.splice(9);
+await emit('message_deleted', 9);
+assert.ok(content().length > 0, '混合哈希删除传播应正常通过');
+console.log('33 A 级无缝兼容：旧楼 0 改写、轻提示单次不刷屏；混合哈希续写后重载/编辑/切 swipe/修补/重新记账/删除传播全通过');
+
+// ---------- 34. YG-ADAPTER-11：B 级待升级阻断与一键无损升级事务闭环 ----------
+chat.splice(0, chat.length, ...clone(stable.slice(0, 3)));
+for (const id of [0, 2]) {
+  const rec = chat[id].variables[chat[id].swipe_id].世界树;
+  rec.运行清单.世界书哈希 = 'b'.repeat(64);
+  delete rec.本局.开局.角色组.白棠;
+  delete rec.本局.世界.剧情标记.灯塔状态;
+}
+const bBeforeLoad = JSON.stringify(chat);
+const bWritesBeforeLoad = messageWrites;
+await emit('chat_id_changed');
+assert.equal(messageWrites, bWritesBeforeLoad, 'B 级载入绝不得自动改写任何楼层变量');
+assert.equal(JSON.stringify(chat), bBeforeLoad, 'B 级载入必须保留原始楼层变量');
+assert.equal(injected['yggdrasill-context'], undefined, 'B 级待升级态必须移除叙事注入');
+const upgradeFloorText = [...floors.values()].map(item => item.text()).join('\n');
+assert.match(upgradeFloorText, /世界书已增补更新（原有历史 0 冲突）/);
+assert.match(upgradeFloorText, /白棠/);
+assert.match(upgradeFloorText, /灯塔状态=运转/);
+assert.match(upgradeFloorText, /共 2 个助手楼/);
+
+const bStopped = stopCalls;
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, bStopped + 1, 'B 级待升级态必须阻止生成');
+assert.ok(toasts.some(item => item.body?.includes('世界书已增补更新，请先确认升级本局存档')), '阻止生成应提示确认升级本局存档');
+
+// 只读查看差异详情：不改写任何楼层变量，也不清除待升级态
+const inspectButton = find([...floors.values()].find(item => item.text().includes('升级本局存档')),
+  item => item.tag === '<button>' && item.value === '查看差异详情');
+assert.ok(inspectButton);
+const inspectWrites = messageWrites;
+await inspectButton.handlers.click();
+assert.equal(messageWrites, inspectWrites, '只读查看差异详情不得写楼层变量');
+assert.match(popups.at(-1), /白棠/);
+assert.match(popups.at(-1), /灯塔状态=运转/);
+assert.equal(injected['yggdrasill-context'], undefined);
+
+// 升级写入中途抛错：立即停止并报错，不伪造升级成功
+const upgradeButton = find([...floors.values()].find(item => item.text().includes('升级本局存档')),
+  item => item.tag === '<button>' && item.value === '升级本局存档');
+assert.ok(upgradeButton);
+failNextMessageWrite = true;
+const failUpgradeResult = await upgradeButton.handlers.click();
+assert.equal(failUpgradeResult, false, '升级写入中途失败应返回失败');
+assert.equal(injected['yggdrasill-context'], undefined, '升级写入失败不得恢复注入或伪造成功');
+assert.ok([...floors.values()].some(item => item.text().includes('升级本局存档')), '升级失败后待升级卡片应保持可重试');
+assert.ok(toasts.some(item => item.level === 'error' && item.title === '世界树：升级失败'));
+
+// 恢复写入后点击「升级本局存档」完成逐楼无损升级，重载与继续生成均通过
+const okUpgradeResult = await upgradeButton.handlers.click();
+assert.equal(okUpgradeResult, true, '确认升级本局存档应成功');
+assert.equal(record(0).运行清单.世界书哈希, manifest.世界书哈希);
+assert.equal(record(2).运行清单.世界书哈希, manifest.世界书哈希);
+assert.deepEqual(record(2).本局.开局.角色组.白棠, {启用: true, 版本ID: '白棠'});
+assert.equal(record(2).本局.世界.剧情标记.灯塔状态, '运转');
+assert.deepEqual(record(2).命令, stable[2].variables[0].世界树.命令, '原有命令应保持不变');
+assert.ok(content().length > 0, '升级完成后应立即恢复注入');
+assert.ok(![...floors.values()].some(item => item.text().includes('升级本局存档')), '升级完成后应清理待升级态');
+
+await emit('chat_id_changed');
+assert.ok(content().length > 0, '升级后重载应 100% 通过严格审计');
+keeperReplies.push(noCommands(record(2).本局));
+await send('升级后继续对话。', '海风平缓下来，学徒记录下今天的巡视。');
+assert.equal(record(4).运行清单.世界书哈希, manifest.世界书哈希, '升级后继续生成应正常记账');
+console.log('34 B 级待升级阻断与一键无损升级：0 自动写入、阻止生成、只读看详情、写入失败不伪造成功、确认升级后重载与续写全通过');
+
+// ---------- 35. YG-ADAPTER-11：C 级破坏性冲突严格只读与精准差异诊断 ----------
+chat.splice(0, chat.length, ...clone(stable));
+chat[2].variables[0].世界树.运行清单.世界书哈希 = 'c'.repeat(64);
+chat[2].variables[0].世界树.本局.角色.秦守.在场 = false;
+const cBefore = JSON.stringify(chat), cWrites = messageWrites, cStopped = stopCalls;
+await emit('chat_id_changed');
+assert.equal(JSON.stringify(chat), cBefore, 'C 级必须严格保持只读且原变量不变');
+assert.equal(messageWrites, cWrites, 'C 级写入次数必须 0 增量');
+const cReadOnlyText = [...floors.values()].map(item => item.text()).join('\n');
+assert.match(cReadOnlyText, /存档只读/);
+assert.match(cReadOnlyText, /运行清单\.世界书哈希/);
+assert.match(cReadOnlyText, /#2 字段变化：角色\.秦守\.在场（false → true）/);
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, cStopped + 1, 'C 级必须阻止继续生成');
+await emit('button:世界树：本局');
+assert.match(popups.at(-1), /冲突差异明细/);
+assert.match(popups.at(-1), /#2 字段变化：角色\.秦守\.在场（false → true）/);
+
+chat.splice(0, chat.length, ...clone(stable));
+chat[2].variables[0].世界树.运行清单.世界书哈希 = 'c'.repeat(64);
+chat[2].variables[0].世界树.命令 = [{写场景: {当前时间: '潮历070年01月01日'}}];
+await emit('chat_id_changed');
+assert.match([...floors.values()].map(item => item.text()).join('\n'), /#2 命令失败（协议\.场景）/);
+
+await restoreChat();
+console.log('35 C 级严格只读与精准差异诊断：字段冲突与命令失败均 0 写入、阻止生成，并在界面与本局弹窗展示精准楼号与差异明细');
