@@ -11,12 +11,12 @@ import {readSettings} from '../core/settings.mjs';
 import {stringifyYaml} from '../core/yaml.mjs';
 import {isMap} from '../core/utils.mjs';
 import {createMemFs, memPath} from './memfs.mjs';
-import {createBookkeeper, customApi, parseJson, keeperFailures} from './bookkeeper.mjs';
+import {createBookkeeper, customApi, parseJson, runKeeperLoop, buildKeepRecord, repairRecord} from './bookkeeper.mjs';
 import {createView} from './view.mjs';
-import {installStyle, createStatusView, popup, openingNode} from './ui.mjs';
+import {installStyle, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
 import {createOpeningFlow} from './opening.mjs';
-import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, storedManifest, sanitizeRaw, recordOf,
-  failure, bookkeepingMeta, createHistoryAudit} from './records.mjs';
+import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, storedManifest, sanitizeText, recordOf,
+  createHistoryAudit} from './records.mjs';
 import {keeperSettings, showSettings, permissionFailure} from './settings.mjs';
 import {stripCommands, fromText} from './commands-parser.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
@@ -81,7 +81,7 @@ const messages = () => getLastMessageId() < 0 ? [] : getChatMessages('0-' + getL
 
 // 运行状态集中在一个对象里：状态视图与开局流程只读取这里，不再各自持有副本。
 const session = {integrity: null, permission: null, last: null, openingPending: false, openingOpen: false,
-  openingPopup: null, openingClosingForChat: false, keepingFloor: null};
+  openingPopup: null, repairPopup: null, openingClosingForChat: false, keepingFloor: null};
 let epoch = 0, taskSequence = 0;
 const latestTask = new Map();
 
@@ -183,55 +183,10 @@ async function callKeeper({prompts, schema}, config) {
 }
 
 async function keepWith(base, {input, narration}, config, attempts, task) {
-  let hint = '', outcome = null, raw = null, calls = 0, lastError = null, lastCode = '记账.调用', executor = null;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (!taskCurrent(task)) return {stale: true};
-    let text;
-    try {
-      text = await callKeeper(keeper.request(base, {input, narration, hint}), config);
-      calls += 1;
-    } catch (error) {
-      calls += 1; lastError = error; lastCode = '记账.调用';
-      hint = '上一次的记账调用失败：' + error.message;
-      continue;
-    }
-    try { raw = parseJson(text); }
-    catch (error) {
-      lastError = error; lastCode = '记账.JSON';
-      hint = '上一次的输出不是合法的 JSON：' + error.message;
-      continue;
-    }
-    try { outcome = keeper.run(base, raw); }
-    catch (error) {
-      if (error?.code === '记账.JSON') {
-        lastError = error; lastCode = '记账.JSON';
-        hint = '上一次的输出不符合 JSON Schema：' + error.message;
-        continue;
-      }
-      executor = error;
-      break;
-    }
-    outcome.失败 = keeperFailures(outcome.失败 ?? []);
-    const convertFailed = outcome.失败.some(item => item.阶段 === '转换');
-    if (!convertFailed) break;
-    hint = outcome.失败.map(item => '- ' + item.说明).join('\n');
-  }
-  const common = {方式: config.方式, 应答格式: config.应答格式, 尝试次数: calls, 重试: Math.max(0, calls - 1)};
-  if (config.方式 === '另设模型' && config.模型) common.模型 = config.模型;
-  if (debugging() && raw) common.原始结果 = sanitizeRaw(raw);
-  if (executor) {
-    return {本局: base, 命令: null, 失败: [failure('执行', executor.code ?? '执行.异常', executor.message)],
-      已写入: [], 记账: bookkeepingMeta(config.方式, config.应答格式, '执行失败', calls, common)};
-  }
-  if (!outcome) {
-    const code = lastCode, status = code === '记账.JSON' ? 'JSON失败' : '调用失败';
-    const summary = sanitizeRaw(lastError?.message ?? '未知错误');
-    return {本局: base, 命令: null, 失败: [failure('记账', code, summary)],
-      已写入: [], 记账: bookkeepingMeta(config.方式, config.应答格式, status, calls, {...common, 错误摘要: summary})};
-  }
-  const status = outcome.失败.length ? '部分失败' : '成功';
-  return {本局: outcome.state, 命令: outcome.commands, 失败: outcome.失败, 已写入: outcome.已写入,
-    命令数: outcome.commands.length, 记账: bookkeepingMeta(config.方式, config.应答格式, status, calls, common)};
+  const loop = await runKeeperLoop({keeper, base, input, narration, config, attempts, call: callKeeper,
+    isCurrent: () => taskCurrent(task)});
+  if (loop.stale) return {stale: true};
+  return buildKeepRecord({base, loop, config, debugging: debugging()});
 }
 
 async function bookkeep(list, id, base, task) {
@@ -355,10 +310,76 @@ function rekeepFor(id) {
   });
 }
 
+async function openRepair(id) {
+  if (session.openingPending || session.integrity || !bookkeeping() || id <= 0) return;
+  const list = messages(), message = list[id], record = recordOf(message);
+  if (!message || message.role !== 'assistant' || !validateRecord(record, message, manifest).ok) return;
+  const prefix = history.audit(list, {end: id});
+  if (!prefix.ok) return status.blocked(prefix);
+  const line = view.floor(prefix.state, record.本局, record, {debug: debugging()});
+  const origin = {聊天ID: chatId(), ...ownershipOf(message)};
+  const dialog = repairNode({id, line, record, commandsText: stringifyYaml(record.命令 ?? null)});
+  await modalPopup(dialog.node, {wide: true, large: true, okButton: '开始修补', cancelButton: '取消',
+    onClosing: async instance => {
+      if (session.openingClosingForChat) return true;
+      if (instance?.result !== (SillyTavern.POPUP_RESULT?.AFFIRMATIVE ?? 1)) return true;
+      const instruction = dialog.getInstruction();
+      dialog.setError('');
+      return enqueue(async () => {
+        if (session.openingPending || session.integrity || !bookkeeping()) { dialog.setError('当前状态不可修补'); return false; }
+        const nowList = messages(), nowMsg = nowList[id];
+        if (chatId() !== origin.聊天ID || !nowMsg || nowMsg.role !== 'assistant'
+          || swipeOf(nowMsg) !== origin.swipe || ownershipOf(nowMsg).正文指纹 !== origin.正文指纹) return true;
+        const pre = history.audit(nowList, {end: id});
+        if (!pre.ok) { dialog.setError(pre.说明); return false; }
+        const down = history.checkRecords(nowList, {from: id});
+        if (!down.ok) { dialog.setError(down.说明); return false; }
+        const curRecord = recordOf(nowMsg);
+        if (!instruction.trim() && !(curRecord?.失败?.length)) {
+          dialog.setError('本楼没有失败项，如需调整请填写修补说明');
+          return false;
+        }
+        invalidateTasks();
+        const task = taskFor(id, '修补记账');
+        if (!task) return true;
+        const input = [...nowList.slice(0, id)].reverse().find(item => item.role === 'user')?.message ?? '';
+        const config = keeperSettings(), attempts = Math.min(3, Math.max(1, Math.round(Number(config.尝试次数) || 2)));
+        session.keepingFloor = id;
+        status.renderFloors();
+        let outcome;
+        try {
+          outcome = await repairRecord({
+            keeper, protocol, base: pre.state, record: curRecord, input, narration: stripCommands(nowMsg.message ?? ''),
+            instruction, config, attempts, debugging: debugging(), call: callKeeper, isCurrent: () => taskCurrent(task),
+          });
+        } finally {
+          session.keepingFloor = null;
+          if (taskCurrent(task)) status.renderFloors();
+        }
+        if (outcome.stale || !taskCurrent(task)) return true;
+        if (!outcome.ok) { dialog.setError(outcome.说明); return false; }
+        try {
+          if (!(await store(id, outcome.record, task))) return true;
+        } catch (error) {
+          dialog.setError('写入失败：' + sanitizeText(error.message));
+          return false;
+        }
+        if (!(await replayFrom(id + 1, outcome.record.本局, {kind: '修补后重放'}))) return true;
+        refresh();
+        toastr.success(outcome.record.已写入.length ? outcome.record.已写入.join('、') : '已修补', `世界树：第 ${id} 楼已修补`);
+        return true;
+      });
+    },
+  }, (popupInstance, old) => {
+    if (popupInstance) session.repairPopup = popupInstance;
+    else if (!old || session.repairPopup === old) session.repairPopup = null;
+  });
+}
+
 const status = createStatusView({session, injectId: INJECT_ID, messages, recordOf,
   checkRecord: (record, message) => validateRecord(record, message, manifest).ok,
   floorOf: (before, after, record, verbose) => view.floor(before, after, record, {debug: verbose}),
-  keeperSettings, openOpening: () => openingFlow.open(), rekeepFor});
+  keeperSettings, openOpening: () => openingFlow.open(), rekeepFor, repairFor: id => () => openRepair(id)});
 
 const openingFlow = createOpeningFlow({protocol, catalog, decl, defaults: bundle.opening, commands: bundle.openingCommands,
   messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh,
@@ -492,11 +513,12 @@ eventOn(tavern_events.MESSAGE_DELETED, () => {
 eventOn(tavern_events.CHAT_CHANGED, () => {
   invalidateTasks();
   return enqueue(async () => {
-  if (session.openingPopup) {
+  for (const key of ['openingPopup', 'repairPopup']) {
+    if (!session[key]) continue;
     session.openingClosingForChat = true;
-    try { await session.openingPopup.completeCancelled(); } catch {}
+    try { await session[key].completeCancelled(); } catch {}
     session.openingClosingForChat = false;
-    session.openingPopup = null;
+    session[key] = null;
   }
   session.integrity = null; session.permission = null; session.last = null; session.keepingFloor = null; session.openingPending = false; session.openingOpen = false;
   await init();

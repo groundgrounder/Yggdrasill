@@ -6,6 +6,7 @@ import {createCalendar} from '../core/calendar.mjs';
 import {formatCalendar, writableFields, locationList} from '../core/text.mjs';
 import {stringifyYaml} from '../core/yaml.mjs';
 import {codepointCompare, isMap} from '../core/utils.mjs';
+import {bookkeepingMeta, failure, sameSnapshot, sanitizeRaw, sanitizeText} from './records.mjs';
 
 const UPCOMING = 15;
 // 事件与分支是引用而不是封闭枚举：由转换层按所属事件核对，才能把“未知引用”与“JSON 形状/枚举错误”分开。
@@ -50,7 +51,7 @@ const RULES = `你是本局的记账员，不是叙述者。读最新的一段�
 - 地点：地标从地点列表中选，场景是一个短语；没有换场，地标留空。
 - 在场：正文结束时在场的全部角色组，扮演角色组不填。
 - 发生的事件：只填候选、待登记与将到的事件中，正文写明确实发生了的，并选所走的分支。待登记事件只能填协议给出的分支；只被提到、计划要做、还没发生的不填。
-- 新情况：只记候选与将到的事件之外、会留下长期结果的事：受伤、得失物品、关系转变、得知会影响以后行为的事实。将到的事件已经安排的成长与结果不要另记。路径与操作只用可写字段中的；ID 只用已有的，世界书里没有的东西不记。装备的值写作“状态/位置”，例如“完好/随身”。
+- 新情况：只记候选与将到的事件之外、会留下长期结果的事：受伤、得失物品、关系转变、得知会影响以后行为的事实。将到的事件已经安排的成长与结果不要另记。路径与操作只用可写字段中的；ID 只用已有的，世界书里没有的东西不记。装备的值写作“状态/位置”，例如“完好/随身”。新情况每项的“事件ID”与“摘要”必填且非空，事件ID须为新拟短语，不得与任何预设事件ID重名。
 - 没有的项填空列表或空字符串。`;
 
 export function createBookkeeper({protocol, catalog, decl}) {
@@ -227,9 +228,24 @@ export function createBookkeeper({protocol, catalog, decl}) {
       return isMap(schema) && Array.isArray(schema.数值) && /^-?\d+$/.test(String(text)) ? Number(text) : text;
     };
     for (const item of result?.新情况 ?? []) {
+      const id = typeof item?.事件ID === 'string' ? item.事件ID.trim() : '';
+      const summary = typeof item?.摘要 === 'string' ? item.摘要.trim() : '';
+      let valid = true;
+      if (!id) {
+        errors.push('新情况缺少非空的事件ID（请拟一个简短且不与预设事件重名的事件ID）');
+        valid = false;
+      } else if (events.has(id)) {
+        errors.push(`新情况的事件ID与预设事件重复：${id}（请改用新的动态事件ID，不要复用预设事件ID）`);
+        valid = false;
+      }
+      if (!summary) {
+        errors.push(`新情况缺少非空的摘要（事件ID：${id || '空'}）`);
+        valid = false;
+      }
+      if (!valid) continue;
       const changes = (item?.变化 ?? []).map(change => ({路径: change.路径, 操作: change.操作,
         ...(change.操作 === '移除' && !change.值 ? {} : {值: value(change.路径, change.值)})}));
-      if (changes.length) commands.push({动态事件: {事件ID: item.事件ID, 摘要: item.摘要, 变化: changes}});
+      if (changes.length) commands.push({动态事件: {事件ID: id, 摘要: summary, 变化: changes}});
     }
     return {commands, errors};
   }
@@ -243,7 +259,7 @@ export function createBookkeeper({protocol, catalog, decl}) {
     const applied = applyCommands(protocol, state, commands);
     const failed = new Set(applied.失败.map(item => item.序号 - 1));
     return {state: applied.state, commands: commands.filter((command, index) => !failed.has(index)), 已写入: applied.已写入,
-      失败: [...errors.map(说明 => ({命令: '记账', 错误码: '记账.结果', 说明})), ...applied.失败]};
+      失败: [...errors.map(说明 => ({命令: '记账', 错误码: '记账.结果', 说明})), ...applied.失败], 原命令: commands};
   }
 
   return {request, run, toCommands, upcoming};
@@ -272,4 +288,201 @@ export function parseJson(text) {
 // 带序号的失败来自协议执行；其余是转换阶段的问题。
 export function keeperFailures(items) {
   return items.map(item => ({...item, 阶段: Number.isSafeInteger(item.序号) ? '协议执行' : '转换'}));
+}
+
+// 防倒退比较：无失败严格优于有失败；均有失败时比较失败数更少，相同则优先保留原有已写入且成功命令数不少于前者。
+export function isBetterOutcome(candidate, best) {
+  if (!candidate) return false;
+  if (!best) return true;
+  const cFail = candidate.失败?.length ?? 0, bFail = best.失败?.length ?? 0;
+  if (cFail !== bFail) return cFail < bFail;
+  const bestWritten = new Set(best.已写入 ?? []), candWritten = new Set(candidate.已写入 ?? []);
+  if ([...bestWritten].some(item => !candWritten.has(item))) return false;
+  const cCmds = candidate.commands?.length ?? 0, bCmds = best.commands?.length ?? 0;
+  if (cCmds < bCmds) return false;
+  return candWritten.size > bestWritten.size || cCmds > bCmds;
+}
+
+function formatFailureList(failures = [], commands = []) {
+  return failures.map(item => {
+    const desc = sanitizeText(item.说明 ?? '');
+    if (Number.isSafeInteger(item.序号) && commands[item.序号 - 1]) {
+      return `- 第 ${item.序号} 条命令失败（${item.错误码}）：${desc}；原始命令：${JSON.stringify(sanitizeRaw(commands[item.序号 - 1]))}`;
+    }
+    return `- ${item.错误码 ?? '记账.结果'}：${desc}`;
+  }).join('\n');
+}
+
+// 构造自动修补提示：附脱敏后的上次原始 JSON、失败项明细（含原始命令体）与定向修补指令。
+export function formatRepairHint({raw, failures = [], commands = []} = {}) {
+  const parts = [];
+  if (raw !== undefined && raw !== null) parts.push(`上一次输出的 JSON：\n${JSON.stringify(sanitizeRaw(raw))}`);
+  if (failures.length) parts.push(`未能执行的失败项：\n${formatFailureList(failures, commands)}`);
+  parts.push('保留上一次已经合理且成功的改动，只修正上述失败项，输出修正后的完整记账 JSON。');
+  return parts.join('\n\n');
+}
+
+// 留空手动修补是否可走增量补记：须已有成功命令且失败不涉及时间/预设事件重排。
+export function canIncrementalRepair(record) {
+  if (!Array.isArray(record?.命令) || !record.命令.length) return false;
+  const failures = record?.失败 ?? [];
+  if (!failures.length) return false;
+  return !failures.some(item =>
+    item.命令 === '确认事件'
+    || (item.命令 === '写场景' && /时间|纪年/.test(item.说明 ?? ''))
+    || (!Number.isSafeInteger(item.序号) && /时间|日期/.test(item.说明 ?? '')));
+}
+
+export function preservesWritten(beforeWritten = [], afterWritten = []) {
+  const after = new Set(afterWritten ?? []);
+  return (beforeWritten ?? []).filter(item => !after.has(item));
+}
+
+export function manualRepairHint({mode, commands = null, failures = [], instruction = ''} = {}) {
+  const cmdText = Array.isArray(commands) && commands.length ? stringifyYaml(commands).trim() : '（无已成功命令）';
+  const failText = failures.length ? formatFailureList(failures) : '（无失败项）';
+  if (mode === 'incremental') {
+    return [
+      `本楼已成功执行的命令（已生效）：\n${cmdText}`,
+      `本楼未能执行的失败项：\n${failText}`,
+      '上述已成功命令已生效，勿重复填写，只补充修正失败项（时间未变填“不变”，地点未变留空，在场保持本局当前在场列表）。',
+    ].join('\n\n');
+  }
+  if (mode === 'manual') {
+    return [
+      `本楼当前已记录的命令：\n${cmdText}`,
+      ...(failures.length ? [`本楼当前失败项：\n${failText}`] : []),
+      `用户修补说明：${instruction}`,
+      '在保留正文不变的前提下，除用户说明要求增补、修改或撤回的部分外，尽量保留本楼已成功记录的其余变化，输出本楼完整记账 JSON。',
+    ].join('\n\n');
+  }
+  return [
+    `本楼当前已记录的命令：\n${cmdText}`,
+    `本楼未能执行的失败项：\n${failText}`,
+    '请保留本楼已成功记录的改动并修正上述失败项，输出本楼完整记账 JSON。',
+  ].join('\n\n');
+}
+
+// 内循环记账：覆盖转换与局部协议执行失败，维护最佳合法结果防倒退。
+export async function runKeeperLoop({
+  keeper, base, input = '', narration, initialHint = '',
+  config, attempts, call, isCurrent = () => true,
+}) {
+  let hint = initialHint, best = null, calls = 0, lastError = null, lastCode = '记账.调用', executor = null;
+  const fallbackPrefix = () => best ? `${formatRepairHint({raw: best.raw, failures: best.outcome.失败, commands: best.outcome.原命令})}\n` : '';
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (!isCurrent()) return {stale: true, calls};
+    let text, raw, outcome;
+    try {
+      text = await call(keeper.request(base, {input, narration, hint}), config);
+      calls += 1;
+      if (!isCurrent()) return {stale: true, calls};
+    } catch (error) {
+      calls += 1;
+      if (!isCurrent()) return {stale: true, calls};
+      lastError = error; lastCode = '记账.调用';
+      hint = fallbackPrefix() + '上一次的记账调用失败：' + sanitizeText(error.message);
+      continue;
+    }
+    try { raw = parseJson(text); }
+    catch (error) {
+      lastError = error; lastCode = '记账.JSON';
+      hint = fallbackPrefix() + '上一次的输出不是合法的 JSON：' + error.message;
+      continue;
+    }
+    try { outcome = keeper.run(base, raw); }
+    catch (error) {
+      if (error?.code === '记账.JSON') {
+        lastError = error; lastCode = '记账.JSON';
+        hint = fallbackPrefix() + '上一次的输出不符合 JSON Schema：' + error.message;
+        continue;
+      }
+      executor = error;
+      break;
+    }
+    outcome.失败 = keeperFailures(outcome.失败 ?? []);
+    if (isBetterOutcome(outcome, best?.outcome ?? null)) best = {outcome, raw, attempt: attempt + 1};
+    if (!outcome.失败.length) break;
+    const target = best ?? {outcome, raw};
+    hint = formatRepairHint({raw: target.raw, failures: target.outcome.失败, commands: target.outcome.原命令});
+  }
+  return {best, calls, lastError, lastCode, executor, stale: false};
+}
+
+export function buildKeepRecord({base, loop, config, debugging, repaired = false, override = null}) {
+  const {best, calls, lastError, lastCode, executor} = loop;
+  const common = {方式: config.方式, 应答格式: config.应答格式, 尝试次数: calls, 重试: Math.max(0, calls - 1), ...(repaired ? {修补: true} : {})};
+  if (config.方式 === '另设模型' && config.模型) common.模型 = config.模型;
+  if (best) {
+    if (debugging && best.raw) common.原始结果 = sanitizeRaw(best.raw);
+    const result = override ?? best.outcome;
+    const status = result.失败.length ? '部分失败' : '成功';
+    return {本局: result.state, 命令: result.commands, 失败: result.失败, 已写入: result.已写入,
+      命令数: result.commands.length, 记账: bookkeepingMeta(config.方式, config.应答格式, status, calls, common)};
+  }
+  if (executor) {
+    return {本局: base, 命令: null, 失败: [failure('执行', executor.code ?? '执行.异常', executor.message)],
+      已写入: [], 记账: bookkeepingMeta(config.方式, config.应答格式, '执行失败', calls, common)};
+  }
+  const code = lastCode, status = code === '记账.JSON' ? 'JSON失败' : '调用失败';
+  const summary = sanitizeRaw(lastError?.message ?? '未知错误');
+  return {本局: base, 命令: null, 失败: [failure('记账', code, summary)],
+    已写入: [], 记账: bookkeepingMeta(config.方式, config.应答格式, status, calls, {...common, 错误摘要: summary})};
+}
+
+const residualMessage = failures => '修补后仍有局部失败，未覆盖原记录：\n'
+  + failures.map(item => `- ${item.阶段}/${item.错误码}${item.序号 ? `（第 ${item.序号} 条）` : ''}：${sanitizeText(item.说明)}`).join('\n');
+
+// 每楼手动「修补」核心流程：留空优先增量补记（无新命令或涉重排时回退从 base 全量），带说明从 base 完整重写；任何失败不覆写。
+export async function repairRecord({
+  keeper, protocol, base, record, input = '', narration, instruction = '',
+  config, attempts, debugging, call, isCurrent = () => true,
+}) {
+  const note = String(instruction ?? '').trim();
+  const failures = record?.失败 ?? [];
+  if (!note && !failures.length) {
+    return {ok: false, noRequest: true, code: '修补.无需修补', 说明: '本楼没有失败项，如需调整请填写修补说明'};
+  }
+  const failOf = loop => {
+    if (loop.stale) return {ok: false, stale: true};
+    if (!loop.best) {
+      return {ok: false, code: loop.executor ? (loop.executor.code ?? '执行.异常') : loop.lastCode,
+        说明: sanitizeText((loop.executor ?? loop.lastError)?.message ?? '修补失败')};
+    }
+    if (loop.best.outcome.失败.length) return {ok: false, code: '修补.仍有失败', 说明: residualMessage(loop.best.outcome.失败)};
+    return null;
+  };
+
+  let totalCalls = 0;
+  if (!note && canIncrementalRepair(record)) {
+    const loop = await runKeeperLoop({keeper, base: record.本局, input, narration,
+      initialHint: manualRepairHint({mode: 'incremental', commands: record.命令, failures}), config, attempts, call, isCurrent});
+    totalCalls += loop.calls;
+    const failed = failOf(loop);
+    if (failed) return failed;
+    const patchCommands = loop.best.outcome.commands;
+    if (patchCommands.length) {
+      const mergedCommands = [...record.命令, ...patchCommands];
+      const merged = applyCommands(protocol, base, mergedCommands);
+      if (merged.失败.length || !sameSnapshot(merged.state, loop.best.outcome.state)) {
+        return {ok: false, code: '修补.重放校验', 说明: '增量修补合并命令从底本重放不一致，未覆盖原记录'};
+      }
+      const lost = preservesWritten(record.已写入, merged.已写入);
+      if (lost.length) return {ok: false, code: '修补.丢失已写入', 说明: `修补丢失了原有已写入项：${lost.join('、')}`};
+      return {ok: true, mode: 'incremental', record: buildKeepRecord({base, loop: {...loop, calls: totalCalls},
+        config, debugging, repaired: true, override: {state: merged.state, commands: mergedCommands, 已写入: merged.已写入, 失败: []}})};
+    }
+  }
+
+  const mode = note ? 'manual' : 'full';
+  const loop = await runKeeperLoop({keeper, base, input, narration,
+    initialHint: manualRepairHint({mode, commands: record?.命令, failures, instruction: note}), config, attempts, call, isCurrent});
+  totalCalls += loop.calls;
+  const failed = failOf(loop);
+  if (failed) return failed;
+  if (!note) {
+    const lost = preservesWritten(record?.已写入, loop.best.outcome.已写入);
+    if (lost.length) return {ok: false, code: '修补.丢失已写入', 说明: `全量修补丢失了原有已写入项：${lost.join('、')}`};
+  }
+  return {ok: true, mode, record: buildKeepRecord({base, loop: {...loop, calls: totalCalls}, config, debugging, repaired: true})};
 }

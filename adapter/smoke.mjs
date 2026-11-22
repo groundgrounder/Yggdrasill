@@ -1662,3 +1662,248 @@ assert.equal(JSON.stringify(record(0)), uiOpeningJSON, '重载第 0 楼不得改
 assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '重载重放失败会进入只读视图');
 assert.ok(content().length > 0, '重载后应正常注入');
 console.log('28 UI 路径：默认扮演灯塔学徒开局成功，记录命令与纯计算一致且不含扮演组在场，第 0 楼重载重放一致');
+
+// ---------- 29. YG-ADAPTER-10：自动修补内循环（覆盖局部协议失败 + 防倒退） ----------
+chat.splice(0, chat.length, ...clone(stable));
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 2, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+await emit('chat_id_changed');
+const floor6Base = clone(record(6).本局);
+const keepWithChanges = (state, patch = {}) => JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''},
+  地点: {地标: '', 场景: ''},
+  在场: presentOf(state),
+  发生的事件: [],
+  新情况: [],
+  ...patch,
+});
+
+// 29a 局部协议失败（协议.变化）不再在第 1 次 break，内循环携带原 JSON + 失败命令体与报错定向修补并成功
+keeperReplies.push(
+  keepWithChanges(floor6Base, {
+    地点: {地标: '码头区', 场景: '栈桥'},
+    新情况: [
+      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+      {事件ID: '错误字段', 摘要: '写不存在字段。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+    ],
+  }),
+  keepWithChanges(floor6Base, {
+    地点: {地标: '码头区', 场景: '栈桥'},
+    新情况: [
+      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+      {事件ID: '栈桥记事', 摘要: '补记秦守提醒。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮位上涨'}]},
+    ],
+  }),
+);
+const autoCallStart = keeperCalls.length;
+await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(keeperCalls.length, autoCallStart + 2, '局部协议失败应在剩余 attempts 内发起定向修补');
+assert.match(keeperCalls.at(-1).ordered_prompts[1].content, /原始命令：.*"事件ID":"错误字段"/);
+assert.match(keeperCalls.at(-1).ordered_prompts[1].content, /协议\.变化/);
+assert.match(keeperCalls.at(-1).ordered_prompts[1].content, /保留上一次已经合理且成功的改动/);
+assert.equal(record(8).记账.状态, '成功');
+assert.equal(record(8).记账.尝试次数, 2);
+assert.equal(record(8).记账.重试, 1);
+assert.deepEqual(record(8).已写入, ['栈桥初晤', '栈桥记事']);
+assert.equal(record(8).本局.世界.当前地点.地标, '码头区');
+
+// 29b 防倒退：第 1 次取得部分成功结果，第 2 次遇到调用异常 / 坏 JSON / 更差结果时，保留第 1 次最佳结果
+const partialAttempt1 = keepWithChanges(floor6Base, {
+  地点: {地标: '码头区', 场景: '栈桥'},
+  新情况: [
+    {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+    {事件ID: '坏项', 摘要: '触发协议失败。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+  ],
+});
+for (const [label, setupSecond] of [
+  ['502异常', () => { keeperThrowOnce = false; keeperReplies.push(partialAttempt1); }],
+  ['坏JSON', () => { keeperReplies.push(partialAttempt1, '非JSON文本'); }],
+  ['结果倒退', () => {
+    keeperReplies.push(partialAttempt1, keepWithChanges(floor6Base, {
+      新情况: [{事件ID: '只剩坏项', 摘要: '把好结果丢了。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+    }));
+  }],
+]) {
+  keeperReplies.length = 0;
+  setupSecond();
+  if (label === '502异常') {
+    const origGen = globalThis.generateRaw;
+    let count = 0;
+    globalThis.generateRaw = async cfg => {
+      count += 1;
+      if (count === 2) { keeperCalls.push(cfg); throw new Error('HTTP 502 Bad Gateway'); }
+      return origGen(cfg);
+    };
+    try { await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click(); }
+    finally { globalThis.generateRaw = origGen; }
+  } else {
+    await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+  }
+  assert.equal(record(8).记账.状态, '部分失败', label);
+  assert.equal(record(8).记账.尝试次数, 2, label);
+  assert.equal(record(8).记账.重试, 1, label);
+  assert.ok(Array.isArray(record(8).命令) && record(8).命令.length === 2, `${label} 不得覆盖为 null`);
+  assert.deepEqual(record(8).已写入, ['栈桥初晤'], `${label} 应保留第 1 次最佳已写入`);
+}
+console.log('29 自动修补内循环覆盖局部协议失败并成功；第 2 次遇 502/坏 JSON/结果倒退均防倒退保留最佳部分结果');
+
+// ---------- 30. YG-ADAPTER-10：每楼「修补」按钮边界与留空双分支（增量优先 / 全量回退） ----------
+// 按钮显示边界：第 0 楼不显示；关闭记账不显示；开启记账 id>0 成功楼与失败楼均显示
+assert.equal(find(floors.get(0), item => item.tag === '<button>' && item.value === '修补'), undefined, '第 0 楼不得显示修补按钮');
+assert.ok(find(floors.get(6), item => item.tag === '<button>' && item.value === '修补'), '成功助手楼应显示修补按钮');
+assert.ok(find(floors.get(8), item => item.tag === '<button>' && item.value === '修补'), '部分失败助手楼应显示修补按钮');
+globals['世界树·记账'].方式 = '关闭';
+await emit('chat_id_changed');
+assert.equal(find(floors.get(8), item => item.tag === '<button>' && item.value === '修补'), undefined, '关闭记账不得显示修补按钮');
+
+globals['世界树·记账'] = {方式: '同一模型', 应答格式: '提示词', 尝试次数: 2, 调试: false, 每楼记录: true};
+serverGlobals = clone(globals);
+await emit('chat_id_changed');
+// 留空修补第 6 楼（无失败项）：不发请求，弹窗原地提示并保持打开
+holdPopup = true;
+const noFailCalls = keeperCalls.length, noFailWrites = messageWrites;
+const open6 = find(floors.get(6), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 6 楼记账'), '打开第 6 楼修补弹窗');
+assert.match(popupNodes.at(-1).text(), /当前无失败项/);
+assert.equal(await closePopup(1), false, '无失败项且留空应保持弹窗打开');
+assert.match(popupNodes.at(-1).text(), /本楼没有失败项，如需调整请填写修补说明/);
+assert.equal(keeperCalls.length, noFailCalls, '无失败项且留空不得发记账请求');
+assert.equal(messageWrites, noFailWrites);
+assert.equal(await closePopup(null), true);
+await open6;
+
+// 先在第 8 楼后加一轮下游楼层，用于验证修补后自动向后续楼层重放
+keeperReplies.push(keepWithChanges(record(8).本局));
+await send('我回到灯塔外望去。', '潮水刚涨过栈桥，远处的灯塔还在亮着。');
+assert.ok(record(10), '应已建立第 10 楼下游记录');
+assert.ok(!('原始结果' in record(8).记账), '非调试模式没有原始结果');
+
+// 30a 留空增量补记第 8 楼（已有 栈桥初晤 + 写场景，失败为 动态事件 坏项）：100% 保留原已成功命令并重放到第 10 楼
+const open8Inc = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼修补弹窗');
+keeperReplies.push(keepWithChanges(record(8).本局, {
+  新情况: [{事件ID: '潮水记录', 摘要: '补记潮水上涌。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮水漫过栈桥'}]}],
+}));
+assert.equal(await closePopup(1), true, '留空增量修补应成功并关闭弹窗');
+await open8Inc;
+assert.deepEqual(record(8).失败, []);
+assert.equal(record(8).记账.状态, '成功');
+assert.equal(record(8).记账.修补, true);
+assert.ok(!('原始结果' in record(8).记账), '非调试模式修补后也不持久化原始结果');
+assert.deepEqual(record(8).已写入, ['栈桥初晤', '潮水记录']);
+assert.equal(record(8).本局.世界.当前地点.地标, '码头区');
+assert.ok(record(10).本局.角色.灯塔学徒.知识.includes('潮水漫过栈桥'), '修补后应向第 10 楼重放');
+assert.equal(record(10).本局.世界.当前地点.地标, '码头区');
+
+// 30b 留空全量回退：先让第 8 楼回到 JSON失败（命令为 null），再留空全量修补成功
+keeperReplies.push('不是 JSON', '不是 JSON');
+await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(record(8).命令, null);
+const open8Full = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼全量修补弹窗');
+keeperReplies.push(keepWithChanges(floor6Base, {
+  地点: {地标: '码头区', 场景: '栈桥'},
+  新情况: [{事件ID: '栈桥重记', 摘要: '全量修补后记入。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]}],
+}));
+assert.equal(await closePopup(1), true, '命令为 null 时留空应走全量修补成功');
+await open8Full;
+assert.deepEqual(record(8).失败, []);
+assert.equal(record(8).记账.修补, true);
+assert.ok(record(10).本局.角色.灯塔学徒.知识.includes('栈桥夜雾'), '全量修补后应向第 10 楼重放');
+console.log('30 修补按钮边界、留空增量补记（不依赖原始结果、保留原命令+重放）与 null 命令全量回退通过');
+
+// ---------- 31. YG-ADAPTER-10：带一句话人工说明修补（补记新变化 + 撤回场景改动 + 下游重放） ----------
+const open8Add = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼带说明修补弹窗（补记）');
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '补记秦守对学徒好感增加'}});
+keeperReplies.push(keepWithChanges(floor6Base, {
+  地点: {地标: '码头区', 场景: '栈桥'},
+  新情况: [
+    {事件ID: '栈桥重记', 摘要: '全量修补后记入。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]},
+    {事件ID: '秦守赏识', 摘要: '补记好感。', 变化: [{路径: '角色.秦守.好感度.灯塔学徒', 操作: '增加', 值: '5'}]},
+  ],
+}));
+assert.equal(await closePopup(1), true);
+await open8Add;
+const expectedFavor = (floor6Base.角色?.秦守?.好感度?.灯塔学徒 ?? 0) + 5;
+assert.equal(record(8).本局.角色.秦守.好感度.灯塔学徒, expectedFavor);
+assert.equal(record(10).本局.角色.秦守.好感度.灯塔学徒, expectedFavor, '带说明补记后应重放到第 10 楼');
+
+const open8Withdraw = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼带说明修补弹窗（撤回）');
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '没换地点，撤回场景改动'}});
+keeperReplies.push(keepWithChanges(floor6Base));
+assert.equal(await closePopup(1), true);
+await open8Withdraw;
+assert.deepEqual(record(8).命令, [], '撤回后允许空命令 []');
+assert.equal(record(8).本局.世界.当前地点.地标, floor6Base.世界.当前地点.地标);
+assert.equal(record(10).本局.世界.当前地点.地标, floor6Base.世界.当前地点.地标, '撤回场景改动后应重放到第 10 楼并刷新上下文');
+assert.match(content(), new RegExp(floor6Base.世界.当前地点.地标));
+console.log('31 带一句话说明修补支持「补记新变化」与「撤回场景改动」，并自动重放到后续楼层且刷新上下文');
+
+// ---------- 32. YG-ADAPTER-10：手动修补事务性失败保护（零覆写 + 原地留字重试 + 任务过期） ----------
+const snapshotBeforeFailures = JSON.stringify(chat);
+const writesBeforeFailures = messageWrites;
+const open8Protect = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开保护测试弹窗');
+const textarea8 = find(popupNodes.at(-1), item => item.tag === '<textarea>');
+textarea8.handlers.change({target: {value: '用户保留说明：补记测试'}});
+
+// 32a 调用异常（502）
+const origGenProtect = globalThis.generateRaw;
+globalThis.generateRaw = async cfg => { keeperCalls.push(cfg); throw new Error('HTTP 502 Bad Gateway'); };
+try { assert.equal(await closePopup(1), false, '调用异常必须拦截并保持弹窗打开'); }
+finally { globalThis.generateRaw = origGenProtect; }
+assert.equal(messageWrites, writesBeforeFailures);
+assert.equal(JSON.stringify(chat), snapshotBeforeFailures);
+assert.match(popupNodes.at(-1).text(), /502/);
+
+// 32b 非 JSON、Schema 失败、仍残留局部失败
+globals['世界树·记账'].尝试次数 = 1;
+for (const [label, reply] of [
+  ['非JSON', '不是 JSON'],
+  ['Schema失败', '{}'],
+  ['残留局部失败', keepWithChanges(floor6Base, {
+    新情况: [{事件ID: '仍坏', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+  })],
+]) {
+  keeperReplies.push(reply);
+  assert.equal(await closePopup(1), false, `${label} 不得关闭弹窗`);
+  assert.equal(messageWrites, writesBeforeFailures, `${label} 写入次数必须 0 增量`);
+  assert.equal(JSON.stringify(chat), snapshotBeforeFailures, `${label} 不得覆盖本楼或下游楼层`);
+}
+// 保留原输入文本后直接修改重试成功（只清掉错误，沿用用户已输入的文本）
+keeperReplies.push(keepWithChanges(floor6Base, {
+  地点: {地标: '码头区', 场景: '栈桥'},
+}));
+assert.equal(await closePopup(1), true, '原输入文本仍在，调整后直接重试应成功');
+await open8Protect;
+assert.equal(record(8).本局.世界.当前地点.地标, '码头区');
+assert.match(keeperCalls.at(-1).ordered_prompts[1].content, /用户保留说明：补记测试/);
+
+// 32c 任务过期保护：执行期间用户编辑/切 swipe，旧修补任务静默放弃写入并关闭弹窗
+const beforeStale = JSON.stringify(chat);
+const writesBeforeStale = messageWrites;
+const open8Stale = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开过期测试弹窗');
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '过期测试说明'}});
+holdNextKeeper = true;
+keeperReplies.push(keepWithChanges(floor6Base, {
+  新情况: [{事件ID: '不该写入', 摘要: '过期任务', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '脏数据'}]}],
+}));
+const closingStale = closePopup(1);
+await waitUntil(() => typeof releaseKeeper === 'function', '等待手动修补请求挂起');
+chat[8].mes = chat[8].swipes[chat[8].swipe_id] = chat[8].mes + '（修补中途被编辑）';
+const staleEdit = emit('message_edited', 8);
+const releaseStale = releaseKeeper;
+releaseKeeper = null;
+releaseStale();
+assert.equal(await closingStale, true, '任务过期时应静默放弃并关闭弹窗');
+await open8Stale;
+keeperReplies.push(keepWithChanges(floor6Base));
+await staleEdit;
+assert.ok(!JSON.stringify(chat).includes('不该写入'), '过期修补任务结果不得写入');
+assert.doesNotMatch(JSON.stringify(chat), /sk-test|apiurl|密钥/);
+holdPopup = false;
+await restoreChat();
+console.log('32 手动修补事务保护：502/非JSON/Schema/残留局部失败均 0 覆写并原地留字重试；任务过期静默放弃且无凭据泄露');

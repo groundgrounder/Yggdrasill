@@ -113,7 +113,7 @@ export function createView({protocol, catalog, decl, keeper}) {
     const scope = keeper.upcoming(current);
     const floorSections = floors.map(({楼号, 角色, 记录}) => {
       const keep = 记录.记账 ?? {方式: '缺失', 应答格式: '缺失', 状态: '缺失', 尝试次数: 0};
-      const source = `${keep.方式}·${keep.应答格式}·${keep.状态}·${keep.尝试次数} 次`;
+      const source = `${keep.方式}·${keep.应答格式}·${keep.状态}·${keep.尝试次数} 次${keep.修补 ? '·已修补' : ''}`;
       const failed = 记录.失败?.length ?? 0;
       return {标题: `#${楼号} ${角色}`, 标记: [source, `格式 ${记录.记录格式}`, `命令 ${记录.命令数 ?? 记录.命令?.length ?? 0}`,
         ...(failed ? [`失败 ${failed}`] : [])],

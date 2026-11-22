@@ -38,6 +38,7 @@ const CSS = `
 .ygg-floor[open] .ygg-brief { display: none; }
 .ygg-floor .ygg-body { padding: 0 8px 6px 22px; }
 .ygg-floor .ygg-items { gap: 2px 10px; }
+.ygg-floor .ygg-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .ygg-floor .menu_button { display: inline-block; width: auto; padding: 1px 10px; margin: 4px 0 0; font-size: 1em; }
 .ygg-form .ygg-field { margin: 8px 0; }
 .ygg-form .ygg-field > label { display: block; margin-bottom: 3px; }
@@ -176,16 +177,57 @@ export function openingStatusNode({open, reason = '尚未开局'}) {
     .append($('<summary>').append($('<span>').addClass('ygg-label').text('开局'), $('<span>').text('等待选择')), body);
 }
 
-// 每楼一行：收起时一行摘要，展开为逐项详情、调试附录与“重新记账”。line 为 view.floor 的结果；pending 时只显示“记账中”。
-export function floorNode(line, {rekeep = null, pending = false} = {}) {
+// 每楼一行：收起时一行摘要，展开为逐项详情、调试附录与“重新记账”“修补”。line 为 view.floor 的结果；pending 时只显示“记账中”。
+export function floorNode(line, {rekeep = null, repair = null, pending = false} = {}) {
   const node = $('<details>').addClass('ygg-floor');
   if (pending) return node.addClass('ygg-pending').append($('<summary>').append($('<span>').addClass('ygg-label').text('记账'), $('<span>').text('记账中…')));
   if (line.失败) node.addClass('ygg-warn');
   const body = $('<div>').addClass('ygg-body');
   if (line.详情.length) body.append($('<div>').addClass('ygg-items').append(line.详情.flatMap(([key, values]) => [$('<span>').addClass('ygg-key').text(key), value(values)])));
   if (line.调试) body.append($('<pre>').addClass('ygg-pre').text(line.调试));
-  if (rekeep) body.append($('<button>').attr('type', 'button').addClass('menu_button').text('重新记账').on('click', event => { event?.preventDefault?.(); return rekeep(); }));
+  if (rekeep || repair) {
+    const actions = $('<div>').addClass('ygg-actions');
+    if (rekeep) actions.append($('<button>').attr('type', 'button').addClass('menu_button').text('重新记账').on('click', event => { event?.preventDefault?.(); return rekeep(); }));
+    if (repair) actions.append($('<button>').attr('type', 'button').addClass('menu_button').text('修补').on('click', event => { event?.preventDefault?.(); return repair(); }));
+    body.append(actions);
+  }
   return node.append($('<summary>').append($('<span>').addClass('ygg-label').text('记账'), $('<span>').addClass('ygg-brief').text(line.摘要)), body);
+}
+
+// 每楼修补弹窗：展示已记摘要、失败列表与修补说明输入框；报错原地保留用户输入以便调整重试。
+export function repairNode({id, line, record, commandsText}) {
+  const state = {instruction: '', touched: false};
+  const root = $('<div>').addClass('ygg-panel ygg-form ygg-opening');
+  const errorBox = $('<div>').addClass('ygg-opening-error').text('').hide();
+  const failures = record?.失败 ?? [];
+  const failureItems = failures.length
+    ? failures.map(item => $('<div>').addClass('ygg-line').text(`${item.阶段}/${item.错误码}${item.序号 ? `·第 ${item.序号} 条` : ''}：${item.说明}`))
+    : [$('<div>').addClass('ygg-line').text('当前无失败项')];
+  const textarea = $('<textarea>').addClass('text_pole').attr('rows', 4)
+    .attr('placeholder', '留空＝仅定向修补上述失败项；或输入一句指令，例如：补记吕布与刘备、张飞相识 / 没换地点，撤回场景改动')
+    .val('')
+    .on('input', event => { state.touched = true; state.instruction = String(event?.target?.value ?? ''); })
+    .on('change', event => { state.touched = true; state.instruction = String(event?.target?.value ?? ''); });
+  root.append(
+    $('<h3>').text(`世界树：修补第 ${id} 楼记账`),
+    $('<div>').addClass('ygg-hint').text('留空仅修补当前失败项；填写说明时按说明在原正文基础上增补、修改或撤回变化，失败不会覆盖原记录。'),
+    errorBox,
+    $('<div>').addClass('ygg-opening-preview').append(
+      $('<div>').addClass('ygg-line').text(`已记摘要：${line?.摘要 || '无变化'}`),
+      ...(line?.详情?.length ? [$('<div>').addClass('ygg-items').append(line.详情.flatMap(([key, values]) => [$('<span>').addClass('ygg-key').text(key), value(values)]))] : []),
+      $('<pre>').addClass('ygg-pre').text(commandsText || '[]'),
+    ),
+    $('<details>').addClass('ygg-sec').prop('open', true).append(
+      $('<summary>').text('失败列表'),
+      $('<div>').addClass('ygg-body').append(failureItems),
+    ),
+    $('<div>').addClass('ygg-field').append($('<label>').text('修补说明（可选）'), textarea),
+  );
+  return {
+    node: root,
+    getInstruction: () => state.touched ? state.instruction : String(textarea.val() ?? ''),
+    setError: message => { if (!message) errorBox.text('').hide(); else errorBox.text(String(message)).show(); },
+  };
 }
 // 存档校验失败时只显示原因与只读边界；不显示记录原文、命令或任何可编辑入口。
 export function readOnlyNode(title, text) {
@@ -287,7 +329,14 @@ export function settingsNode({current, save, presets = [], activeModel = '', pul
 export const popup = (node, options = {wide: true, large: true}) =>
   SillyTavern.callGenericPopup(node, SillyTavern.POPUP_TYPE.TEXT, '', {...options, allowVerticalScrolling: true});
 
-export function createStatusView({session, injectId, messages, recordOf, checkRecord, floorOf, keeperSettings, openOpening, rekeepFor}) {
+export function modalPopup(node, options = {wide: true, large: true}, track = null) {
+  if (typeof SillyTavern.Popup !== 'function') return popup(node, options);
+  const instance = new SillyTavern.Popup(node, SillyTavern.POPUP_TYPE.TEXT, '', {...options, allowVerticalScrolling: true});
+  track?.(instance);
+  return instance.show().finally(() => track?.(null, instance));
+}
+
+export function createStatusView({session, injectId, messages, recordOf, checkRecord, floorOf, keeperSettings, openOpening, rekeepFor, repairFor}) {
   const show = (title, text) => popup(textNode(title, text));
   const showSections = (title, sections) => popup(panelNode(title, sections));
   const showBlocked = () => showSections('存档不可用（只读）', [{标题: '世界树', 展开: true,
@@ -352,7 +401,8 @@ export function createStatusView({session, injectId, messages, recordOf, checkRe
         if (before === null) continue;
         const line = floorOf(before, record.本局, record, verbose);
         const again = rekeep && id > 0 ? rekeepFor(id) : null;
-        attachFloor(id, floorNode(line, {rekeep: again}));
+        const repair = rekeep && id > 0 && repairFor ? repairFor(id) : null;
+        attachFloor(id, floorNode(line, {rekeep: again, repair}));
         before = record.本局;
       } catch (error) { console.warn('世界树：每楼记录', error); }
     }
