@@ -65,7 +65,7 @@ export function checkText(catalog, decl) {
       const level = original.has(value) ? '提示' : '错误';
       add('文本.破折号', original.has(value) ? '原台词含破折号' : '正文不能使用破折号', level);
     }
-    for (const term of WRITING_TERMS) if (values.some(value => value.includes(term))) add('文本.写法', `正文出现“${term}”`, '提示');
+    for (const term of WRITING_TERMS) if (values.some(value => !original.has(value) && value.includes(term))) add('文本.写法', `正文出现“${term}”`, '提示');
     if (kind && count(values.join('')) > budgets[kind]) add('文本.长度', `正文${count(values.join(''))}字，超过${kind}的${budgets[kind]}字预算`, '提示');
   }
 

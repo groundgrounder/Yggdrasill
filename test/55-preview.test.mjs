@@ -137,3 +137,92 @@ test('预览-4：JSON 固定键、重复运行只读、参数与本局错误', a
 
   t.diagnostic(`输入哈希 ${before} → ${after}；重复输出一致；冲突/坏本局/未封卷均退出 1`);
 });
+
+test('预览-5：--状态 --json 输出七键与封卷后完整角色状态，且人类可读输出稳定', async t => {
+  const result = await json(['preview', example, '灯塔学徒', '--状态']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(Object.keys(result.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.equal(result.value.角色组, '灯塔学徒');
+  assert.equal(result.value.状态.所在, '灯塔');
+  assert.ok(Array.isArray(result.value.状态.身份) && result.value.状态.身份.includes('秦守的徒弟'));
+  assert.equal(result.value.状态.关系?.秦守, '师徒');
+
+  const human1 = await real(['preview', example, '灯塔学徒', '--状态']);
+  const human2 = await real(['preview', example, '灯塔学徒', '--状态']);
+  assert.equal(human1.status, 0, human1.stderr);
+  assert.equal(human1.stdout, human2.stdout);
+  const previewIndex = human1.stdout.indexOf('\n预览\n');
+  const stateIndex = human1.stdout.indexOf('\n状态\n');
+  const issueIndex = human1.stdout.indexOf('\n异常（0）\n');
+  assert.ok(previewIndex !== -1 && stateIndex > previewIndex && issueIndex > stateIndex, human1.stdout);
+  assert.match(human1.stdout, /  所在：灯塔/u);
+  assert.match(human1.stdout, /  关系：秦守=师徒/u);
+
+  t.diagnostic(`preview --状态：${JSON.stringify(result.value.状态)}`);
+});
+
+test('预览-6：--状态 配合 --开局 与 --方案 体现时间与路径状态差异', async t => {
+  const early = await json(['preview', example, '灯塔学徒', '--开局', '潮历071年01月05日', '--状态']);
+  assert.equal(early.status, 0, early.stderr);
+  assert.deepEqual(Object.keys(early.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.deepEqual(early.value.状态, {});
+
+  const earlyHuman = await real(['preview', example, '灯塔学徒', '--开局', '潮历071年01月05日', '--状态']);
+  assert.equal(earlyHuman.status, 0, earlyHuman.stderr);
+  assert.match(earlyHuman.stdout, /\n状态\n  无\n/u);
+
+  const afterApprentice = await json(['preview', example, '灯塔学徒', '--开局', '潮历072年', '--状态']);
+  assert.equal(afterApprentice.status, 0, afterApprentice.stderr);
+  assert.equal(afterApprentice.value.状态.所在, '灯塔');
+  assert.ok(afterApprentice.value.状态.身份.includes('秦守的徒弟'));
+
+  const plan = await json(['preview', example, '灯塔学徒', '--方案', '码头少年', '--状态']);
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.equal(plan.value.方案, '码头少年');
+  assert.ok(plan.value.状态.身份.includes('码头帮工'));
+  assert.equal(plan.value.状态.所在, undefined);
+
+  t.diagnostic(`早期：${JSON.stringify(early.value.状态)}；拜师后：${JSON.stringify(afterApprentice.value.状态)}；码头少年：${JSON.stringify(plan.value.状态)}`);
+});
+
+test('预览-7：--状态 支持未启用、--本局 已初始化角色与失败路径', async t => {
+  const disabled = await json(['preview', example, '周岚', '--状态']);
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.deepEqual(Object.keys(disabled.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.equal(disabled.value.预览, null);
+  assert.equal(disabled.value.原因, '未启用');
+  assert.deepEqual(disabled.value.状态, {});
+
+  const directory = await fs.mkdtemp(path.join(process.env.TMPDIR ?? '/tmp', 'ygg-preview-'));
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const stateFile = path.join(directory, '本局.json');
+  await fs.writeFile(stateFile, JSON.stringify(await initializedState()));
+
+  const initialized = await json(['preview', example, '秦守', '--本局', stateFile, '--状态']);
+  assert.equal(initialized.status, 0, initialized.stderr);
+  assert.deepEqual(Object.keys(initialized.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.equal(initialized.value.预览, null);
+  assert.equal(initialized.value.原因, '已初始化');
+  assert.equal(initialized.value.状态.已初始化, true);
+  assert.equal(initialized.value.状态.装备?.['工具·铜扳手']?.状态, '完好');
+
+  const initHuman = await real(['preview', example, '秦守', '--本局', stateFile, '--状态']);
+  assert.equal(initHuman.status, 0, initHuman.stderr);
+  assert.match(initHuman.stdout, /预览：无（已初始化）/u);
+  assert.match(initHuman.stdout, /  已初始化：是/u);
+  assert.match(initHuman.stdout, /  装备：工具·铜扳手（完好，随身工具袋）/u);
+
+  const missing = await json(['preview', example, '不存在', '--状态']);
+  assert.equal(missing.status, 1);
+  assert.deepEqual(Object.keys(missing.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.equal(missing.value.状态, null);
+  assert.equal(missing.value.异常[0].规则, '预览.角色组');
+
+  const badArg = await json(['preview', example, '秦守', '--本局', stateFile, '--开局', '潮历074年', '--状态']);
+  assert.equal(badArg.status, 1);
+  assert.deepEqual(Object.keys(badArg.value), ['角色组', '开局', '方案', '预览', '原因', '状态', '异常']);
+  assert.equal(badArg.value.状态, null);
+  assert.equal(badArg.value.异常[0].规则, '预览.参数');
+
+  t.diagnostic(`未启用/已初始化/失败路径均符合 7 键与状态口径`);
+});

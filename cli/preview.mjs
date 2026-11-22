@@ -4,7 +4,7 @@ import {compileWorldbook} from '../core/catalog.mjs';
 import {createProtocol} from '../core/protocol.mjs';
 import {timelineEnd} from '../core/what-if.mjs';
 
-const USAGE = '用法：ygg preview <世界书目录> <角色组ID> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--json]';
+const USAGE = '用法：ygg preview <世界书目录> <角色组ID> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--状态] [--json]';
 
 export class PreviewError extends Error {
   constructor(code, message) {
@@ -20,7 +20,8 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
   try { parsed = parseArgs(args); }
   catch (error) {
     stderr.write(`${USAGE}\n错误 ${error.code ?? '预览.参数'}：${error.message}\n`);
-    if (args.includes('--json')) stdout.write(`${JSON.stringify(failureResult(null, error), null, 2)}\n`);
+    if (Array.isArray(args) && args.includes('--json'))
+      stdout.write(`${JSON.stringify(failureResult(null, error, args.includes('--状态')), null, 2)}\n`);
     return 1;
   }
 
@@ -47,6 +48,7 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
       方案: parsed.方案 ?? state?.开局?.方案 ?? null,
       预览: preview ?? null,
       原因: reason,
+      ...(parsed.状态 ? {状态: structuredClone(state?.角色?.[parsed.角色组] ?? {})} : {}),
       异常: issues,
     };
     writeResult(result, {json: parsed.json, stdout, stderr});
@@ -60,12 +62,13 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw new PreviewError('预览.参数', 'preview 参数须为列表');
-  const result = {世界书: null, 角色组: null, 开局: null, 方案: null, 本局: null, json: false};
+  const result = {世界书: null, 角色组: null, 开局: null, 方案: null, 本局: null, 状态: false, json: false};
   const positionals = [];
   const seen = new Set();
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
     if (value === '--json') { result.json = true; continue; }
+    if (value === '--状态') { result.状态 = true; continue; }
     if (value === '--开局') {
       once(seen, '--开局');
       result.开局 = optionValue(args, ++index, '--开局');
@@ -106,6 +109,9 @@ export function formatPreview(result) {
     lines.push(`  装备：${equipmentText(preview.装备)}`);
   } else {
     lines.push(`预览：无${result?.原因 ? `（${result.原因}）` : ''}`);
+  }
+  if (result && Object.hasOwn(result, '状态')) {
+    lines.push('', '状态', ...formatStateLines(result.状态));
   }
   lines.push('', `异常（${result?.异常?.length ?? 0}）`);
   if (result?.异常?.length) for (const item of result.异常)
@@ -157,7 +163,7 @@ function writeResult(result, {json, stdout, stderr}) {
   else stdout.write(formatPreview(result));
 }
 
-function failureResult(parsed, error) {
+function failureResult(parsed, error, includeState = Boolean(parsed?.状态)) {
   const known = error instanceof PreviewError;
   return {
     角色组: parsed?.角色组 ?? null,
@@ -165,6 +171,7 @@ function failureResult(parsed, error) {
     方案: parsed?.方案 ?? null,
     预览: null,
     原因: null,
+    ...(includeState ? {状态: null} : {}),
     异常: [{规则: known ? error.code : '预览.读取失败', 级别: '错误', 文件: parsed?.世界书 ?? 'preview',
       说明: known ? error.message
         : `无法完成只读预览：${error?.code ? `${error.code}：` : ''}${error?.message ?? String(error)}`}],
@@ -195,6 +202,66 @@ function abilityText(ability) {
 function equipmentText(equipment) {
   if (!Array.isArray(equipment) || !equipment.length) return '无';
   return equipment.map(item => `${item.装备ID}（${item.状态}，${item.位置}）`).join('；');
+}
+
+const STATE_KEY_ORDER = ['在场', '所在', '已初始化', '身份', '职位', '关系', '好感度', '知识', '身体状态', '装备', '能力移除记录'];
+
+function formatStateLines(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return ['  无'];
+  const entries = Object.entries(state)
+    .filter(([, value]) => !isEmptyStateValue(value))
+    .sort(([left], [right]) => compareStateKeys(left, right));
+  if (!entries.length) return ['  无'];
+  return entries.map(([key, value]) => `  ${key}：${formatStateValue(key, value)}`);
+}
+
+function isEmptyStateValue(value) {
+  if (value === null || value === undefined || value === '') return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
+}
+
+function compareStateKeys(left, right) {
+  const leftRank = STATE_KEY_ORDER.indexOf(left);
+  const rightRank = STATE_KEY_ORDER.indexOf(right);
+  if (leftRank !== -1 || rightRank !== -1) {
+    if (leftRank === -1) return 1;
+    if (rightRank === -1) return -1;
+    return leftRank - rightRank;
+  }
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function formatStateValue(key, value) {
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (key === '装备' && value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([id, item]) => item && typeof item === 'object' && !Array.isArray(item)
+        ? `${id}（${item.状态 ?? '未知'}，${item.位置 ?? '未知'}）`
+        : `${id}=${renderSortedValue(item)}`)
+      .join('；');
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([name, item]) => `${name}=${renderSortedValue(item)}`)
+      .join('；');
+  }
+  return renderSortedValue(value);
+}
+
+function renderSortedValue(value) {
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (Array.isArray(value)) return value.length ? value.map(renderSortedValue).join('、') : '无';
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => `${key}=${renderSortedValue(item)}`)
+      .join('、');
+  }
+  return String(value);
 }
 
 function renderValue(value) {

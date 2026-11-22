@@ -74,3 +74,46 @@ test('文本补充：固定字段名、追加字段名和引用映射键不扫�
   assert.deepEqual(result.errors.filter(item => files.includes(item.文件)), []);
   assert.deepEqual(result.hints, []);
 });
+
+test('文本补充：已入出处的逐字原台词含写法词豁免文本.写法', async t => {
+  const root = await fixture(t);
+  const quote = '灯架上似乎还有昨夜留下的油渍。';
+  await edit(root, '历史/事件/拜师/角色/秦守.txt', value => {
+    value.事件触发语料[0].候选台词.push(quote);
+  });
+  await edit(root, '../作者资料/出处/雾港.yaml', value => {
+    value.push({事件ID: '拜师', 角色组ID: '秦守', 台词: quote, 来源: '测试原台词'});
+  });
+  const result = await checkWorldbook(root, {sampling: false});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.hints, []);
+});
+
+invalidCase('文本补充：同位置未入出处的自拟台词含写法词仍报文本.写法', [
+  hint('文本.写法', '历史/事件/拜师/角色/秦守.txt', {说明: ['似乎']}),
+], async root => {
+  const originalQuote = '灯架上似乎还有昨夜留下的油渍。';
+  await edit(root, '历史/事件/拜师/角色/秦守.txt', value => {
+    value.事件触发语料[0].候选台词.push(originalQuote, '风声似乎又紧了些。');
+  });
+  await edit(root, '../作者资料/出处/雾港.yaml', value => {
+    value.push({事件ID: '拜师', 角色组ID: '秦守', 台词: originalQuote, 来源: '测试原台词'});
+  });
+});
+
+invalidCase('文本补充：同位置非原台词字段含写法词仍报文本.写法', [
+  hint('文本.写法', '历史/事件/拜师/角色/秦守.txt', {说明: ['似乎']}),
+], async root => {
+  const originalQuote = '灯架上似乎还有昨夜留下的油渍。';
+  await edit(root, '历史/事件/拜师/角色/秦守.txt', value => {
+    value.事件触发语料[0].候选台词.push(originalQuote);
+    value.按分支.拜师.主观记忆.push('徒弟进门时似乎先扫了一眼灯架。');
+  });
+  await edit(root, '../作者资料/出处/雾港.yaml', value => {
+    value.push({事件ID: '拜师', 角色组ID: '秦守', 台词: originalQuote, 来源: '测试原台词'});
+  });
+});
+
+invalidCase('文本补充：普通档案正文含写法词仍报文本.写法', [
+  hint('文本.写法', basic, {说明: ['似乎']}),
+], root => edit(root, basic, value => { value.出身 += '，似乎自小熟悉海潮。'; }));
