@@ -43,8 +43,8 @@
 
 ## 加载方式
 
-本仓库用根目录的 `.omp/skills` 符号链接（指向 `../skills`）作为 omp 的项目级发现入口。在仓库 cwd 启动 omp 时，九个 `skill://世界树·…` 都可读取；模型按各文件的 `description` 触发，也可以直接用 `name` 点名。
+本仓库的 skill 遵循通用 `SKILL.md` 格式，根目录的 `.omp/skills` 符号链接（指向 `../skills`）供兼容工作区级发现的编程代理自动加载；模型按各文件的 `description` 触发，也可以直接用 `name` 点名。以支持该约定的 `omp` 为例，在仓库工作目录启动时可自动发现全部九个 `skill://世界树·…`。
 
-跨项目或跨代理使用：把本仓库 `skills/` 的绝对路径登记进 omp 的 `skills.customDirectories`。本仓库不代改全局配置，也不把这一步写成已实施。注意 skill 内的指针都是仓库相对路径（指向 `docs/`、`cli/`、`adapter/`、`shared/` 等），复制目录到仓库外会断链：按完整 `skills/` 目录或指向本仓库的挂载使用。
+跨项目或跨代理使用：可将本仓库 `skills/` 的绝对路径登记到代理配置（如 `omp` 的 `skills.customDirectories`），或按完整仓库路径直接引用。本仓库不代改全局配置，也不把这一步写成已实施。注意 skill 内的指针都是仓库相对路径（指向 `docs/`、`cli/`、`adapter/`、`shared/` 等），复制目录到仓库外会断链：应按完整 `skills/` 目录或指向本仓库的挂载使用。
 
 规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的九个 skill。
