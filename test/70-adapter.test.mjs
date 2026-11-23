@@ -16,6 +16,7 @@ import {
   RECORD_FORMAT, createHistoryAudit, emptyTailAssistant, manifestIssue, ownershipOf, storedManifest, validateRecord,
 } from '../adapter/records.mjs';
 import {diffWorldbookState} from '../adapter/upgrade.mjs';
+import {repairNode} from '../adapter/ui.mjs';
 
 const ids = {脚本ID: '11111111-1111-4111-8111-111111111111', 正则ID: '22222222-2222-4222-8222-222222222222'};
 const script = (extra = {}) => ({id: ids.脚本ID, enabled: true, ...extra});
@@ -149,7 +150,7 @@ test('适配-09-A3：manifest 剥离注释后收集 import，程序集合与 esb
 
   const program = await collectProgram(project);
   const paths = program.map(item => item.路径);
-  for (const name of ['runtime', 'settings', 'commands-parser', 'bookkeeper', 'records', 'opening', 'view', 'ui', 'memfs', 'upgrade'])
+  for (const name of ['runtime', 'events', 'settings', 'commands-parser', 'bookkeeper', 'records', 'opening', 'view', 'ui', 'memfs', 'upgrade'])
     assert.ok(paths.includes(`adapter/${name}.mjs`), name);
   assert.ok(paths.includes('core/utils.mjs'));
   assert.ok(paths.includes('templates/变量更新规则.txt'));
@@ -718,4 +719,57 @@ test('适配-12-A1：emptyTailAssistant 严格判定末尾空白占位助手楼�
     msg(1, 'user', '玩家'),
     msg(2, 'assistant', '非空正文', {data: {世界树: {归属: {楼号: 0}}}}),
   ]), null);
+});
+
+test('适配-REL-01-A2：repairNode 非调试模式隐藏原始命令与敏感错误细节，调试模式完整展示', t => {
+  const savedDollar = Object.getOwnPropertyDescriptor(globalThis, '$');
+  t.after(() => {
+    if (savedDollar) Object.defineProperty(globalThis, '$', savedDollar);
+    else delete globalThis.$;
+  });
+  const makeNode = tag => {
+    const self = {tag, children: [], value: '', field: '', shown: true};
+    return Object.assign(self, {
+      attr: () => self,
+      prop: () => self,
+      addClass: () => self,
+      val: value => value === undefined ? self.field : (self.field = value, self),
+      on: () => self,
+      hide: () => { self.shown = false; return self; },
+      show: () => { self.shown = true; return self; },
+      append: (...children) => { self.children.push(...children.flat(Infinity).filter(Boolean)); return self; },
+      text: value => value === undefined
+        ? [self.value, ...self.children.map(child => child.text())].filter(Boolean).join('\n')
+        : (self.value = value, self),
+    });
+  };
+  globalThis.$ = tag => makeNode(tag);
+
+  const line = {摘要: '地点 码头区·栈桥', 详情: [['地点', ['码头区·栈桥']]]};
+  const record = {
+    命令: [{写场景: {当前地点: {地标: '码头区', 场景: '栈桥'}}}],
+    失败: [
+      {阶段: '转换', 错误码: '记账.结果', 说明: '事件 大雾之夜 尚未到达触发时间'},
+      {阶段: '协议执行', 序号: 2, 命令: '动态事件', 错误码: '协议.变化', 说明: '字段 角色.秦守.姓名 未声明'},
+    ],
+  };
+  const commandsText = '- 写场景:\n    当前地点:\n      地标: 码头区\n      场景: 栈桥\n';
+
+  const nonDebug = repairNode({id: 4, line, record, commandsText, debug: false}).node.text();
+  assert.match(nonDebug, /已记摘要：地点 码头区·栈桥/);
+  assert.match(nonDebug, /有 2 项未能写入；可留空尝试补记、填写修补说明，或在“世界树：设置”开启调试查看细节/);
+  assert.doesNotMatch(nonDebug, /写场景|当前地点|记账\.结果|协议\.变化|协议执行|大雾之夜|角色\.秦守\.姓名/);
+
+  const withDebug = repairNode({id: 4, line, record, commandsText, debug: true}).node.text();
+  assert.match(withDebug, /写场景:/);
+  assert.match(withDebug, /转换\/记账\.结果：事件 大雾之夜 尚未到达触发时间/);
+  assert.match(withDebug, /协议执行\/协议\.变化·第 2 条：字段 角色\.秦守\.姓名 未声明/);
+
+  const jsonErrorRecord = {
+    命令: null,
+    失败: [{阶段: '记账', 错误码: '记账.JSON', 说明: '找不到 JSON 对象'}],
+  };
+  const nonDebugJson = repairNode({id: 4, line: {摘要: '无变化', 详情: []}, record: jsonErrorRecord, debug: false}).node.text();
+  assert.match(nonDebugJson, /记账：找不到 JSON 对象/);
+  assert.doesNotMatch(nonDebugJson, /记账\/记账\.JSON|\[\]/);
 });

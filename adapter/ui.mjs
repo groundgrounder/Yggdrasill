@@ -195,29 +195,42 @@ export function floorNode(line, {rekeep = null, repair = null, pending = false} 
   return node.append($('<summary>').append($('<span>').addClass('ygg-label').text('记账'), $('<span>').addClass('ygg-brief').text(line.摘要)), body);
 }
 
-// 每楼修补弹窗：展示已记摘要、失败列表与修补说明输入框；报错原地保留用户输入以便调整重试。
-export function repairNode({id, line, record, commandsText}) {
+// 每楼修补弹窗：非调试模式下隐藏原始命令 YAML 与敏感协议/转换报错细节；开启调试后完整展示。
+export function repairNode({id, line, record, commandsText = '', debug = false}) {
   const state = {instruction: '', touched: false};
   const root = $('<div>').addClass('ygg-panel ygg-form ygg-opening');
   const errorBox = $('<div>').addClass('ygg-opening-error').text('').hide();
   const failures = record?.失败 ?? [];
-  const failureItems = failures.length
-    ? failures.map(item => $('<div>').addClass('ygg-line').text(`${item.阶段}/${item.错误码}${item.序号 ? `·第 ${item.序号} 条` : ''}：${item.说明}`))
-    : [$('<div>').addClass('ygg-line').text('当前无失败项')];
+  let failureItems;
+  if (!failures.length) {
+    failureItems = [$('<div>').addClass('ygg-line').text('当前无失败项')];
+  } else if (debug) {
+    failureItems = failures.map(item => $('<div>').addClass('ygg-line')
+      .text(`${item.阶段}/${item.错误码}${item.序号 ? `·第 ${item.序号} 条` : ''}：${item.说明}`));
+  } else {
+    const plainItems = failures.filter(item => item.错误码 === '记账.调用' || item.错误码 === '记账.JSON');
+    const hiddenCount = failures.length - plainItems.length;
+    failureItems = plainItems.map(item => $('<div>').addClass('ygg-line').text(`${item.命令 ?? '记账'}：${item.说明}`));
+    if (hiddenCount > 0) {
+      failureItems.push($('<div>').addClass('ygg-line')
+        .text(`有 ${hiddenCount} 项未能写入；可留空尝试补记、填写修补说明，或在“世界树：设置”开启调试查看细节`));
+    }
+  }
   const textarea = $('<textarea>').addClass('text_pole').attr('rows', 4)
     .attr('placeholder', '留空＝仅定向修补上述失败项；或输入一句指令，例如：补记吕布与刘备、张飞相识 / 没换地点，撤回场景改动')
     .val('')
     .on('input', event => { state.touched = true; state.instruction = String(event?.target?.value ?? ''); })
     .on('change', event => { state.touched = true; state.instruction = String(event?.target?.value ?? ''); });
+  const previewChildren = [
+    $('<div>').addClass('ygg-line').text(`已记摘要：${line?.摘要 || '无变化'}`),
+    ...(line?.详情?.length ? [$('<div>').addClass('ygg-items').append(line.详情.flatMap(([key, values]) => [$('<span>').addClass('ygg-key').text(key), value(values)]))] : []),
+    ...(debug ? [$('<pre>').addClass('ygg-pre').text(commandsText || '[]')] : []),
+  ];
   root.append(
     $('<h3>').text(`世界树：修补第 ${id} 楼记账`),
     $('<div>').addClass('ygg-hint').text('留空仅修补当前失败项；填写说明时按说明在原正文基础上增补、修改或撤回变化，失败不会覆盖原记录。'),
     errorBox,
-    $('<div>').addClass('ygg-opening-preview').append(
-      $('<div>').addClass('ygg-line').text(`已记摘要：${line?.摘要 || '无变化'}`),
-      ...(line?.详情?.length ? [$('<div>').addClass('ygg-items').append(line.详情.flatMap(([key, values]) => [$('<span>').addClass('ygg-key').text(key), value(values)]))] : []),
-      $('<pre>').addClass('ygg-pre').text(commandsText || '[]'),
-    ),
+    $('<div>').addClass('ygg-opening-preview').append(...previewChildren),
     $('<details>').addClass('ygg-sec').prop('open', true).append(
       $('<summary>').text('失败列表'),
       $('<div>').addClass('ygg-body').append(failureItems),

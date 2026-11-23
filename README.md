@@ -37,22 +37,26 @@ npm ci
 
 ### 在酒馆试玩示例
 
-用内置示例《三国演义》打包成可直接导入 SillyTavern 的角色卡：
+试玩内置示例《三国演义·第一至三回》有两条路径：
+
+- **直接试玩（纯玩家，无需本机安装 Node.js）**：从本仓库的 [GitHub Releases](https://github.com/groundgrounder/Yggdrasill/releases) 下载对应版本的预构建角色卡 JSON（如 `三国演义·第一至三回.json`）；如需配套预设，可另行下载可选开箱预设 [`presets/yggdrasill.json`](presets/yggdrasill.json)。
+- **从源码构建（制卡作者/开发者）**：在完成上一步克隆与 `npm ci` 后，执行以下命令生成角色卡（相对当前工作目录解析，缺省读取 `<项目目录>/卡面.yaml`；可选 `npm link` 将 `ygg` 挂入 `PATH`）：
 
 ```bash
-# 构建《三国演义·第一至三回》角色卡（--face 相对 adapter/ 解析）
-node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml
+node cli/ygg.mjs pack examples/三国演义
 ```
 
-导入步骤：
+构建产物位于 `adapter/dist/三国演义·第一至三回.json`（旧入口 `node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml` 仍保留向后兼容）。
 
-1. 在 SillyTavern「预设 → 导入」载入仓库里的 [`presets/yggdrasill.json`](presets/yggdrasill.json)。
-2. 导入打包生成的 `adapter/dist/三国演义·第一至三回.json`，导入并打开聊天时允许启用卡内脚本。
-3. 新建聊天进入开局界面，选择开局方案或调整历史选择并确认开局，即可开始游玩。
+导入 SillyTavern 步骤：
+
+1. **（可选）导入开箱预设**：仓库里的 [`presets/yggdrasill.json`](presets/yggdrasill.json) 为**可选开箱预设**；如你已有常用的酒馆预设可直接沿用，无需替换，只需确保主提示词不要求模型输出 `<命令>` 或状态块。
+2. 导入预构建或本地打包得到的角色卡 JSON，导入并打开聊天时允许启用卡内脚本（若在「世界树：设置」中关闭记账，还需允许并启用本卡局部正则）。
+3. 新建聊天进入开局界面，选择开局方案或调整历史选择并确认开局，即可开始游玩。记账默认使用「提示词要求 JSON」，以兼容各类 OpenAI 兼容端点。
 
 ### 在本地检查世界书
 
-在仓库根对 `examples/三国演义/世界书` 运行四条常用只读命令（完整 10 个子命令见[参考：命令](docs/参考/命令.md)）：
+在仓库根对 `examples/三国演义/世界书` 运行四条常用只读命令（完整 11 个子命令见[参考：命令](docs/参考/命令.md)）：
 
 ```bash
 # 全量检查（静态检查与抽样）
@@ -64,15 +68,15 @@ node cli/ygg.mjs if examples/三国演义/世界书 --分支 张飞怒欲杀卓:
 # 试跑一轮路由上下文与预算占用
 node cli/ygg.mjs context examples/三国演义/世界书 --方案 榜前长叹 --地点 涿县 --在场 刘备 --在场 张飞
 
-# 启动本地作者视图（仓库内示例须把 --storage 指到仓库外）
-node cli/ygg.mjs view --worldbook examples/三国演义/世界书 --storage ../三国演义-审阅 --port 0
+# 启动本地作者视图（省略 --storage 时，仓库内示例自动使用系统临时审阅目录，不写入仓库）
+node cli/ygg.mjs view examples/三国演义/世界书 --port 0
 ```
 
 ## 作者工具
 
-- **命令行工具 `ygg`**：提供 `check`、`trace`、`if`、`preview`、`context`、`tree`、`status`、`init`、`view`、`format` 共 10 个子命令，覆盖全量检查、引用追踪、分支推演、上下文预算试跑、事件树导出、项目初始化与 YAML 排版。完整参数见[参考：命令](docs/参考/命令.md)。
+- **命令行工具 `ygg`**：提供 `check`、`trace`、`if`、`preview`、`context`、`tree`、`status`、`init`、`view`、`pack`、`format` 共 11 个子命令，覆盖全量检查、引用追踪、分支推演、上下文预算试跑、事件树导出、项目初始化、作者视图、角色卡打包与 YAML 排版。完整参数见[参考：命令](docs/参考/命令.md)。
 - **本地作者视图 `ygg view`**：仅监听本机 `127.0.0.1` 的网页工具，不联网也不调用模型，可在浏览器中查看事件主树、局部关系、角色汇总、if 推演、上下文预览与台词统计，并直接编辑或新建事件与角色位置。详见[作者视图文档](view/README.md)。
-- **AI 建卡 `skills/`**：内置从通读原作、搭建设定与骨架、补写角色档案与事件，到打包与局部修订共 9 个流程 skill，可配合编程代理分步制作和维护角色卡。详见[作者 Skill 说明](skills/README.md)。
+- **AI 建卡 `skills/`**：内置从通读原作、搭建设定与骨架、补写角色档案与事件，到打包与局部修订共 9 个自包含作者 skill，支持在外部项目目录通过 `npx skills add groundgrounder/Yggdrasill` 一句话安装，或在克隆仓库内通过 `.agents/skills` 自动发现。详见[作者 Skill 说明](skills/README.md)。
 
 ## 文档导航
 

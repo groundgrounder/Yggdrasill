@@ -16,6 +16,10 @@ export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout,
     if (args.includes('--json')) stdout.write(`${JSON.stringify(failureInput(error.message), null, 2)}\n`);
     return 1;
   }
+  if (parsed.help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
+  }
 
   const root = path.resolve(cwd, parsed.世界书);
   try {
@@ -39,11 +43,12 @@ export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout,
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('if 参数须为列表');
-  const result = {世界书: null, 方案: null, 排除: [], 分支: [], 停用角色组: [], json: false};
+  const result = {世界书: null, 方案: null, 排除: [], 分支: [], 停用角色组: [], json: false, help: false};
   const positionals = [];
   let planSeen = false;
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
+    if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--方案') {
       if (planSeen) throw argumentError('--方案 只能给出一次');
@@ -70,9 +75,9 @@ export function parseArgs(args) {
     if (value.startsWith('-')) throw argumentError(`未知选项：${value}`);
     positionals.push(value);
   }
-  if (positionals.length !== 1) throw argumentError(positionals.length ? '多余位置参数：' + positionals.slice(1).join(' ')
-    : '缺少世界书目录');
-  result.世界书 = positionals[0];
+  if ((!result.help && positionals.length !== 1) || (result.help && positionals.length > 1))
+    throw argumentError(positionals.length ? '多余位置参数：' + positionals.slice(1).join(' ') : '缺少世界书目录');
+  result.世界书 = positionals[0] ?? null;
   result.排除 = [...new Set(result.排除)].sort(codepointCompare);
   result.停用角色组 = [...new Set(result.停用角色组)].sort(codepointCompare);
   result.分支.sort((left, right) => codepointCompare(left.事件ID, right.事件ID)

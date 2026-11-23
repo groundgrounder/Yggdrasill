@@ -4,13 +4,18 @@ import {formatWorldbook} from '../core/format.mjs';
 const USAGE = '用法：ygg format <世界书目录> [--check] [--write] [--json]\n';
 
 export async function runFormat(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr, fs, path: pathImpl} = {}) {
-  const allowed = new Set(['--check', '--write', '--json']);
+  const allowed = new Set(['--check', '--write', '--json', '--help', '-h']);
   const flags = new Set(args.filter(value => value.startsWith('-'))), positionals = args.filter(value => !value.startsWith('-'));
   const unknown = [...flags].filter(value => !allowed.has(value));
   const check = flags.has('--check'), write = flags.has('--write'), json = flags.has('--json');
-  if (unknown.length || check && write || positionals.length !== 1) {
+  const help = flags.has('--help') || flags.has('-h');
+  if (unknown.length || (check && write) || (!help && positionals.length !== 1) || (help && positionals.length > 1)) {
     stderr.write(USAGE);
     return 1;
+  }
+  if (help) {
+    stdout.write(USAGE);
+    return 0;
   }
   const root = (pathImpl ?? path).resolve(cwd, positionals[0]);
   let result;

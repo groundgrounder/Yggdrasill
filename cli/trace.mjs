@@ -3,13 +3,21 @@ import defaultPath from 'node:path';
 import {compileWorldbook} from '../core/catalog.mjs';
 import {buildReferenceIndex, isTraceFailure} from '../core/references.mjs';
 
+const USAGE = '用法：ygg trace <世界书目录> <对象键> [--json]\n';
+
 export async function runTrace(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
   fs = defaultFs, path = defaultPath} = {}) {
+  const allowed = new Set(['--json', '--help', '-h']);
+  const help = args.includes('--help') || args.includes('-h');
   const json = args.includes('--json');
-  const positionals = args.filter(value => value !== '--json');
-  if (positionals.length !== 2 || args.some(value => value.startsWith('-') && value !== '--json')) {
-    stderr.write('用法：ygg trace <世界书目录> <对象键> [--json]\n');
+  const positionals = args.filter(value => !value.startsWith('-'));
+  if (args.some(value => value.startsWith('-') && !allowed.has(value)) || (!help && positionals.length !== 2) || (help && positionals.length > 2)) {
+    stderr.write(USAGE);
     return 1;
+  }
+  if (help) {
+    stdout.write(USAGE);
+    return 0;
   }
   const root = path.resolve(cwd, positionals[0]), objectKey = positionals[1];
   try {

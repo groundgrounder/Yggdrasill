@@ -160,7 +160,10 @@ test('视图-服务-5：过期的预览令牌经 HTTP 返回 409', async t => {
 test('视图-服务-6：命令行参数与真实进程启动', async t => {
   assert.deepEqual(parseViewArgs(['--worldbook', '世界书', '--port', '0']),
     {worldbook: '世界书', storage: null, port: 0, help: false});
-  assert.throws(() => parseViewArgs([]), /缺少 --worldbook/);
+  assert.deepEqual(parseViewArgs(['世界书', '--port', '0']),
+    {worldbook: '世界书', storage: null, port: 0, help: false});
+  assert.throws(() => parseViewArgs([]), /缺少世界书目录/);
+  assert.throws(() => parseViewArgs(['世界书', '--worldbook', '世界书']), /不能同时传入/);
   assert.throws(() => parseViewArgs(['--worldbook']), /缺少值/);
   assert.throws(() => parseViewArgs(['--worldbook', '世界书', '--port', '70000']), /65535/);
   assert.throws(() => parseViewArgs(['--worldbook', '世界书', '--wat']), /未知选项/);
@@ -186,12 +189,24 @@ test('视图-服务-6：命令行参数与真实进程启动', async t => {
   const missing = await spawnView([], project);
   const [missingCode] = await once(missing.child, 'exit');
   assert.equal(missingCode, 1);
-  assert.match(missing.stderr(), /缺少 --worldbook/);
+  assert.match(missing.stderr(), /缺少世界书目录/);
 
-  const defaultStorage = await spawnView(['--worldbook', path.join(project, 'test/fixtures/雾港/世界书'), '--port', '0'], project);
-  const [defaultCode] = await once(defaultStorage.child, 'exit');
-  assert.equal(defaultCode, 1);
-  assert.match(defaultStorage.stderr(), /实现仓库|世界书/);
+  const explicitInRepo = await spawnView([
+    '--worldbook', path.join(project, 'test/fixtures/雾港/世界书'),
+    '--storage', path.join(project, 'author-review-forbidden'),
+    '--port', '0',
+  ], project);
+  const [explicitCode] = await once(explicitInRepo.child, 'exit');
+  assert.equal(explicitCode, 1);
+  assert.match(explicitInRepo.stderr(), /实现仓库|世界书/);
+
+  const repoPositional = await spawnView(['test/fixtures/雾港/世界书', '--port', '0'], project);
+  t.after(() => { if (!repoPositional.child.killed) repoPositional.child.kill('SIGTERM'); });
+  const repoPosUrl = await waitForUrl(repoPositional);
+  assert.match(repoPositional.stdout(), /临时审阅目录（仓库内示例不写入仓库）/);
+  assert.equal((await fetch(`${repoPosUrl}/api/data`)).status, 200);
+  repoPositional.child.kill('SIGTERM');
+  await once(repoPositional.child, 'exit');
 
   const defaultRoot = await fixture(t);
   const defaultProject = await spawnView(['--worldbook', defaultRoot, '--port', '0'], project);

@@ -33,6 +33,10 @@ export async function runInit(args, {cwd = process.cwd(), stdout = process.stdou
     if (args.includes('--json')) stdout.write(`${JSON.stringify(failureResult(null, error), null, 2)}\n`);
     return 1;
   }
+  if (parsed.help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
+  }
   const target = path.resolve(cwd, parsed.项目目录);
   try {
     const result = await scaffold(target, parsed, {fs, path, defaultsDir});
@@ -125,7 +129,7 @@ async function readDefault(name, {fs, path, defaultsDir}) {
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('init 参数须为列表');
-  const result = {项目目录: null, 纪年: {前缀: '纪元', 年位数: 4, 月数: 12, 每月天数: 30}, force: false, json: false};
+  const result = {项目目录: null, 纪年: {前缀: '纪元', 年位数: 4, 月数: 12, 每月天数: 30}, force: false, json: false, help: false};
   const positionals = [];
   const seen = new Set();
   const integer = (value, option) => {
@@ -136,6 +140,7 @@ export function parseArgs(args) {
   };
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
+    if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--force') { result.force = true; continue; }
     if (value === '--纪年前缀') {
@@ -157,9 +162,9 @@ export function parseArgs(args) {
     if (value.startsWith('-')) throw argumentError(`未知选项：${value}`);
     positionals.push(value);
   }
-  if (positionals.length !== 1) throw argumentError(positionals.length
+  if ((!result.help && positionals.length !== 1) || (result.help && positionals.length > 1)) throw argumentError(positionals.length
     ? `多余位置参数：${positionals.slice(1).join(' ')}` : '缺少项目目录');
-  result.项目目录 = positionals[0];
+  result.项目目录 = positionals[0] ?? null;
   return result;
 }
 

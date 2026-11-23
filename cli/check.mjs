@@ -1,7 +1,9 @@
 import path from 'node:path';
 import {checkWorldbook} from '../checker/index.mjs';
 
-export const USAGE = '用法：ygg check [世界书目录] [--json] [--static-only]\n'
+export const CHECK_USAGE = '用法：ygg check [世界书目录] [--json] [--static-only]\n';
+
+export const USAGE = CHECK_USAGE
   + '      ygg format <世界书目录> [--check] [--write] [--json]\n'
   + '      ygg trace <世界书目录> <对象键> [--json]\n'
   + '      ygg if <世界书目录> [--方案 <方案ID>] [--排除 <事件ID>]... [--分支 <事件ID>:<分支ID>]... [--停用角色组 <角色组ID>]... [--json]\n'
@@ -10,15 +12,23 @@ export const USAGE = '用法：ygg check [世界书目录] [--json] [--static-on
   + '      ygg tree <世界书目录> [--out <文件路径>] [--stats-only] [--json]\n'
   + '      ygg status [项目目录或世界书目录] [--json]\n'
   + '      ygg init <项目目录> [--纪年前缀 <前缀>] [--年位数 <整数>] [--月数 <整数>] [--每月天数 <整数>] [--force] [--json]\n'
-  + '      ygg view --worldbook <世界书目录> [--storage <审阅存储目录>] [--port <端口>]\n';
+  + '      ygg view [<世界书目录> | --worldbook <世界书目录>] [--storage <审阅存储目录>] [--port <端口>]\n'
+  + '      ygg pack [项目目录] [--face <卡面文件>] [--prepare-only] [--compatible <64位指纹>]...\n'
+  + '      ygg [--help | -h] [--version | -v]\n';
 
 export async function runCheck(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
   fs, path: pathImpl} = {}) {
+  const allowed = new Set(['--json', '--static-only', '--help', '-h']);
+  const help = args.includes('--help') || args.includes('-h');
   const json = args.includes('--json');
-  const positionals = args.filter(value => !['--json', '--static-only'].includes(value));
-  if (positionals[0] !== 'check' || positionals.length > 2 || args.some(value => value.startsWith('-') && !['--json', '--static-only'].includes(value))) {
+  const positionals = args.filter(value => !allowed.has(value));
+  if (positionals[0] !== 'check' || positionals.length > 2 || args.some(value => value.startsWith('-') && !allowed.has(value))) {
     stderr.write(USAGE);
     return 1;
+  }
+  if (help) {
+    stdout.write(CHECK_USAGE);
+    return 0;
   }
   const root = (pathImpl ?? path).resolve(cwd, positionals[1] ?? '世界书');
   try {

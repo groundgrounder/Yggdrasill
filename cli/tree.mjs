@@ -16,6 +16,10 @@ export async function runTree(args, {cwd = process.cwd(), stdout = process.stdou
     if (args.includes('--json')) stdout.write(`${JSON.stringify(failureResult(null, error), null, 2)}\n`);
     return 1;
   }
+  if (parsed.help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
+  }
   const root = path.resolve(cwd, parsed.世界书);
   try {
     const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
@@ -67,10 +71,11 @@ export async function runTree(args, {cwd = process.cwd(), stdout = process.stdou
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('tree 参数须为列表');
-  const result = {世界书: null, out: null, statsOnly: false, json: false};
+  const result = {世界书: null, out: null, statsOnly: false, json: false, help: false};
   const positionals = [];
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
+    if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--stats-only') { result.statsOnly = true; continue; }
     if (value === '--out') {
@@ -81,9 +86,9 @@ export function parseArgs(args) {
     if (value.startsWith('-')) throw argumentError(`未知选项：${value}`);
     positionals.push(value);
   }
-  if (positionals.length !== 1) throw argumentError(positionals.length
+  if ((!result.help && positionals.length !== 1) || (result.help && positionals.length > 1)) throw argumentError(positionals.length
     ? `多余位置参数：${positionals.slice(1).join(' ')}` : '缺少世界书目录');
-  result.世界书 = positionals[0];
+  result.世界书 = positionals[0] ?? null;
   return result;
 }
 

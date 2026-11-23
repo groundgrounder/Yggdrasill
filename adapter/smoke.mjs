@@ -1,4 +1,4 @@
-// 原型的冒烟测试：在 node 中模拟酒馆助手的全局与酒馆的事件顺序，运行 runtime.mjs（未经打包），核对注入、楼层变量、每楼一行与本局面板。
+// 酒馆适配冒烟测试：在 node 中模拟酒馆助手的全局与酒馆的事件顺序，运行 runtime.mjs（未经打包），核对注入、楼层变量、每楼一行与本局面板。
 // 先运行 node adapter/build.mjs --prepare-only。传入打包后的脚本（如 ./adapter/dist/runtime.js）则测打包产物。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -70,7 +70,7 @@ assert.equal(digest(manifest.世界书文件), manifest.世界书哈希);
 
 const programPaths = manifest.程序文件.map(item => item.路径);
 assert.deepEqual(programPaths, [...programPaths].sort(compare));
-for (const name of ['runtime', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
+for (const name of ['runtime', 'events', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
   assert.ok(programPaths.includes(`adapter/${name}.mjs`), name);
 for (const name of ['变量更新规则', '角色通用约束', '扮演准则']) assert.ok(programPaths.includes(`templates/${name}.txt`));
 assert.ok(programPaths.every(file => !/^(?:adapter\/(?:build|smoke|bundle\.generated)|adapter\/dist\/|证据\/|test\/|日志|截图)/.test(file)));
@@ -311,7 +311,7 @@ push(face.开场白, false);
 const greeting = applyCommands(protocol, seal(protocol, face.开局), face.开场命令);
 const initialChat = JSON.stringify(chat);
 holdPopup = true;
-const entry = process.argv[2];
+const entry = process.argv[2] || (process.env.SMOKE_USE_DIST === '1' ? 'adapter/dist/runtime.js' : null);
 await import(entry ? pathToFileURL(path.resolve(process.cwd(), entry)).href : new URL('./runtime.mjs', import.meta.url).href);
 await waitUntil(() => popupNodes.length >= 1, '新聊天打开开局界面');
 assert.equal(record(0), undefined, '确认开局前不得创建第 0 楼记录');
@@ -777,7 +777,7 @@ await restoreChat();
 const oldProgram = 'a'.repeat(64);
 chat[2].variables[0].世界树.运行清单.程序指纹 = oldProgram;
 // 源 smoke 与 runtime 共享 JSON 模块，可改清单验证端到端；打包 runtime 有自己的模块实例，兼容性由上面的纯校验覆盖。
-if (!process.argv[2]) {
+if (!entry) {
   const originalCompatible = [...bundle.manifest.兼容程序];
   try {
     bundle.manifest.兼容程序.push(oldProgram);
@@ -2304,3 +2304,51 @@ assert.ok(toasts.some(item => item.title?.includes('已阻止生成') && /尚未
 
 await restoreChat();
 console.log('38 MESSAGE_DELETED 删楼自愈：删掉坏尾楼即刻恢复注入与续写；残留损坏继续只读；留空尾楼或删至空聊均正确处置');
+
+// ---------- 39. YG-REL-01：修补弹窗在非调试与调试模式下的信息隔离对比 ----------
+await restoreChat();
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+await emit('chat_id_changed');
+const isoBase = clone(record(6).本局);
+keeperReplies.push(keepWithChanges(isoBase, {
+  地点: {地标: '码头区', 场景: '栈桥'},
+  发生的事件: [{事件ID: '隐秘将来事件_隔离测试', 分支ID: '发生'}],
+  新情况: [{事件ID: '坏字段', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+}));
+await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(record(8).记账.状态, '部分失败');
+assert.ok(record(8).命令.length > 0 && record(8).失败.length === 2);
+
+holdPopup = true;
+const openIsoOff = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '非调试打开修补弹窗');
+const nonDebugText = popupNodes.at(-1).text();
+assert.match(nonDebugText, /已记摘要：地点 码头区·栈桥/);
+assert.match(nonDebugText, /有 2 项未能写入；可留空尝试补记、填写修补说明，或在“世界树：设置”开启调试查看细节/);
+assert.doesNotMatch(nonDebugText, /写场景:|当前地点:|隐秘将来事件_隔离测试|协议\.变化|记账\.结果|协议执行|角色\.秦守\.姓名/);
+// 非调试模式原地校验残留局部失败也不得泄露内部错误码或未发生事件 ID
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '尝试修补'}});
+keeperReplies.push(keepWithChanges(isoBase, {
+  发生的事件: [{事件ID: '隐秘将来事件_原地校验', 分支ID: '发生'}],
+}));
+assert.equal(await closePopup(1), false);
+const nonDebugErr = popupNodes.at(-1).text();
+assert.match(nonDebugErr, /修补后仍有局部失败/);
+assert.doesNotMatch(nonDebugErr, /隐秘将来事件_原地校验|记账\.结果/);
+assert.equal(await closePopup(null), true);
+await openIsoOff;
+
+globals['世界树·记账'].调试 = true;
+const openIsoOn = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '调试打开修补弹窗');
+const debugText = popupNodes.at(-1).text();
+assert.match(debugText, /写场景:/);
+assert.match(debugText, /当前地点:/);
+assert.match(debugText, /转换\/记账\.结果：.*隐秘将来事件_隔离测试/);
+assert.match(debugText, /协议执行\/协议\.变化·第 \d+ 条：/);
+assert.equal(await closePopup(null), true);
+await openIsoOn;
+holdPopup = false;
+await restoreChat();
+console.log('39 YG-REL-01 修补弹窗隔离对比：非调试隐藏原始命令 YAML 与内部失败明细，调试模式完整展示');

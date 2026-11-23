@@ -16,6 +16,10 @@ export async function runContext(args, {cwd = process.cwd(), stdout = process.st
     if (args.includes('--json')) stdout.write(`${JSON.stringify(failureResult(null, error), null, 2)}\n`);
     return 1;
   }
+  if (parsed.help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
+  }
   const root = path.resolve(cwd, parsed.世界书);
   try {
     const result = await previewContext(root, {fs, path, cwd,
@@ -37,10 +41,11 @@ export async function runContext(args, {cwd = process.cwd(), stdout = process.st
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('context 参数须为列表');
   const result = {世界书: null, 开局: null, 方案: null, 本局: null, 地点: null, 场景: null,
-    在场: [], 消息: [], 自动初始化: true, raw: false, json: false};
+    在场: [], 消息: [], 自动初始化: true, raw: false, json: false, help: false};
   const positionals = [], seen = new Set();
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
+    if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--raw') { result.raw = true; continue; }
     if (value === '--不自动初始化') { result.自动初始化 = false; continue; }
@@ -54,9 +59,9 @@ export function parseArgs(args) {
     if (value.startsWith('-')) throw argumentError(`未知选项：${value}`);
     positionals.push(value);
   }
-  if (positionals.length !== 1) throw argumentError(positionals.length
+  if ((!result.help && positionals.length !== 1) || (result.help && positionals.length > 1)) throw argumentError(positionals.length
     ? `多余位置参数：${positionals.slice(1).join(' ')}` : '缺少世界书目录');
-  result.世界书 = positionals[0];
+  result.世界书 = positionals[0] ?? null;
   return result;
 }
 

@@ -267,9 +267,9 @@ test('清理-01-A5：概述两个命令清单一致，docs 相对链接全部有
   const overview = await fs.readFile(path.join(project, 'docs/00-概述.md'), 'utf8');
   const lines = overview.split('\n');
   const first = lines.find(line => line.includes('命令行工具 `ygg`'));
-  const second = lines.find(line => line.includes('作者工具已交付十个命令行子命令'));
+  const second = lines.find(line => line.includes('作者工具已交付十一个命令行子命令'));
   assert.ok(first && second);
-  for (const command of ['check', 'trace', 'if', 'preview', 'context', 'tree', 'status', 'init', 'view', 'format']) {
+  for (const command of ['check', 'trace', 'if', 'preview', 'context', 'tree', 'status', 'init', 'view', 'pack', 'format']) {
     assert.ok(first.includes(`\`${command}\``), command);
     assert.ok(second.includes(`\`${command}\``), command);
   }

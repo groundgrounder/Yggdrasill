@@ -24,6 +24,10 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
       stdout.write(`${JSON.stringify(failureResult(null, error, args.includes('--状态')), null, 2)}\n`);
     return 1;
   }
+  if (parsed.help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
+  }
 
   const root = path.resolve(cwd, parsed.世界书);
   try {
@@ -62,11 +66,12 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw new PreviewError('预览.参数', 'preview 参数须为列表');
-  const result = {世界书: null, 角色组: null, 开局: null, 方案: null, 本局: null, 状态: false, json: false};
+  const result = {世界书: null, 角色组: null, 开局: null, 方案: null, 本局: null, 状态: false, json: false, help: false};
   const positionals = [];
   const seen = new Set();
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
+    if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--状态') { result.状态 = true; continue; }
     if (value === '--开局') {
@@ -87,11 +92,11 @@ export function parseArgs(args) {
     if (value.startsWith('-')) throw new PreviewError('预览.参数', `未知选项：${value}`);
     positionals.push(value);
   }
-  if (positionals.length !== 2)
+  if ((!result.help && positionals.length !== 2) || (result.help && positionals.length > 2))
     throw new PreviewError('预览.参数', positionals.length > 2
       ? `多余位置参数：${positionals.slice(2).join(' ')}` : '需要世界书目录与角色组ID');
-  result.世界书 = positionals[0];
-  result.角色组 = positionals[1];
+  result.世界书 = positionals[0] ?? null;
+  result.角色组 = positionals[1] ?? null;
   if (result.本局 && (result.开局 || result.方案))
     throw new PreviewError('预览.参数', '--本局 不能与 --开局 或 --方案 同用');
   return result;

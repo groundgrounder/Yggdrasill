@@ -7,12 +7,18 @@ const USAGE = '用法：ygg status [项目目录或世界书目录] [--json]\n'
 
 export async function runStatus(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
   fs = defaultFs, path = defaultPath} = {}) {
+  const allowed = new Set(['--json', '--help', '-h']);
+  const help = args.includes('--help') || args.includes('-h');
   const json = args.includes('--json');
-  const positionals = args.filter(value => value !== '--json');
-  if (positionals.length > 1 || args.some(value => value.startsWith('-') && value !== '--json')) {
+  const positionals = args.filter(value => !allowed.has(value));
+  if (positionals.length > 1 || args.some(value => value.startsWith('-') && !allowed.has(value))) {
     stderr.write(`${USAGE}\n`);
     if (json) stdout.write(`${JSON.stringify(argumentFailureResult(), null, 2)}\n`);
     return 1;
+  }
+  if (help) {
+    stdout.write(`${USAGE}\n`);
+    return 0;
   }
   const target = path.resolve(cwd, positionals[0] ?? '.');
   try {
