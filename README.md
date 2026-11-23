@@ -39,7 +39,7 @@ npm ci
 
 试玩内置示例《三国演义·第一至三回》有两条路径：
 
-- **直接试玩（纯玩家，无需本机安装 Node.js）**：从本仓库的 [GitHub Releases](https://github.com/groundgrounder/Yggdrasill/releases) 下载对应版本的预构建角色卡 JSON（如 `三国演义·第一至三回.json`）；如需配套预设，可另行下载可选开箱预设 [`presets/yggdrasill.json`](presets/yggdrasill.json)。
+- **直接试玩（纯玩家，无需本机安装 Node.js）**：从本仓库的 [GitHub Releases](https://github.com/groundgrounder/Yggdrasill/releases) 下载对应版本的预构建角色卡 JSON（如 `sanguo-yanyi-ch01-03.json`）；如需配套预设，可下载 Release 中的 `yggdrasill.json`（即仓库里的可选开箱预设 [`presets/yggdrasill.json`](presets/yggdrasill.json)）。
 - **从源码构建（制卡作者/开发者）**：在完成上一步克隆与 `npm ci` 后，执行以下命令生成角色卡（相对当前工作目录解析，缺省读取 `<项目目录>/卡面.yaml`；可选 `npm link` 将 `ygg` 挂入 `PATH`）：
 
 ```bash
