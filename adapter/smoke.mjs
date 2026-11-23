@@ -116,7 +116,7 @@ let globals = {'世界树·记账': {方式: '关闭'}};
 let serverGlobals = clone(globals), settingsPersistDelay = 0, holdPopup = false, closePopup = null;
 let activeChatId = 'YG-ADAPTER-04-smoke-chat', stopCalls = 0, messageWrites = 0;
 let failNextMessageWrite = false, keeperThrowOnce = false, holdNextKeeper = false, releaseKeeper = null;
-let emitKeeperGeneration = false;
+let emitKeeperGeneration = false, sendingPress = false;
 const settingsWrites = [];
 const waitUntil = async (test, label) => {
   for (let i = 0; i < 500; i++) {
@@ -188,7 +188,7 @@ Object.assign(globalThis, {
   toastr: Object.fromEntries(['success', 'warning', 'error', 'info'].map(level => [level, (body, title) => toasts.push({level, title, body})])),
   SillyTavern: {POPUP_TYPE: {TEXT: 1}, POPUP_RESULT: {AFFIRMATIVE: 1, NEGATIVE: 0, CANCELLED: null},
     getRequestHeaders: () => ({}), getContext: () => ({chatId: activeChatId, characters: [cardData()], characterId: 0,
-      extensionSettings: {character_allowed_regex: cardState.allowedRegex}}), callGenericPopup: (element, type, input, options = {}) => {
+      is_send_press: sendingPress, extensionSettings: {character_allowed_regex: cardState.allowedRegex}}), callGenericPopup: (element, type, input, options = {}) => {
     popupNodes.push(element); popups.push(element.text());
     if (!holdPopup) return Promise.resolve(1);
     return new Promise((resolve, reject) => {
@@ -2080,3 +2080,227 @@ assert.match([...floors.values()].map(item => item.text()).join('\n'), /#2 命�
 
 await restoreChat();
 console.log('35 C 级严格只读与精准差异诊断：字段冲突与命令失败均 0 写入、阻止生成，并在界面与本局弹窗展示精准楼号与差异明细');
+
+// ---------- 36. YG-ADAPTER-12：生成中/空尾楼误点防锁 + 空尾楼占位排除 + MESSAGE_RECEIVED 空正文防护 ----------
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+await restoreChat();
+push('请继续推进剧情。', true);
+push('', false);
+// 真机现场：酒馆建出空白占位尾楼（#10，mes: ""）并自动复制上一助手楼 #8 的 世界树 变量（归属.楼号 === 8）
+chat[10].variables[0] = clone(chat[8].variables[0]);
+const emptyTailChatBefore = JSON.stringify(chat);
+const emptyTailWritesBefore = messageWrites, emptyTailCallsBefore = keeperCalls.length;
+const busyToastText = '当前有回复正在生成或末尾楼层为空，请等待生成完成或删除空楼后再操作。';
+
+let toastMark12 = toasts.length;
+await emit('button:世界树：重新记账');
+assert.equal(messageWrites, emptyTailWritesBefore, '空尾楼存在时全局重新记账必须 0 写入');
+assert.equal(keeperCalls.length, emptyTailCallsBefore, '空尾楼存在时全局重新记账不得调模型');
+assert.equal(JSON.stringify(chat), emptyTailChatBefore);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '空尾楼存在时全局重新记账绝不得锁死 session.integrity');
+assert.ok(toasts.slice(toastMark12).some(item => item.level === 'warning' && item.body === busyToastText));
+
+toastMark12 = toasts.length;
+await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(messageWrites, emptyTailWritesBefore, '空尾楼存在时单楼重新记账必须 0 写入');
+assert.equal(keeperCalls.length, emptyTailCallsBefore);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '空尾楼存在时单楼重新记账绝不得锁死只读');
+assert.ok(toasts.slice(toastMark12).some(item => item.level === 'warning' && item.body === busyToastText));
+
+toastMark12 = toasts.length;
+const popupCountBeforeBusyRepair = popupNodes.length;
+await find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+assert.equal(popupNodes.length, popupCountBeforeBusyRepair, '空尾楼存在时点修补只弹警告，不打开弹窗');
+assert.equal(messageWrites, emptyTailWritesBefore);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')));
+assert.ok(toasts.slice(toastMark12).some(item => item.level === 'warning' && item.body === busyToastText));
+
+// 重载聊天与 normal / regenerate 生成前事件均自动排除空尾楼，按 #8 合法底本注入且不阻断
+const stopBeforeEmptyTail = stopCalls;
+await emit('chat_id_changed');
+assert.ok(content().length > 0, '空尾楼存在时重载应自动排除空尾楼并正常注入');
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '空尾楼存在时重载不得误锁只读');
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+await emit('GENERATION_AFTER_COMMANDS', 'regenerate', generationOptions, false);
+assert.equal(stopCalls, stopBeforeEmptyTail, '空尾楼存在时 normal/regenerate 不得误阻断');
+assert.ok(content().length > 0);
+
+// MESSAGE_RECEIVED 收到空正文尾楼：不调记账、不写入、不锁只读、弹空正文警告并维持前楼注入
+toastMark12 = toasts.length;
+await emit('message_received', 10, 'normal');
+assert.equal(keeperCalls.length, emptyTailCallsBefore, 'MESSAGE_RECEIVED 收到空正文尾楼不得调用记账模型');
+assert.equal(messageWrites, emptyTailWritesBefore, 'MESSAGE_RECEIVED 收到空正文尾楼不得写变量');
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), 'MESSAGE_RECEIVED 空尾楼不得锁死只读');
+assert.ok(toasts.slice(toastMark12).some(item => item.level === 'warning' && item.body === '本楼正文为空，未记账；可重新生成或删除该楼。'));
+assert.ok(content().length > 0, 'MESSAGE_RECEIVED 空尾楼后应维持前楼合法注入');
+
+// 宿主明确处于生成中（is_send_press === true，无空尾楼）：全局/单楼「重新记账」与「修补」点击及弹窗内提交均防误锁
+await restoreChat();
+sendingPress = true;
+const sendingWrites = messageWrites, sendingCalls = keeperCalls.length;
+for (const action of [
+  () => emit('button:世界树：重新记账'),
+  () => find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click(),
+  () => find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click(),
+]) {
+  toastMark12 = toasts.length;
+  await action();
+  assert.equal(messageWrites, sendingWrites, '生成中点击操作必须 0 写入');
+  assert.equal(keeperCalls.length, sendingCalls, '生成中点击操作不得调记账');
+  assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '生成中点击操作不得锁只读');
+  assert.ok(toasts.slice(toastMark12).some(item => item.level === 'warning' && item.body === busyToastText));
+}
+// 弹窗打开后生成开始，再点击「开始修补」：错误区原地提示并保持弹窗打开、0 写入、不锁只读
+sendingPress = false;
+holdPopup = true;
+const open8WhileIdle = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼修补弹窗');
+sendingPress = true;
+assert.equal(await closePopup(1), false, '生成中在弹窗内提交修补应拦截并保持弹窗打开');
+assert.match(popupNodes.at(-1).text(), /当前有回复正在生成或末尾楼层为空/);
+assert.equal(messageWrites, sendingWrites);
+assert.equal(keeperCalls.length, sendingCalls);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')));
+sendingPress = false;
+assert.equal(await closePopup(null), true);
+await open8WhileIdle;
+holdPopup = false;
+console.log('36 生成中与空尾楼防误锁：全局/单楼重新记账与修补 0 写入且不锁只读；空尾楼重载/normal/regenerate 与 MESSAGE_RECEIVED 空正文防护通过');
+
+// ---------- 37. YG-ADAPTER-12：反例硬守卫（中间空楼、中间空正文接收、非空错楼号复制尾楼仍严格阻断） ----------
+// 37a 中间空助手楼（后面仍有助手楼）重载必须严格阻断
+await restoreChat();
+chat[6].mes = chat[6].swipes[0] = '';
+let stopCounter = stopCalls, toastCounter = toasts.length;
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '中间空楼仍必须进入存档只读');
+assert.equal(injected['yggdrasill-context'], undefined, '中间空楼阻断时应移除注入');
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopCounter + 1, '中间空楼必须阻断生成');
+
+// 37b MESSAGE_RECEIVED 收到中间空正文（非尾楼）仍严格阻断且不调用记账
+await restoreChat();
+chat[6].mes = chat[6].swipes[0] = '';
+const midRecvCalls = keeperCalls.length;
+await emit('message_received', 6, 'normal');
+assert.equal(keeperCalls.length, midRecvCalls, '中间空正文不得送入记账');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '中间空正文接收仍必须阻断');
+
+// 37c 末尾助手楼正文非空且带旧楼复制变量（归属.楼号 !== 10）：重载、生成前与点击重新记账均严格阻断为 归属.失配
+await restoreChat();
+push('请写一段新剧情。', true);
+push('这是一段非空正文，绝不能当作空占位楼跳过。', false);
+chat[10].variables[0] = clone(chat[8].variables[0]);
+stopCounter = stopCalls; toastCounter = toasts.length;
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '非空错楼号尾楼重载必须阻断');
+assert.ok(toasts.slice(toastCounter).some(item => item.level === 'error' && item.title?.includes('归属.失配')));
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopCounter + 1, '非空错楼号尾楼必须阻断生成');
+
+// 即使从未在只读态下，未生成中直接点击全局重新记账遇到非空错楼号尾楼也仍按 归属.失配 阻断
+await restoreChat();
+push('请写一段新剧情。', true);
+push('非空正文的尾楼带旧楼复制变量。', false);
+chat[10].variables[0] = clone(chat[8].variables[0]);
+toastCounter = toasts.length;
+await emit('button:世界树：重新记账');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '非空错楼号尾楼点击重新记账仍应严格阻断');
+assert.ok(toasts.slice(toastCounter).some(item => item.level === 'error' && item.title?.includes('归属.失配')));
+await restoreChat();
+console.log('37 反例硬守卫通过：中间空楼、中间空正文接收与非空错楼号复制尾楼均严格进入只读阻断');
+
+// ---------- 38. YG-ADAPTER-12：MESSAGE_DELETED 删楼后自动重审自愈与残留损坏继续只读 ----------
+// 38a 损坏尾楼导致整局进入只读后，删除该坏尾楼触发 MESSAGE_DELETED 自动重审自愈并恢复续写
+await restoreChat();
+push('这一步产生了坏尾楼。', true);
+push('损坏的非空尾楼。', false);
+chat[10].variables[0] = clone(chat[8].variables[0]);
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '坏尾楼应触发只读');
+assert.equal(injected['yggdrasill-context'], undefined);
+const stopLocked = stopCalls;
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopLocked + 1, '删除前只读态应阻止生成');
+
+chat.splice(9);
+const healToastStart = toasts.length;
+await emit('message_deleted', chat.length);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '删除坏尾楼后应自动退出只读');
+assert.ok(content().length > 0, '自愈后应立即恢复上下文注入');
+assert.ok(toasts.slice(healToastStart).some(item => item.level === 'info' && item.title === '世界树：已恢复'
+  && item.body === '删除问题楼层后校验通过，已恢复正常游玩。'), '自愈后应提示已恢复正常游玩');
+const stopHealed = stopCalls;
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopHealed, '自愈后生成前检查应放行');
+keeperReplies.push(noCommands(record(8).本局));
+await send('自愈后继续对话。', '灯室的雾渐渐散开，学徒记下新的巡视。');
+assert.equal(record(10).记账.状态, '成功', '自愈后应能正常续写并记账');
+
+// 38b 若删除尾楼后剩余楼层仍有损坏，仍保持只读且绝不误放行或弹已恢复
+await restoreChat();
+chat[8].variables[0].世界树.归属.正文指纹 = '0'.repeat(64);
+push('坏尾楼输入。', true);
+push('坏尾楼回复。', false);
+chat[10].variables[0] = clone(chat[6].variables[0]);
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')));
+chat.splice(9);
+const stillBrokenToastStart = toasts.length;
+await emit('message_deleted', chat.length);
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')), '仍有损坏楼层时删除尾楼后必须继续只读');
+assert.equal(injected['yggdrasill-context'], undefined, '仍有损坏时不得恢复注入');
+assert.ok(!toasts.slice(stillBrokenToastStart).some(item => item.title === '世界树：已恢复'), '未恢复时不得误弹已恢复提示');
+const stopStillBroken = stopCalls;
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopStillBroken + 1, '仍有损坏时生成前必须继续阻止');
+
+// 38c 删除到只剩空尾楼（前楼均合法）与删除到空聊均按新范围自愈
+await restoreChat();
+push('空尾楼前玩家。', true);
+push('', false);
+chat[10].variables[0] = clone(chat[8].variables[0]);
+push('待删坏楼玩家。', true);
+push('待删坏楼。', false);
+chat[12].variables[0] = clone(chat[8].variables[0]);
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')));
+chat.splice(11);
+const healWithEmptyTailStart = toasts.length;
+await emit('message_deleted', chat.length);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')), '删掉坏尾楼后即使留有空尾楼也应自愈');
+assert.ok(content().length > 0);
+assert.ok(toasts.slice(healWithEmptyTailStart).some(item => item.title === '世界树：已恢复'));
+
+// 删除到待开局第 0 楼（无记录）与删除到空聊均交由 init() 处理，从只读态退出并进入尚未开局
+await restoreChat();
+delete chat[2].variables[0].世界树;
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')));
+chat.splice(1);
+delete chat[0].variables[0].世界树;
+holdPopup = true;
+const emptyOpeningBase = popupNodes.length;
+await emit('message_deleted', 1);
+await waitUntil(() => popupNodes.length > emptyOpeningBase, '删到无记录第 0 楼应交由 init 打开开局界面');
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')));
+assert.match(floorText(0), /尚未开局/);
+assert.equal(await closePopup(null), true);
+holdPopup = false;
+
+chat[0].variables[0].世界树 = clone(stable[0].variables[0]);
+chat.push({mes: '损坏楼', is_user: false, is_system: false, swipe_id: 0, swipes: ['损坏楼'], variables: [{}]});
+await emit('chat_id_changed');
+assert.ok([...floors.values()].some(node => node.text().includes('存档只读')));
+chat.splice(0);
+const stopBeforeEmpty = stopCalls;
+await emit('message_deleted', 0);
+assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')));
+assert.equal(injected['yggdrasill-context'], undefined);
+await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
+assert.equal(stopCalls, stopBeforeEmpty + 1, '删到空聊后应处于尚未开局并阻止生成');
+assert.ok(toasts.some(item => item.title?.includes('已阻止生成') && /尚未开局/.test(item.body)));
+
+await restoreChat();
+console.log('38 MESSAGE_DELETED 删楼自愈：删掉坏尾楼即刻恢复注入与续写；残留损坏继续只读；留空尾楼或删至空聊均正确处置');

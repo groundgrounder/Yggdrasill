@@ -13,7 +13,7 @@ import {applyCommands} from '../core/commands.mjs';
 import {createCalendar} from '../core/calendar.mjs';
 import {createProtocol} from '../core/protocol.mjs';
 import {
-  RECORD_FORMAT, createHistoryAudit, manifestIssue, ownershipOf, storedManifest, validateRecord,
+  RECORD_FORMAT, createHistoryAudit, emptyTailAssistant, manifestIssue, ownershipOf, storedManifest, validateRecord,
 } from '../adapter/records.mjs';
 import {diffWorldbookState} from '../adapter/upgrade.mjs';
 
@@ -683,4 +683,39 @@ test('适配-11-A1：世界书更新 A/B/C 分级、封闭白名单、前置门�
   badCardChat[2].data.世界树.运行清单.卡ID = 'other.card';
   const badCardRes = bAudit.audit(badCardChat);
   assert.equal(badCardRes.code, '运行清单.卡ID', '卡ID 不一致优先级须高于世界书分级');
+});
+
+test('适配-12-A1：emptyTailAssistant 严格判定末尾空白占位助手楼边界', () => {
+  const msg = (id, role, message, extra = {}) => ({message_id: id, role, message, ...extra});
+  assert.equal(emptyTailAssistant(null), null);
+  assert.equal(emptyTailAssistant(undefined), null);
+  assert.equal(emptyTailAssistant([]), null);
+
+  // 第 0 楼空开场白绝不按空尾楼跳过
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '')]), null);
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '开场白')]), null);
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '开场白'), msg(1, 'user', '玩家发言')]), null);
+
+  // 末尾 id > 0 的空白助手楼：其后无消息或仅非助手楼时均命中
+  const emptyTail = msg(2, 'assistant', '', {data: {世界树: {归属: {楼号: 0}}}});
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '开场白'), msg(1, 'user', '玩家'), emptyTail]), emptyTail);
+  const undefTail = msg(2, 'assistant', undefined);
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '开场白'), msg(1, 'user', '玩家'), undefTail]), undefTail);
+  const emptyTailBeforeUser = [msg(0, 'assistant', '开场白'), msg(1, 'user', '玩家'), emptyTail, msg(3, 'user', '后续用户输入')];
+  assert.equal(emptyTailAssistant(emptyTailBeforeUser), emptyTail);
+
+  // 反例：中间空助手楼（后有其他助手楼）、非空正文（含纯空白）或带复制变量的非空尾楼均返回 null
+  assert.equal(emptyTailAssistant([
+    msg(0, 'assistant', '开场白'),
+    msg(1, 'user', '玩家'),
+    msg(2, 'assistant', ''),
+    msg(3, 'user', '玩家二'),
+    msg(4, 'assistant', '正式回复'),
+  ]), null);
+  assert.equal(emptyTailAssistant([msg(0, 'assistant', '开场白'), msg(1, 'user', '玩家'), msg(2, 'assistant', ' ')]), null);
+  assert.equal(emptyTailAssistant([
+    msg(0, 'assistant', '开场白'),
+    msg(1, 'user', '玩家'),
+    msg(2, 'assistant', '非空正文', {data: {世界树: {归属: {楼号: 0}}}}),
+  ]), null);
 });

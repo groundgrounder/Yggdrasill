@@ -194,6 +194,18 @@ export function sanitizeRaw(value, key = '') {
 // 任务的楼层记录挂在 message.data 的固定键下；玩家楼即使带着复制变量也不是助手记录。
 export const recordOf = message => message?.data?.[RECORD_KEY];
 
+// 严格判定末尾空白占位助手楼：仅当存在最后一条 role === 'assistant'、message_id > 0 且正文严格为空时返回该楼。
+export function emptyTailAssistant(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  for (let index = list.length - 1; index >= 0; index--) {
+    const message = list[index];
+    if (message?.role !== 'assistant') continue;
+    if (!(Number(message.message_id) > 0)) return null;
+    return !(message.message ?? '') ? message : null;
+  }
+  return null;
+}
+
 // 失败项与记账摘要的固定形状；说明先去掉连接凭据再写入记录。
 export const failure = (阶段, 错误码, 说明, extra = {}) => ({阶段, 错误码, 说明: sanitizeRaw(String(说明 ?? '')), ...extra});
 export const bookkeepingMeta = (方式, 应答格式, 状态, 尝试次数, extra = {}) => ({方式, 应答格式, 状态, 尝试次数, ...extra});

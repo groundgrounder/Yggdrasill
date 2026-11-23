@@ -16,7 +16,7 @@ import {createView} from './view.mjs';
 import {installStyle, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
 import {createOpeningFlow} from './opening.mjs';
 import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, validateManifest, storedManifest, sanitizeText,
-  recordOf, createHistoryAudit} from './records.mjs';
+  recordOf, createHistoryAudit, emptyTailAssistant} from './records.mjs';
 import {createUpgradeFlow} from './upgrade.mjs';
 import {keeperSettings, showSettings, permissionFailure} from './settings.mjs';
 import {stripCommands, fromText} from './commands-parser.mjs';
@@ -105,6 +105,11 @@ function checkPermission() {
   return true;
 }
 
+const BUSY_MSG = '当前有回复正在生成或末尾楼层为空，请等待生成完成或删除空楼后再操作。';
+const isGeneratingOrEmptyTail = (list, id = null) => ((typeof SillyTavern !== 'undefined'
+  && SillyTavern.getContext?.()?.is_send_press === true) || emptyTailAssistant(list) || (id !== null && !(list[id]?.message ?? '')))
+  ? BUSY_MSG : null;
+
 async function stopHostGeneration(reason = '当前存档不可继续生成') {
   let stopped = false, error = null;
   try {
@@ -179,9 +184,9 @@ async function bookkeep(list, id, base, task) {
 }
 
 // ---------- 重放、编辑与删除后的传播 ----------
-async function replayFrom(from, base, {fresh = false, kind = '重放', shifted = false} = {}) {
+async function replayFrom(from, base, {fresh = false, kind = '重放', shifted = false, end = null} = {}) {
   let state = base, list = messages();
-  for (let id = Math.max(0, from); id < list.length; id++) {
+  for (let id = Math.max(0, from); id < (end === null ? list.length : Math.min(end, list.length)); id++) {
     const message = list[id];
     if (message.role !== 'assistant') continue;
     const task = taskFor(id, fresh && id === from ? kind : '重放');
@@ -243,9 +248,9 @@ function refresh({exclude = null} = {}) {
     status.renderFloors();
     return false;
   }
-  const all = messages(), list = all.filter(message => message.message_id !== exclude);
-  const end = exclude ?? all.length;
-  const audit = history.audit(all, {end, skip: exclude});
+  const all = messages(), skip = exclude ?? emptyTailAssistant(all)?.message_id ?? null;
+  const list = all.filter(message => message.message_id !== skip), end = skip ?? all.length;
+  const audit = history.audit(all, {end, skip});
   if (!audit.ok) return status.blocked(audit);
   if (audit.worldbook?.级别 === 'A' && !session.compatNotified) {
     session.compatNotified = true;
@@ -260,7 +265,7 @@ function refresh({exclude = null} = {}) {
     const baseRecord = baseMessage ? recordOf(baseMessage) : null;
     const content = (quiet ? '' : failureNote(baseRecord)) + renderContext(context) + reminder(state, quiet);
     injectPrompts([{id: INJECT_ID, position: 'in_chat', depth: 1, role: 'system', content}]);
-    session.last = {content, audit: routed, exclude, state, 基于: exclude === null ? '楼层记录' : '前楼可信记录'};
+    session.last = {content, audit: routed, exclude: skip, state, 基于: skip === null ? '楼层记录' : '前楼可信记录'};
   } catch (error) {
     return status.blocked({code: error instanceof ProtocolError ? error.code : '路由.失败', 说明: error.message, 楼号: null});
   }
@@ -279,18 +284,23 @@ const enqueue = job => {
   return run;
 };
 
-function rekeepFor(id) {
-  return () => enqueue(async () => {
-    invalidateTasks();
-    const list = messages(), prefix = history.audit(list, {end: id});
-    if (!prefix.ok) return status.blocked(prefix);
-    if (await replayFrom(id, prefix.state, {fresh: true, kind: '重新记账'})) refresh();
-  });
+async function rekeepFloor(list, id) {
+  const busy = isGeneratingOrEmptyTail(list, id);
+  if (busy) return toastr.warning(busy, '世界树');
+  const prefix = history.audit(list, {end: id});
+  if (!prefix.ok) return status.blocked(prefix);
+  const records = history.checkRecords(list, {from: id, allowWorldbookDiff: true});
+  if (!records.ok) return status.blocked(records);
+  invalidateTasks();
+  if (await replayFrom(id, prefix.state, {fresh: true, kind: '重新记账'})) refresh();
 }
+const rekeepFor = id => () => enqueue(() => rekeepFloor(messages(), id));
 
 async function openRepair(id) {
   if (session.openingPending || session.integrity || session.upgrade || !bookkeeping() || id <= 0) return;
-  const list = messages(), message = list[id], record = recordOf(message);
+  const list = messages(), busy = isGeneratingOrEmptyTail(list, id);
+  if (busy) return toastr.warning(busy, '世界树');
+  const message = list[id], record = recordOf(message);
   if (!message || message.role !== 'assistant' || !checkCompatRecord(record, message).ok) return;
   const prefix = history.audit(list, {end: id});
   if (!prefix.ok) return status.blocked(prefix);
@@ -305,7 +315,8 @@ async function openRepair(id) {
       dialog.setError('');
       return enqueue(async () => {
         if (session.openingPending || session.integrity || session.upgrade || !bookkeeping()) { dialog.setError('当前状态不可修补'); return false; }
-        const nowList = messages(), nowMsg = nowList[id];
+        const nowList = messages(), nowMsg = nowList[id], nowBusy = isGeneratingOrEmptyTail(nowList, id);
+        if (nowBusy) { dialog.setError(nowBusy); toastr.warning(nowBusy, '世界树'); return false; }
         if (chatId() !== origin.聊天ID || !nowMsg || nowMsg.role !== 'assistant'
           || swipeOf(nowMsg) !== origin.swipe || ownershipOf(nowMsg).正文指纹 !== origin.正文指纹) return true;
         const pre = history.audit(nowList, {end: id});
@@ -405,6 +416,18 @@ eventOn(tavern_events.MESSAGE_SENT, () => {
   return refresh();
 });
 
+async function updateAssistant(list, number, message, base, kind, checkOld) {
+  if (checkOld) {
+    const oldChain = history.audit(list, {ignoreOwnership: number});
+    if (!oldChain.ok) return status.blocked(oldChain);
+  }
+  const downstream = history.checkRecords(list, {from: number + 1, allowWorldbookDiff: true});
+  if (!downstream.ok) return status.blocked(downstream);
+  const changed = history.checkChangedAssistant(message, {allowWorldbookDiff: true});
+  if (!changed.ok) return status.blocked({...changed, 楼号: number});
+  if (await replayFrom(number, base, {fresh: true, kind})) refresh();
+}
+
 eventOn(tavern_events.MESSAGE_RECEIVED, (id, type) => {
   invalidateTasks();
   return enqueue(async () => {
@@ -414,20 +437,17 @@ eventOn(tavern_events.MESSAGE_RECEIVED, (id, type) => {
   // 新聊天的开场白也会发 first_message 的“收到消息”事件；它由 init 写入开场命令记录，不是叙事模型新写的助手楼。
   if (number === 0 && type === 'first_message') return init();
   if (session.openingPending) return status.renderFloors();
+  if (number > 0 && !(message.message ?? '')) {
+    if (list.slice(number + 1).some(item => item.role === 'assistant'))
+      return status.blocked({code: '记录.空正文', 说明: '中间助手楼正文为空，后面还有助手楼，不能跳过或忽略', 楼号: number});
+    toastr.warning('本楼正文为空，未记账；可重新生成或删除该楼。', '世界树');
+    return refresh({exclude: number});
+  }
   const prefix = history.audit(list, {end: number});
   if (!prefix.ok) return status.blocked(prefix);
   const stored = recordOf(message);
   // 酒馆会给新助手楼继承上一楼的变量；归属仍在旧楼时，它只是副本，不能当作本楼旧记录审计。
-  if (stored !== undefined && stored?.归属?.楼号 === number) {
-    const oldChain = history.audit(list, {ignoreOwnership: number});
-    if (!oldChain.ok) return status.blocked(oldChain);
-  }
-  const downstream = history.checkRecords(list, {from: number + 1, allowWorldbookDiff: true});
-  if (!downstream.ok) return status.blocked(downstream);
-  const changed = history.checkChangedAssistant(message, {allowWorldbookDiff: true});
-  if (!changed.ok) return status.blocked({...changed, 楼号: number});
-  if (!(await replayFrom(number, prefix.state, {fresh: true, kind: '新正文'}))) return;
-  refresh();
+  await updateAssistant(list, number, message, prefix.state, '新正文', stored !== undefined && stored?.归属?.楼号 === number);
   });
 });
 
@@ -446,17 +466,7 @@ eventOn(tavern_events.MESSAGE_EDITED, id => {
     const downstream = history.checkRecords(list, {from: number + 1, allowWorldbookDiff: true});
     if (!downstream.ok) return status.blocked(downstream);
     if (await replayFrom(number + 1, prefix.state, {kind: '编辑玩家楼后重放'})) refresh();
-  } else {
-    if (recordOf(message) !== undefined) {
-      const oldChain = history.audit(list, {ignoreOwnership: number});
-      if (!oldChain.ok) return status.blocked(oldChain);
-    }
-    const downstream = history.checkRecords(list, {from: number + 1, allowWorldbookDiff: true});
-    if (!downstream.ok) return status.blocked(downstream);
-    const changed = history.checkChangedAssistant(message, {allowWorldbookDiff: true});
-    if (!changed.ok) return status.blocked({...changed, 楼号: number});
-    if (await replayFrom(number, prefix.state, {fresh: true, kind: '编辑助手楼后记账'})) refresh();
-  }
+  } else await updateAssistant(list, number, message, prefix.state, '编辑助手楼后记账', recordOf(message) !== undefined);
   });
 });
 
@@ -483,18 +493,25 @@ eventOn(tavern_events.MESSAGE_SWIPED, id => {
   });
 });
 
-// 删除事件只带新长度。从第 0 楼起用保留楼层的成功命令重放，不能只刷新显示。
+// 删除事件只带新长度。从第 0 楼起用保留楼层的成功命令重放；只读/待升级态删楼后自动重审，若合法即刻解锁恢复。
 eventOn(tavern_events.MESSAGE_DELETED, () => {
   invalidateTasks();
   return enqueue(async () => {
-  if (session.integrity || session.upgrade) return status.renderFloors();
-  if (session.openingPending) return status.renderFloors();
-  const list = messages(), checked = history.checkRecords(list, {shifted: true, allowWorldbookDiff: true});
-  if (!checked.ok) return status.blocked(checked);
-  const opening = list[0]?.role === 'assistant' ? recordOf(list[0]) : null;
-  const root = checkCompatRecord(opening, list[0]);
-  if (!root.ok) return status.blocked({...root, 楼号: 0});
-  if (await replayFrom(1, opening.本局, {kind: '删除楼层后传播', shifted: true})) refresh();
+  const wasBlocked = Boolean(session.integrity || session.upgrade);
+  session.integrity = null; session.upgrade = null;
+  const list = messages();
+  if (!list.length || (list[0]?.role === 'assistant' && !recordOf(list[0]))) await init();
+  else {
+    const end = emptyTailAssistant(list)?.message_id ?? list.length, effective = list.slice(0, end);
+    const checked = history.checkRecords(effective, {shifted: true, allowWorldbookDiff: true});
+    if (!checked.ok) return status.blocked(checked);
+    if (effective[0]?.role !== 'assistant') return status.blocked({code: '记录.缺失', 说明: '这里没有可用的世界树记录', 楼号: 0});
+    const opening = recordOf(effective[0]), rootAudit = history.audit(effective.slice(0, 1));
+    if (!rootAudit.ok) return status.blocked(rootAudit);
+    if (!(await replayFrom(1, opening.本局, {kind: '删除楼层后传播', shifted: true, end})) || !refresh()) return;
+  }
+  if (wasBlocked && !session.integrity && !session.upgrade)
+    toastr.info('删除问题楼层后校验通过，已恢复正常游玩。', '世界树：已恢复');
   });
 });
 
@@ -536,8 +553,6 @@ async function init() {
     return;
   }
   session.openingPending = false;
-  const audit = history.audit(list);
-  if (!audit.ok) return status.blocked(audit);
   refresh();
 }
 
@@ -567,14 +582,11 @@ eventOn(getButtonEvent('世界树：本局'), () => {
 eventOn(getButtonEvent('世界树：重新记账'), () => enqueue(async () => {
   if (session.openingPending) return toastr.warning('尚未开局，没有可以记账的楼', '世界树');
   if (session.integrity || session.upgrade) return status.renderFloors();
-  const id = [...messages()].reverse().find(message => message.role === 'assistant' && message.message_id > 0)?.message_id;
+  const list = messages(), busy = isGeneratingOrEmptyTail(list);
+  if (busy) return toastr.warning(busy, '世界树');
+  const id = [...list].reverse().find(message => message.role === 'assistant' && message.message_id > 0)?.message_id;
   if (id === undefined) return toastr.warning('没有可以记账的楼', '世界树');
-  const list = messages(), prefix = history.audit(list, {end: id});
-  if (!prefix.ok) return status.blocked(prefix);
-  const records = history.checkRecords(list, {from: id, allowWorldbookDiff: true});
-  if (!records.ok) return status.blocked(records);
-  invalidateTasks();
-  if (await replayFrom(id, prefix.state, {fresh: true, kind: '重新记账'})) refresh();
+  await rekeepFloor(list, id);
 }));
 
 eventOn(getButtonEvent('世界树：设置'), () => showSettings({call: callKeeper, parse: parseJson, queue: enqueue, refresh}));
