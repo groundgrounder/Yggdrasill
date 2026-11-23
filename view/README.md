@@ -69,4 +69,4 @@ ygg check examples/三国演义/世界书 --json
 ygg check <当前世界书> --json
 ```
 
-相关测试：`test/60-view-data.test.mjs`、`test/61-view-store.test.mjs`、`test/62-view-server.test.mjs`、`test/67-view-02.test.mjs`。浏览器验收证据与迁移覆盖矩阵见二级工作区 `reports/YG-VIEW-01-v1/`；YG-VIEW-02 端到端证据见 `reports/YG-VIEW-02-v2/`。保存仅在界面显式确认后写回目标事件或角色位置，不读取 `来源资料/`，不提交、不推送。
+相关测试：`test/60-view-data.test.mjs`、`test/61-view-store.test.mjs`、`test/62-view-server.test.mjs`、`test/67-view-02.test.mjs`。保存仅在界面显式确认后写回目标事件或角色位置，不读取 `来源资料/`，不提交、不推送。

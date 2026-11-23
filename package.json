@@ -17,6 +17,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
     "prepare:adapter": "node adapter/build.mjs --prepare-only",
     "build:adapter": "node adapter/build.mjs",
     "smoke:adapter": "node adapter/smoke.mjs"

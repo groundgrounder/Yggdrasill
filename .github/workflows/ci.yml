@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite
+        run: npm test
+
+      - name: Run documentation gate
+        run: npm run check:docs
+
+      - name: Check fixture worldbook (雾港)
+        run: node cli/ygg.mjs check test/fixtures/雾港/世界书
+
+      - name: Check example worldbook (三国演义)
+        run: node cli/ygg.mjs check examples/三国演义/世界书
+
+      - name: Check YAML formatting (三国演义)
+        run: node cli/ygg.mjs format examples/三国演义/世界书 --check
+
+      - name: Prepare adapter bundle
+        run: npm run prepare:adapter
+
+      - name: Smoke test adapter (source mode)
+        run: npm run smoke:adapter
+
+      - name: Build and verify adapter dist (fixture and 三国演义)
+        run: |
+          node adapter/build.mjs
+          SMOKE_USE_DIST=1 node adapter/smoke.mjs
+          node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml
