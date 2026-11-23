@@ -47,4 +47,4 @@
 
 跨项目或跨代理使用：把本仓库 `skills/` 的绝对路径登记进 omp 的 `skills.customDirectories`。本仓库不代改全局配置，也不把这一步写成已实施。注意 skill 内的指针都是仓库相对路径（指向 `docs/`、`cli/`、`adapter/`、`shared/` 等），复制目录到仓库外会断链：按完整 `skills/` 目录或指向本仓库的挂载使用。
 
-规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与单事件编辑，不替代本页的九个 skill。
+规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的九个 skill。
