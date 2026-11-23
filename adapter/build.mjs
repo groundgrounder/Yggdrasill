@@ -1,4 +1,4 @@
-// 原型打包：node adapter/build.mjs [项目目录，缺省 examples/雾港] [--face 卡面文件，缺省 卡面.yaml] [--prepare-only] [--compatible <旧程序指纹>]...
+// 原型打包：node adapter/build.mjs [项目目录，缺省 test/fixtures/雾港] [--face 卡面文件，缺省 卡面.yaml] [--prepare-only] [--compatible <旧程序指纹>]...
 // --prepare-only 只生成 bundle.generated.json，不调用 esbuild（供 smoke.mjs 在 node 中直接运行 runtime.mjs）。
 // 世界书、程序依赖与卡面先规范化并校验，再由同一份构建清单驱动 bundle 与角色卡。
 import fs from 'node:fs/promises';
@@ -36,7 +36,7 @@ for (let index = 0; index < args.length; index++) {
   else projectArg = value;
 }
 const faceFile = path.resolve(here, faceArg);
-const project = path.resolve(repo, projectArg ?? 'examples/雾港');
+const project = path.resolve(repo, projectArg ?? 'test/fixtures/雾港');
 const ESBUILD = 'esbuild@0.28.2';
 
 const nonEmptyText = (value, label) => {

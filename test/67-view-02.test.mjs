@@ -129,12 +129,12 @@ test('视图-02-服务-2：GET /api/tree.md 逐字节一致、附件头与只读
 
 test('视图-02-服务-3：/api/yaml/parse 与 format 单一事实来源且拒绝危险输入', async t => {
   const {app} = await serve(t);
-  const raw = await fs.readFile(path.join(project, 'examples/雾港/世界书/历史/事件/拜师/事件.txt'), 'utf8');
+  const raw = await fs.readFile(path.join(project, 'test/fixtures/雾港/世界书/历史/事件/拜师/事件.txt'), 'utf8');
   const parsed = await (await post(app, '/api/yaml/parse', {kind: 'event', raw})).json();
   assert.equal(parsed.value.事件ID, '拜师');
   assert.deepEqual(parsed.value, parseYaml(raw));
 
-  const positionRaw = await fs.readFile(path.join(project, 'examples/雾港/世界书/历史/事件/拜师/角色/秦守.txt'), 'utf8');
+  const positionRaw = await fs.readFile(path.join(project, 'test/fixtures/雾港/世界书/历史/事件/拜师/角色/秦守.txt'), 'utf8');
   const positionParsed = await (await post(app, '/api/yaml/parse', {kind: 'position', raw: positionRaw})).json();
   assert.equal(positionParsed.value.角色组ID, '秦守');
 
@@ -411,7 +411,7 @@ test('视图-02-表单-1：表单产物经格式化管线保存后通过 ygg for
 
 test('视图-02-安全-1：畸形候选、路径越界与静态资源负例不签发令牌', async t => {
   const {store} = await setup(t);
-  const data = await loadViewData(path.join(project, 'examples/雾港/世界书'));
+  const data = await loadViewData(path.join(project, 'test/fixtures/雾港/世界书'));
   const event = data.事件.find(item => item.事件ID === '拜师');
   const wrapped = `<事件>\n${event.原文}\n</事件>\n`;
   const wrappedResult = await store.previewCreateEvent({eventID: '包裹', raw: wrapped});
@@ -481,7 +481,7 @@ test('视图-02-回归-1：YAML 错误草稿不丢失，切换表单失败时保
 
 test('视图-02-回归-2：既有事件编辑仍拒绝改名与危险路径', async t => {
   const {store} = await setup(t);
-  const data = await loadViewData(path.join(project, 'examples/雾港/世界书'));
+  const data = await loadViewData(path.join(project, 'test/fixtures/雾港/世界书'));
   const event = data.事件.find(item => item.事件ID === '拜师');
   const renamed = event.原文.replace('事件ID: 拜师', '事件ID: 另一个事件');
   const result = await store.preview({eventID: '拜师', raw: renamed, revision: event.revision});

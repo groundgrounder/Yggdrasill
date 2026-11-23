@@ -18,7 +18,7 @@ node <世界树仓库>/cli/ygg.mjs view --worldbook <世界书目录> [--storage
 | `--storage` | `<世界书父目录>/作者资料/审阅器` | 批注、布局、备份与预览状态；必须在实现仓库与世界书之外 |
 | `--port` | `4317` | `0` 使用空闲端口；只监听 `127.0.0.1` |
 
-启动后终端输出实际 URL。仓库内示例 `examples/雾港/` 位于实现仓库中，使用时必须显式指定仓库外的 `--storage`，否则按存储隔离规则拒绝启动。
+启动后终端输出实际 URL。仓库内示例 `examples/三国演义/` 位于实现仓库中，使用时必须显式指定仓库外的 `--storage`，否则按存储隔离规则拒绝启动。
 
 ## 输入与不读取的内容
 
@@ -65,7 +65,7 @@ node <世界树仓库>/cli/ygg.mjs view --worldbook <世界书目录> [--storage
 
 ```sh
 npm test
-ygg check examples/雾港/世界书 --json
+ygg check examples/三国演义/世界书 --json
 ygg check <当前世界书> --json
 ```
 

@@ -83,16 +83,16 @@ test('事件树-2：结构异常分节列出不可达事件', async t => {
 });
 
 test('tree-CLI-1：默认正文、--stats-only 与 --json 固定键', async () => {
-  const plain = await run(['examples/雾港/世界书']);
+  const plain = await run(['test/fixtures/雾港/世界书']);
   assert.equal(plain.status, 0, plain.stderr);
   assert.ok(plain.stdout.startsWith('# 事件树：雾港\n'), '默认输出完整 Markdown');
 
-  const stats = await run(['examples/雾港/世界书', '--stats-only']);
+  const stats = await run(['test/fixtures/雾港/世界书', '--stats-only']);
   assert.equal(stats.status, 0, stats.stderr);
   assert.match(stats.stdout, /^事件树统计：雾港\n- 事件 13（独立 5），事件串 2；可达 13，不可达 0，结构异常 0\n/u);
   assert.match(stats.stdout, /- 候选台词 4：原台词 1（25\.00%），作者台词 3；台词记录 1 条\n/u);
 
-  const json = await run(['examples/雾港/世界书', '--json']);
+  const json = await run(['test/fixtures/雾港/世界书', '--json']);
   assert.equal(json.status, 0, json.stderr);
   assert.deepEqual(Object.keys(json.value), ['世界书', '摘要', '事件串', '独立事件', '台词统计', 'markdown', '输出文件', '异常']);
   assert.deepEqual(json.value.异常, []);
@@ -104,7 +104,7 @@ test('tree-CLI-1：默认正文、--stats-only 与 --json 固定键', async () =
     [['学徒修习', ['拜师']], ['雾夜余波', ['大雾之夜']]]);
   assert.deepEqual(json.value.独立事件, ['接手商会账目', '港务署问责', '潮汐号首航', '白棠在码头', '秦守讲旧事']);
 
-  const statsJson = await run(['examples/雾港/世界书', '--stats-only', '--json']);
+  const statsJson = await run(['test/fixtures/雾港/世界书', '--stats-only', '--json']);
   assert.equal(statsJson.status, 0);
   assert.equal(statsJson.value.markdown, null);
   assert.equal(statsJson.value.输出文件, null);
@@ -135,7 +135,7 @@ test('tree-CLI-3：参数错误退出非零，且不读取 来源资料/', async
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /用法：ygg tree/u);
 
-  for (const args of [['--未知'], ['a', 'b'], ['examples/雾港/世界书', '--out']]) {
+  for (const args of [['--未知'], ['a', 'b'], ['test/fixtures/雾港/世界书', '--out']]) {
     const failure = await run(args);
     assert.equal(failure.status, 1, args.join(' '));
     assert.match(failure.stderr, /事件树导出\.参数/u, args.join(' '));
@@ -150,7 +150,7 @@ test('tree-CLI-3：参数错误退出非零，且不读取 来源资料/', async
     };
   }});
   let stdout = '', stderr = '';
-  const status = await runTree(['examples/雾港/世界书', '--json'], {cwd: project,
+  const status = await runTree(['test/fixtures/雾港/世界书', '--json'], {cwd: project,
     stdout: {write: value => { stdout += value; }}, stderr: {write: value => { stderr += value; }}, fs: guardFs});
   assert.equal(status, 0, stderr);
   assert.deepEqual(JSON.parse(stdout).异常, []);

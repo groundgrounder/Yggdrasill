@@ -188,7 +188,7 @@ test('视图-服务-6：命令行参数与真实进程启动', async t => {
   assert.equal(missingCode, 1);
   assert.match(missing.stderr(), /缺少 --worldbook/);
 
-  const defaultStorage = await spawnView(['--worldbook', path.join(project, 'examples/雾港/世界书'), '--port', '0'], project);
+  const defaultStorage = await spawnView(['--worldbook', path.join(project, 'test/fixtures/雾港/世界书'), '--port', '0'], project);
   const [defaultCode] = await once(defaultStorage.child, 'exit');
   assert.equal(defaultCode, 1);
   assert.match(defaultStorage.stderr(), /实现仓库|世界书/);

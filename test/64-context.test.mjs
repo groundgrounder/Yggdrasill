@@ -22,7 +22,7 @@ async function sealedStateFile(t, value) {
 }
 
 test('上下文-1：封卷、方案、场景与在场均按契约输出', async () => {
-  const plain = await run(['context', 'examples/雾港/世界书', '--json']);
+  const plain = await run(['context', 'test/fixtures/雾港/世界书', '--json']);
   assert.equal(plain.status, 0, plain.stderr);
   assert.deepEqual(Object.keys(plain.value), ['输入', '汇总', '预算', '审计', '正文', '异常']);
   assert.deepEqual(plain.value.异常, []);
@@ -34,15 +34,15 @@ test('上下文-1：封卷、方案、场景与在场均按契约输出', async 
   assert.ok(plain.value.汇总.总字符 > 0);
   assert.ok(plain.value.汇总.分块字符.协议 > 0);
 
-  const plan = await run(['context', 'examples/雾港/世界书', '--方案', '码头少年', '--json']);
+  const plan = await run(['context', 'test/fixtures/雾港/世界书', '--方案', '码头少年', '--json']);
   assert.equal(plan.status, 0, plan.stderr);
   assert.equal(plan.value.输入.开局, '潮历072年');
   assert.equal(plan.value.输入.方案, '码头少年');
 
-  const opening = await run(['context', 'examples/雾港/世界书', '--方案', '码头少年', '--开局', '潮历073年', '--json']);
+  const opening = await run(['context', 'test/fixtures/雾港/世界书', '--方案', '码头少年', '--开局', '潮历073年', '--json']);
   assert.equal(opening.value.输入.开局, '潮历073年');
 
-  const scene = await run(['context', 'examples/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
+  const scene = await run(['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
     '--在场', '秦守', '--在场', '灯塔学徒', '--消息', '棠小姐托人来问，雾季的灯号会不会改。', '--json']);
   assert.equal(scene.status, 0, scene.stderr);
   assert.deepEqual(scene.value.输入.在场, ['灯塔学徒', '秦守']);
@@ -52,18 +52,18 @@ test('上下文-1：封卷、方案、场景与在场均按契约输出', async 
   assert.ok(scene.value.汇总.分块字符.在场角色 > 0);
   for (const name of ['技能', '装备', '地点', '船只']) assert.ok(name in scene.value.预算.条目, name);
 
-  const raw = await run(['context', 'examples/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
+  const raw = await run(['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
     '--在场', '秦守', '--在场', '灯塔学徒', '--raw']);
   assert.equal(raw.status, 0, raw.stderr);
   assert.ok(raw.stdout.startsWith('<协议>\n'), '--raw 直接输出渲染正文');
   assert.ok(raw.stdout.trimEnd().endsWith('</事件>'));
-  const rawJson = await run(['context', 'examples/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
+  const rawJson = await run(['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔', '--场景', '值守室',
     '--在场', '秦守', '--在场', '灯塔学徒', '--raw', '--json']);
   assert.equal(rawJson.value.正文, raw.stdout);
 });
 
 test('上下文-2：总字符、分块与审计和 core/router 结果完全一致', async () => {
-  const root = path.join(project, 'examples/雾港/世界书');
+  const root = path.join(project, 'test/fixtures/雾港/世界书');
   const {catalog, decl} = await compileWorldbook(root, {fs, path});
   const protocol = createProtocol({catalog, decl});
   const settings = await readSettings(path.dirname(root), {fs, path, decl});
@@ -96,12 +96,12 @@ test('上下文-3：九类错误码与非法参数', async t => {
   const cases = [];
   const add = (label, args, code, fragment = null) => cases.push({label, args, code, fragment});
 
-  add('本局与开局冲突', ['context', 'examples/雾港/世界书', '--本局', 'x.json', '--开局', '潮历074年'], '上下文.参数');
-  add('仅场景无当前地点', ['context', 'examples/雾港/世界书', '--场景', '值守室'], '上下文.参数', '本局须已有当前地点');
-  add('方案不存在', ['context', 'examples/雾港/世界书', '--方案', '不存在方案'], '上下文.方案');
-  add('地点不存在', ['context', 'examples/雾港/世界书', '--地点', '不存在地标'], '上下文.地点', '地标不存在');
-  add('角色组不存在', ['context', 'examples/雾港/世界书', '--在场', '不存在组'], '上下文.角色组', '角色组不存在');
-  add('角色组未启用', ['context', 'examples/雾港/世界书', '--在场', '周岚'], '上下文.角色组', '角色组未启用');
+  add('本局与开局冲突', ['context', 'test/fixtures/雾港/世界书', '--本局', 'x.json', '--开局', '潮历074年'], '上下文.参数');
+  add('仅场景无当前地点', ['context', 'test/fixtures/雾港/世界书', '--场景', '值守室'], '上下文.参数', '本局须已有当前地点');
+  add('方案不存在', ['context', 'test/fixtures/雾港/世界书', '--方案', '不存在方案'], '上下文.方案');
+  add('地点不存在', ['context', 'test/fixtures/雾港/世界书', '--地点', '不存在地标'], '上下文.地点', '地标不存在');
+  add('角色组不存在', ['context', 'test/fixtures/雾港/世界书', '--在场', '不存在组'], '上下文.角色组', '角色组不存在');
+  add('角色组未启用', ['context', 'test/fixtures/雾港/世界书', '--在场', '周岚'], '上下文.角色组', '角色组未启用');
   add('目录不存在', ['context', 'examples/不存在的目录'], '上下文.读取失败');
 
   const axisRoot = await fixture(t);
@@ -133,18 +133,18 @@ test('上下文-3：九类错误码与非法参数', async t => {
   for (const [label, value] of [['不是合法 JSON', null], ['未封卷', {开局: {已封卷: false}}]]) {
     const file = await sealedStateFile(t, value ?? {});
     if (label === '不是合法 JSON') await fs.writeFile(file, '{oops');
-    const result = await run(['context', 'examples/雾港/世界书', '--本局', file, '--json']);
+    const result = await run(['context', 'test/fixtures/雾港/世界书', '--本局', file, '--json']);
     assert.equal(result.status, 1, label);
     assert.equal(result.value.异常[0].规则, '上下文.本局', label);
   }
-  const absent = await run(['context', 'examples/雾港/世界书', '--本局', path.join(os.tmpdir(), '不存在本局.json'), '--json']);
+  const absent = await run(['context', 'test/fixtures/雾港/世界书', '--本局', path.join(os.tmpdir(), '不存在本局.json'), '--json']);
   assert.equal(absent.status, 1);
   assert.equal(absent.value.异常[0].规则, '上下文.本局');
   void badJson; void protocol;
 });
 
 test('上下文-4：自动初始化与 --不自动初始化、本局文件', async t => {
-  const early = ['context', 'examples/雾港/世界书', '--开局', '潮历071年01月01日', '--地点', '灯塔', '--在场', '灯塔学徒'];
+  const early = ['context', 'test/fixtures/雾港/世界书', '--开局', '潮历071年01月01日', '--地点', '灯塔', '--在场', '灯塔学徒'];
   const auto = await run([...early, '--json']);
   assert.equal(auto.status, 0, auto.stderr);
   assert.deepEqual(auto.value.输入.模拟初始化, ['灯塔学徒']);
@@ -159,7 +159,7 @@ test('上下文-4：自动初始化与 --不自动初始化、本局文件', asy
   const state = W(protocol, S(protocol, '072'),
     {当前地点: {地标: '灯塔', 场景: '值守室'}, 在场: {灯塔学徒: true, 秦守: true}}).state;
   const file = await sealedStateFile(t, state);
-  const fromState = await run(['context', path.join(project, 'examples/雾港/世界书'), '--本局', file, '--json']);
+  const fromState = await run(['context', path.join(project, 'test/fixtures/雾港/世界书'), '--本局', file, '--json']);
   assert.equal(fromState.status, 0, fromState.stderr);
   assert.equal(fromState.value.输入.开局, '潮历072年');
   assert.deepEqual(fromState.value.输入.模拟初始化, []);
@@ -167,7 +167,7 @@ test('上下文-4：自动初始化与 --不自动初始化、本局文件', asy
 });
 
 test('上下文-5：previewContext 注入、只读与模板不经虚拟 fs', async t => {
-  const root = path.join(project, 'examples/雾港/世界书');
+  const root = path.join(project, 'test/fixtures/雾港/世界书');
   const first = await previewContext(root, {fs, path, 开局: '潮历074年', 地点: '灯塔', 场景: '值守室',
     在场: ['灯塔学徒', '秦守'], 消息: ['灯号会不会改。']});
   const second = await previewContext(root, {fs, path, 开局: '潮历074年', 地点: '灯塔', 场景: '值守室',
@@ -203,7 +203,7 @@ test('上下文-5：previewContext 注入、只读与模板不经虚拟 fs', asy
 });
 
 test('上下文-6：自建模式玩家在场边界', async () => {
-  const scene = await run(['context', 'examples/雾港/世界书', '--地点', '灯塔',
+  const scene = await run(['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔',
     '--在场', '玩家', '--在场', '秦守', '--json']);
   assert.equal(scene.status, 0, scene.stderr);
   assert.deepEqual(scene.value.输入.在场, ['玩家', '秦守']);
@@ -211,12 +211,12 @@ test('上下文-6：自建模式玩家在场边界', async () => {
   assert.ok(scene.value.汇总.分块字符.在场角色 > 0, '玩家随当前地点自动在场可渲染');
   assert.ok(scene.value.汇总.分块字符.世界状态 > 0);
 
-  const raw = await run(['context', 'examples/雾港/世界书', '--地点', '灯塔', '--在场', '玩家', '--raw']);
+  const raw = await run(['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔', '--在场', '玩家', '--raw']);
   assert.equal(raw.status, 0, raw.stderr);
   assert.ok(raw.stdout.includes('<在场角色>'));
   assert.ok(raw.stdout.includes('<世界状态>'));
 
-  const missing = await run(['context', 'examples/雾港/世界书', '--在场', '玩家', '--json']);
+  const missing = await run(['context', 'test/fixtures/雾港/世界书', '--在场', '玩家', '--json']);
   assert.equal(missing.status, 1);
   assert.equal(missing.value.异常[0].规则, '上下文.场景');
   assert.ok(missing.value.异常[0].说明.includes('自建模式玩家在场须先指定 --地点 或本局已有当前地点'));

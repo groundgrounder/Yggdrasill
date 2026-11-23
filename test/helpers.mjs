@@ -9,7 +9,7 @@ import {checkWorldbook} from '../checker/index.mjs';
 
 export {fs, path, assert, test};
 export const project = fileURLToPath(new URL('../', import.meta.url));
-export const example = path.join(project, 'examples/雾港/世界书');
+export const example = path.join(project, 'test/fixtures/雾港/世界书');
 export const shortSkill = '技能/灯语/灯语·短讯.txt';
 export const naturalSkill = '技能/雾中视/雾中视·辨影.txt';
 export const equipment = '装备/工具/工具·铜扳手.txt';

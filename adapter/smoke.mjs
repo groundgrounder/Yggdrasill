@@ -220,7 +220,7 @@ async function send(userText, replyText) {
 }
 
 // ---------- 对照：用内核在 node 中直接算 ----------
-const {protocol, router} = await loadRouter(path.resolve(import.meta.dirname, '../examples/雾港/世界书'), {fs, path});
+const {protocol, router} = await loadRouter(path.resolve(import.meta.dirname, '../test/fixtures/雾港/世界书'), {fs, path});
 const strip = text => text.replace(/<命令>\s*\n?([\s\S]*?)<\/命令>/g, '').trim();
 
 // 开局纯计算：自由组合使用雾港真实选项声明，只在内存里把开关打开，不改世界书。

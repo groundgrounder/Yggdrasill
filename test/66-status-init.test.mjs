@@ -44,9 +44,9 @@ test('状态-1：空目录诊断为未备料并推荐通读', async t => {
 });
 
 test('状态-2：雾港项目目录与世界书目录同口径', async () => {
-  const byProject = await run(runStatus, ['examples/雾港', '--json']);
+  const byProject = await run(runStatus, ['test/fixtures/雾港', '--json']);
   assert.equal(byProject.status, 0, byProject.stderr);
-  const byWorldbook = await run(runStatus, ['examples/雾港/世界书', '--json']);
+  const byWorldbook = await run(runStatus, ['test/fixtures/雾港/世界书', '--json']);
   assert.equal(byWorldbook.status, 0, byWorldbook.stderr);
   assert.equal(byProject.value.项目.目录, byWorldbook.value.项目.目录);
   assert.equal(byWorldbook.value.项目.识别, '世界书目录');
@@ -64,7 +64,7 @@ test('状态-2：雾港项目目录与世界书目录同口径', async () => {
   assert.ok(byProject.value.各层.第3层.完成);
   assert.equal(byProject.value.各层.第4层.完成, false);
 
-  const human = await run(runStatus, ['examples/雾港']);
+  const human = await run(runStatus, ['test/fixtures/雾港']);
   assert.equal(human.status, 0);
   assert.match(human.stdout, /当前阶段：第 4 层：档案与填景待补\n/u);
   assert.match(human.stdout, /第3层 骨架：角色组 4、档案 11、事件 13、事件串 2、开局选项 2、开局方案 2；静态检查 0 错误、0 提示\n/u);
@@ -110,8 +110,8 @@ test('状态-3：半途项目按层判定并只读降级', async t => {
 });
 
 test('状态-4：inspectProjectStatus 注入、确定性与只读保证', async () => {
-  const first = await inspectProjectStatus(path.join(project, 'examples/雾港'), {fs, path});
-  const second = await inspectProjectStatus(path.join(project, 'examples/雾港'), {fs, path});
+  const first = await inspectProjectStatus(path.join(project, 'test/fixtures/雾港'), {fs, path});
+  const second = await inspectProjectStatus(path.join(project, 'test/fixtures/雾港'), {fs, path});
   assert.deepEqual(first, second);
   await assert.rejects(inspectProjectStatus(path.join(project, 'examples/不存在'), {fs, path}),
     error => error instanceof StatusError && error.code === '状态.路径');
@@ -125,7 +125,7 @@ test('状态-4：inspectProjectStatus 注入、确定性与只读保证', async 
       return value(first, ...rest);
     };
   }});
-  const readonly = await run(runStatus, ['examples/雾港', '--json'], {fs: guardFs});
+  const readonly = await run(runStatus, ['test/fixtures/雾港', '--json'], {fs: guardFs});
   assert.equal(readonly.status, 0, readonly.stderr);
   assert.deepEqual(readonly.value.异常, []);
 });
