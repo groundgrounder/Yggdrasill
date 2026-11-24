@@ -20,7 +20,7 @@ node <世界树仓库>/cli/ygg.mjs view [<世界书目录> | --worldbook <世界
 
 启动后终端输出实际 URL。打开仓库内示例（如 `node cli/ygg.mjs view examples/三国演义/世界书 --port 0`）且未显式传入 `--storage` 时，因默认存储路径落入实现仓库内，CLI 会自动改用系统临时目录下的隔离路径（启动时不提前创建目录，不写入仓库）；若显式传入位于实现仓库或世界书内的 `--storage`，仍按存储隔离规则严格拒绝启动。
 
-## 输入与不读取的内容
+## 输入
 
 - 使用 `readDeclarations`、`validateDeclarations`、`loadWorldbook`、`parseYaml`、`buildReferenceIndex`、`analyzeEventTree`、`whatIf` 与 `checkWorldbook`。
 - 时间按 `设定/纪年.yaml`，事件分类按 `设定/事件分类.yaml`，对象键按现行 `类型:ID`。
@@ -61,7 +61,7 @@ node <世界树仓库>/cli/ygg.mjs view [<世界书目录> | --worldbook <世界
 存储默认值必须在世界书、`作者资料/出处` 与实现仓库之外；显式 `--storage` 也不能落在这些位置。启动与读取不创建存储目录，不写世界书。
 
 
-## 测试与检查
+## 测试
 
 ```sh
 npm test
