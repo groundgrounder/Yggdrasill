@@ -2,9 +2,10 @@ import {execFile, spawn} from 'node:child_process';
 import {once} from 'node:events';
 import os from 'node:os';
 import {promisify} from 'node:util';
-import {test, assert, fs, path, project, fixture} from './helpers.mjs';
+import {test, assert, fs, path, project, fixture, write} from './helpers.mjs';
 import {runCli} from '../cli/ygg.mjs';
 import {parsePackArgs} from '../cli/pack.mjs';
+import {packCard, PackError} from '../adapter/pack.mjs';
 import {slugifyHeading} from '../scripts/check-docs.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -154,6 +155,84 @@ test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.
   const legacyBuild = await spawnNode(buildEntry, ['examples/三国演义', '--face', '../examples/三国演义/卡面.yaml', '--prepare-only'], project);
   assert.equal(legacyBuild.code, 0, legacyBuild.stderr);
   assert.match(legacyBuild.stdout, /bundle\.generated\.json：/u);
+});
+
+test('YG-OPEN-01-A1：卡面按方案字段、逐方案干跑与 alternate_greetings 导出', async t => {
+  const worldbook = await fixture(t);
+  const projectDir = path.dirname(worldbook);
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'ygg-open-pack-'));
+  t.after(() => fs.rm(out, {recursive: true, force: true}));
+  const quiet = {write: () => {}};
+  const base = {
+    卡ID: 'yggdrasill.wu-gang', 卡版本: '0.1.0', 名称: '雾港·多方案', 描述: '多方案打包测试。',
+    开场白: '主开场白。\n\n第二段。',
+    开局: {开局时间: '潮历071年04月01日'},
+    开场命令: [
+      {确认初始化: {角色组ID: '灯塔学徒'}},
+      {写场景: {当前地点: {地标: '灯塔', 场景: '值守室'}, 在场: {灯塔学徒: true, 秦守: true}}},
+    ],
+    可选在场: ['秦守'],
+    必需角色组: ['灯塔学徒'],
+    按方案: {
+      码头少年: {
+        开场白: '码头开场白。',
+        开场命令: [
+          {确认初始化: {角色组ID: '白棠'}},
+          {写场景: {当前地点: {地标: '码头区', 场景: '栈桥'}, 在场: {白棠: true}}},
+        ],
+        可选在场: ['白棠'],
+        必需角色组: [],
+      },
+      补考之年: {开场白: '补考开场白。'},
+    },
+  };
+  const faceFile = async (name, face) => {
+    await write(projectDir, name, face);
+    return path.join(projectDir, name);
+  };
+  const pack = (file, options = {}) => packCard({projectDir, faceFile: file,
+    adapterDir: path.join(project, 'adapter'), repo: project, stdout: quiet, stderr: quiet, ...options});
+
+  const file = await faceFile('卡面.yaml', base);
+  const result = await pack(file);
+  const bundle = JSON.parse(await fs.readFile(result.bundleFile, 'utf8'));
+  assert.equal(bundle.openingGreeting, base.开场白);
+  assert.deepEqual(bundle.openingOptionalPresent, ['秦守']);
+  assert.deepEqual(bundle.openingRequiredGroups, ['灯塔学徒']);
+  assert.deepEqual(Object.keys(bundle.planOpenings), ['码头少年', '补考之年']);
+  assert.deepEqual(bundle.planOpenings.码头少年, base.按方案.码头少年);
+  assert.deepEqual(bundle.planOpenings.补考之年, {开场白: '补考开场白。', 开场命令: base.开场命令,
+    可选在场: base.可选在场, 必需角色组: base.必需角色组}, '方案未写字段应继承顶层');
+  const card = JSON.parse(await fs.readFile(result.cardFile, 'utf8'));
+  assert.equal(card.data.first_mes, base.开场白);
+  assert.deepEqual(card.data.alternate_greetings, ['码头开场白。', '补考开场白。'],
+    'alternate_greetings 按世界书方案顺序导出并去重');
+
+  // 无按方案的单方案卡保持旧行为：bundle 新字段为空，alternate_greetings 为 []。
+  const {按方案, ...single} = base;
+  const singleFile = await faceFile('单方案.yaml', single);
+  const singleResult = await pack(singleFile);
+  const singleBundle = JSON.parse(await fs.readFile(singleResult.bundleFile, 'utf8'));
+  assert.deepEqual(singleBundle.planOpenings, {});
+  assert.deepEqual(singleBundle.openingOptionalPresent, ['秦守']);
+  const singleCard = JSON.parse(await fs.readFile(singleResult.cardFile, 'utf8'));
+  assert.deepEqual(singleCard.data.alternate_greetings, []);
+  assert.equal(singleCard.data.first_mes, base.开场白);
+
+  // 非法配置在打包阶段拒绝；结构性错误不写产物。
+  const rejectFace = async (name, face, pattern) => {
+    const badFile = await faceFile(name, face);
+    await assert.rejects(pack(badFile, {prepareOnly: true, adapterDir: out}),
+      error => error instanceof PackError && pattern.test(error.message), name);
+  };
+  await rejectFace('未知字段.yaml', {...base, 多余: 1}, /未授权字段/u);
+  await rejectFace('未知方案.yaml', {...base, 按方案: {不存在: {}}}, /开局方案不存在：不存在/u);
+  await rejectFace('未知方案键.yaml', {...base, 按方案: {码头少年: {摘要: 'x'}}}, /未授权字段：摘要/u);
+  await rejectFace('冲突.yaml', {...base, 必需角色组: ['秦守']}, /同时出现在/u);
+  await rejectFace('玩家.yaml', {...base, 可选在场: ['玩家']}, /不能包含“玩家”/u);
+  await rejectFace('命令标签.yaml', {...base, 按方案: {码头少年: {开场白: '前<命令>后'}}}, /不得包含 <命令>/u);
+  await rejectFace('干跑失败.yaml', {...base, 按方案: {码头少年: {开场命令: [{写场景: {在场: {白棠: '是'}}}]}}},
+    /方案“码头少年”开场命令执行存在/u);
 });
 
 test('SIMPLIFY-01-A3：ygg view 支持位置参数与仓库示例自动回退系统临时目录，显式仓库内 --storage 仍拒绝', async t => {

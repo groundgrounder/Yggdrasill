@@ -11,6 +11,7 @@ import {createProtocol} from '../core/protocol.mjs';
 import {createMemFs} from './memfs.mjs';
 import {manifestIssue, storedManifest, MANIFEST_FIELDS} from './records.mjs';
 import {createOpeningDraft, adaptOpeningCommands} from './opening.mjs';
+import {openingNode} from './ui.mjs';
 import {createBookkeeper, buildKeepRecord, runKeeperLoop} from './bookkeeper.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
 
@@ -114,7 +115,7 @@ const find = (root, test) => test(root) ? root : root.children.map(child => find
 // 第 1—8 步测旧方式（叙事模型写 <命令>），第 9 步起测记账。
 let globals = {'世界树·记账': {方式: '关闭'}};
 let serverGlobals = clone(globals), settingsPersistDelay = 0, holdPopup = false, closePopup = null;
-let activeChatId = 'YG-ADAPTER-04-smoke-chat', stopCalls = 0, messageWrites = 0;
+let activeChatId = 'YG-ADAPTER-04-smoke-chat', stopCalls = 0, messageWrites = 0, openingWrites = 0;
 let failNextMessageWrite = false, keeperThrowOnce = false, holdNextKeeper = false, releaseKeeper = null;
 let emitKeeperGeneration = false, sendingPress = false;
 const settingsWrites = [];
@@ -156,6 +157,19 @@ Object.assign(globalThis, {
     }
     if (failNextMessageWrite) { failNextMessageWrite = false; throw new Error('模拟变量提交失败'); }
     const message = chat.at(message_id); message.variables[message.swipe_id] = clone(variables); messageWrites += 1;
+  },
+  // 真实宿主在改正文后异步广播编辑事件；这里保留同一顺序，事件不阻塞本次写入。
+  setChatMessages: async (patches, options) => {
+    for (const patch of patches) {
+      const message = chat.at(patch.message_id);
+      message.mes = patch.message;
+      message.swipes[message.swipe_id] = patch.message;
+      openingWrites += 1;
+    }
+    for (const patch of patches) {
+      try { void Promise.resolve(emit('message_edited', patch.message_id)).catch(() => {}); } catch {}
+    }
+    return options?.refresh === 'affected';
   },
   generateRaw: async config => {
     keeperCalls.push(config);
@@ -2396,3 +2410,85 @@ assert.equal(fixedRecord.记账.状态, '成功');
 assert.deepEqual(fixedRecord.已写入, ['好发现', '坏路径']);
 assert.deepEqual(fixedRecord.失败, []);
 console.log(`40 YG-FIX-01：已排除/异分支确认均报 协议.事件状态 且不进入重放；自动重试 ${retained.join('/')} 均保留合法地点与已写入并判部分失败；修正后成功`);
+
+// ---------- 41. YG-OPEN-01：第 0 楼开场白同步、回滚、多方案裁剪与必选依赖 ----------
+holdPopup = true;
+const openBefore = popupNodes.length, writesBeforeGreeting = openingWrites;
+chat.splice(0, chat.length);
+push('旧的开场白占位。', false);
+await emit('chat_id_changed');
+await waitUntil(() => popupNodes.length > openBefore, '新聊天打开开局界面');
+assert.match(popupNodes.at(-1).text(), /确认开局后使用这段正文作为第 0 楼开场白/);
+assert.equal(await closePopup(1), true, '开场白与选中方案不同时应同步后提交');
+assert.equal(openingWrites, writesBeforeGreeting + 1, '只同步一次第 0 楼正文');
+assert.equal(chat[0].mes, face.开场白, '提交后第 0 楼正文应为选中方案开场白');
+assert.equal(record(0).归属.正文指纹, sha256(Buffer.from(face.开场白, 'utf8')), '记录归属应按同步后的正文计算');
+assert.deepEqual(record(0).命令, face.开场命令);
+assert.deepEqual(record(0).失败, []);
+assert.ok(!toasts.some(item => item.title?.includes('开局已存在') && item.body?.includes('重复提交')), '同步不应被当成重复开局');
+
+holdPopup = true;
+const rollbackBefore = popupNodes.length, rollbackGreeting = '回滚前的开场白。';
+chat.splice(0, chat.length);
+push(rollbackGreeting, false);
+await emit('chat_id_changed');
+await waitUntil(() => popupNodes.length > rollbackBefore, '回滚用例打开开局界面');
+failNextMessageWrite = true;
+assert.equal(await closePopup(1), false, '记录写入失败时提交必须失败');
+assert.equal(chat[0].mes, rollbackGreeting, '记录写入失败应把第 0 楼正文恢复为提交前原文');
+assert.equal(record(0), undefined, '回滚后不得留下半份记录');
+assert.ok(toasts.some(item => item.level === 'error' && /原变量已保留/.test(item.body)));
+await closePopup(null);
+holdPopup = false;
+
+// 极简只读宿主没有写正文接口：不报权限缺口，照常写记录，第 0 楼正文保持原样。
+holdPopup = true;
+const noApiBefore = popupNodes.length, noApiGreeting = '无写正文接口的开场白。';
+chat.splice(0, chat.length);
+push(noApiGreeting, false);
+await emit('chat_id_changed');
+await waitUntil(() => popupNodes.length > noApiBefore, '无写正文接口用例打开开局界面');
+const toastBase = toasts.length, savedSetChatMessages = globalThis.setChatMessages;
+delete globalThis.setChatMessages;
+try {
+  assert.equal(await closePopup(1), true, '缺少写正文接口时仍应照常提交');
+} finally {
+  globalThis.setChatMessages = savedSetChatMessages;
+}
+assert.equal(chat[0].mes, noApiGreeting, '没有写正文接口时第 0 楼正文保持原样');
+assert.ok(record(0), '没有写正文接口时仍应写入第 0 楼记录');
+assert.ok(!toasts.slice(toastBase).some(item => item.title?.includes('无法开局')), '缺少可选接口不得当作权限缺口');
+holdPopup = false;
+
+const trimmedSpec = {openingGreeting: '主开场白。', commands: [
+  {确认初始化: {角色组ID: '白棠'}},
+  {确认初始化: {角色组ID: '秦守'}},
+  {写场景: {在场: {白棠: true, 秦守: true}}},
+], optionalPresent: ['白棠'], requiredGroups: [], planOpenings: {}};
+const trimmedDraft = createOpeningDraft({protocol, catalog: router.catalog, decl: router.decl,
+  defaults: {开局时间: face.开局.开局时间}, openingSpec: trimmedSpec});
+assert.equal(trimmedDraft.snapshot().错误, null);
+assert.match(openingNode(trimmedDraft).text(), /主开场白。/);
+assert.equal(trimmedDraft.setGroup('白棠', {启用: false}).ok, true);
+assert.deepEqual(trimmedDraft.prepare().record.命令, [
+  {确认初始化: {角色组ID: '秦守'}},
+  {写场景: {在场: {秦守: true}}},
+], '可选在场角色关停后不执行初始化与在场');
+
+const planSpec = {...trimmedSpec, planOpenings: {码头少年: {开场白: '方案开场白预览。'}}};
+const planDraft = createOpeningDraft({protocol, catalog: router.catalog, decl: router.decl,
+  defaults: {开局时间: face.开局.开局时间, 方案: '码头少年'}, openingSpec: planSpec});
+assert.equal(planDraft.snapshot().开场白, '方案开场白预览。');
+assert.match(openingNode(planDraft).text(), /确认开局后将同步第 0 楼开场白/);
+
+const requiredDraft = createOpeningDraft({protocol, catalog: router.catalog, decl: router.decl,
+  defaults: {开局时间: face.开局.开局时间, 方案: '补考之年'},
+  openingSpec: {openingGreeting: '主开场白。', optionalPresent: [], requiredGroups: [],
+    planOpenings: {补考之年: {开场白: '补考开场白预览。', 必需角色组: ['周岚']}}}});
+const requiredText = openingNode(requiredDraft).text();
+assert.match(requiredText, /补考开场白预览。/);
+assert.match(requiredText, /必选/);
+assert.match(requiredText, /依赖：开局方案必需角色组/);
+assert.match(requiredText, /开局\.必需角色组|必需角色未启用/);
+assert.equal(requiredDraft.prepare().ok, false, '必选角色默认关闭时提交必须被拒绝');
+console.log('41 YG-OPEN-01：第 0 楼开场白同步并回滚成功；可选在场角色裁剪初始化与在场；方案预览与必选依赖在 UI 可见且阻断提交');

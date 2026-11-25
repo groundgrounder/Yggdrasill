@@ -61,7 +61,8 @@ const messages = () => getLastMessageId() < 0 ? [] : getChatMessages('0-' + getL
 
 // 运行状态集中在一个对象里：状态视图与开局流程只读取这里，不再各自持有副本。
 const session = {integrity: null, upgrade: null, compatNotified: false, permission: null, last: null,
-  openingPending: false, openingOpen: false, openingPopup: null, repairPopup: null, openingClosingForChat: false, keepingFloor: null};
+  openingPending: false, openingOpen: false, openingPopup: null, repairPopup: null, openingClosingForChat: false,
+  openingSelfEdit: null, keepingFloor: null};
 let epoch = 0, taskSequence = 0;
 const latestTask = new Map();
 
@@ -387,6 +388,9 @@ upgradeFlow = createUpgradeFlow({manifest, recordKey: KEY, recordFormat: RECORD_
   sanitizeText, messages, chatId, enqueue, audit: history.audit, refresh, session, status});
 
 const openingFlow = createOpeningFlow({protocol, catalog, decl, defaults: bundle.opening, commands: bundle.openingCommands,
+  openingSpec: {openingGreeting: bundle.openingGreeting, commands: bundle.openingCommands,
+    optionalPresent: bundle.openingOptionalPresent, requiredGroups: bundle.openingRequiredGroups,
+    planOpenings: bundle.planOpenings},
   messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh,
   audit: history.audit, session, status, nodeOf: draft => openingNode(draft), popup});
 
@@ -414,7 +418,7 @@ registerAdapterEvents({
   INJECT_ID, manifest, bundle, protocol, view, history, session, messages, invalidateTasks, enqueue,
   checkPermission, isGeneratingOrEmptyTail, stopHostGeneration, isKeeping: () => keeping, bookkeeping, debugging,
   refresh, replayFrom, rekeepFloor, openRepair, init, checkCompatRecord, openingFlow, status, recordOf,
-  emptyTailAssistant, callKeeper, parseJson, showSettings, stringifyYaml, seal,
+  emptyTailAssistant, callKeeper, parseJson, showSettings, stringifyYaml, seal, ownershipOf,
 });
 
 installStyle();

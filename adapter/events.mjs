@@ -31,6 +31,7 @@ export function registerAdapterEvents({
   showSettings,
   stringifyYaml,
   seal,
+  ownershipOf,
 }) {
   eventOn(tavern_events.GENERATION_AFTER_COMMANDS, async (type, options, dryRun) => {
     // 酒馆助手的 generateRaw 在记账中发 GENERATION_AFTER_COMMANDS，参数是空对象；它必须立即返回，避免等自己。
@@ -104,10 +105,22 @@ export function registerAdapterEvents({
   });
 
   eventOn(tavern_events.MESSAGE_EDITED, id => {
-    invalidateTasks();
+    const number = Number(id);
+    // 开场提交会先写第 0 楼正文，宿主随后发出的编辑事件属于本次写入而非玩家改动。
+    // 提交期间不使任务失效；提交完成后按正文指纹识别自己写入的那一版。
+    const selfEdit = () => {
+      if (number !== 0 || !session.openingSelfEdit) return false;
+      const message = messages()[0];
+      if (message && ownershipOf(message).正文指纹 === session.openingSelfEdit) return true;
+      session.openingSelfEdit = null;
+      return false;
+    };
+    if (selfEdit()) return;
+    if (!session.openingPending) invalidateTasks();
     return enqueue(async () => {
+      if (selfEdit()) return;
       if (session.integrity || session.upgrade) return status.renderFloors();
-      const number = Number(id), list = messages(), message = list[number];
+      const list = messages(), message = list[number];
       if (!message || message.role === 'system') return refresh();
       if (session.openingPending) return status.renderFloors();
       const prefix = history.audit(list, {end: number});
@@ -179,6 +192,7 @@ export function registerAdapterEvents({
       }
       session.integrity = null; session.upgrade = null; session.compatNotified = false; session.permission = null;
       session.last = null; session.keepingFloor = null; session.openingPending = false; session.openingOpen = false;
+      session.openingSelfEdit = null;
       await init();
     });
   });

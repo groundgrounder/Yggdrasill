@@ -9,8 +9,10 @@ import {checkWorldbook} from '../checker/index.mjs';
 import {parseYaml} from '../core/yaml.mjs';
 import {loadRouter} from '../core/router.mjs';
 import {seal} from '../core/protocol.mjs';
+import {compileWorldbook} from '../core/catalog.mjs';
 import {applyCommands} from '../core/commands.mjs';
 import {isMap} from '../core/utils.mjs';
+import {adaptOpeningCommands} from './opening.mjs';
 import {assertProgramMatches, collectProgram, collectWorldbook, createManifest, PROGRAM_TEMPLATES, RUNTIME_ROOT} from './manifest.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +30,22 @@ export class PackError extends Error {
 const nonEmptyText = (value, label) => {
   if (typeof value !== 'string' || !value.trim()) throw new PackError(`卡面字段“${label}”须为非空文本`);
 };
+const textList = (value, label) => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim()))
+    throw new PackError(`卡面字段“${label}”须为无空项的文本列表`);
+  if (new Set(value).size !== value.length) throw new PackError(`卡面字段“${label}”不得重复`);
+  if (value.includes('玩家')) throw new PackError(`卡面字段“${label}”不能包含“玩家”`);
+  return [...value];
+};
+const commandList = (value, label = '开场命令') => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(command => !isMap(command) || Object.keys(command).length !== 1))
+    throw new PackError(`${label}须为单键命令映射的列表`);
+  return value;
+};
+const overlap = (left, right) => left.find(id => right.includes(id)) ?? null;
+const PLAN_FIELDS = ['开场白', '开场命令', '可选在场', '必需角色组'];
 
 export async function packCard({
   projectDir,
@@ -49,15 +67,37 @@ export async function packCard({
   const face = parseYaml(faceRaw);
   if (!isMap(face)) throw new PackError('卡面须为 YAML 映射');
   const required = ['卡ID', '卡版本', '名称', '描述', '开场白'];
-  const optional = ['开局', '开场命令'];
+  const optional = ['开局', '开场命令', '可选在场', '必需角色组', '按方案'];
   for (const key of required) nonEmptyText(face[key], key);
   for (const key of Object.keys(face)) {
     if (![...required, ...optional].includes(key)) throw new PackError(`卡面含未授权字段：${key}`);
   }
   if (face.开场白.includes('<命令>') || face.开场白.includes('</命令>')) throw new PackError('开场白不得包含 <命令> 块');
   if (!isMap(face.开局)) throw new PackError('当前正常可玩的卡面须提供默认开局映射');
-  if (face.开场命令 !== undefined && (!Array.isArray(face.开场命令) || face.开场命令.some(command => !isMap(command) || Object.keys(command).length !== 1)))
-    throw new PackError('开场命令须为单键命令映射的列表');
+  const topCommands = commandList(face.开场命令);
+  const topOptionalPresent = textList(face.可选在场, '可选在场');
+  const topRequiredGroups = textList(face.必需角色组, '必需角色组');
+  const topConflict = overlap(topOptionalPresent, topRequiredGroups);
+  if (topConflict) throw new PackError(`角色组不能同时出现在“可选在场”与“必需角色组”：${topConflict}`);
+
+  const planSpecs = face.按方案 ?? null;
+  if (planSpecs !== null && !isMap(planSpecs)) throw new PackError('卡面字段“按方案”须为映射');
+  for (const [id, entry] of Object.entries(planSpecs ?? {})) {
+    if (!isMap(entry)) throw new PackError(`按方案“${id}”须为映射`);
+    for (const key of Object.keys(entry)) {
+      if (!PLAN_FIELDS.includes(key)) throw new PackError(`按方案“${id}”含未授权字段：${key}`);
+    }
+    if (Object.hasOwn(entry, '开场白')) {
+      nonEmptyText(entry.开场白, `按方案.${id}.开场白`);
+      if (entry.开场白.includes('<命令>') || entry.开场白.includes('</命令>'))
+        throw new PackError(`按方案“${id}”的开场白不得包含 <命令> 块`);
+    }
+    commandList(entry.开场命令, `按方案“${id}”开场命令`);
+    const optionalPresent = textList(entry.可选在场, `按方案.${id}.可选在场`);
+    const requiredGroups = textList(entry.必需角色组, `按方案.${id}.必需角色组`);
+    const conflict = overlap(optionalPresent, requiredGroups);
+    if (conflict) throw new PackError(`方案“${id}”的角色组不能同时出现在“可选在场”与“必需角色组”：${conflict}`);
+  }
 
   // 先由清单收集器拒绝符号链接、非法 UTF-8、宿主绝对路径与重叠路径，再进入内容检查。
   const worldbook = await collectWorldbook(projectDir);
@@ -84,22 +124,85 @@ export async function packCard({
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
   };
   const permissionIds = {脚本ID: idOf('script'), 正则ID: idOf('regex')};
+
+  const {protocol} = await loadRouter(path.join(projectDir, '世界书'), {fs, path});
+  const {catalog} = await compileWorldbook(path.join(projectDir, '世界书'), {fs, path});
+  const groupIds = new Set(catalog.groups.map(group => group.id));
+  const planIds = new Set(catalog.openingPlans.map(plan => plan.id));
+  const checkGroups = (value, label) => {
+    for (const id of value) if (!groupIds.has(id)) throw new PackError(`卡面字段“${label}”含未定义角色组：${id}`);
+  };
+  checkGroups(topOptionalPresent, '可选在场');
+  checkGroups(topRequiredGroups, '必需角色组');
+
+  // 按方案字段未写时继承顶层；冲突在解析后按方案再查一次，避免顶层与方案覆盖拼出同一角色组。
+  const planOpenings = Object.create(null);
+  for (const [id, entry] of Object.entries(planSpecs ?? {})) {
+    if (!planIds.has(id)) throw new PackError(`开局方案不存在：${id}`);
+    const resolved = {
+      开场白: Object.hasOwn(entry, '开场白') ? entry.开场白 : face.开场白,
+      开场命令: Object.hasOwn(entry, '开场命令') ? [...entry.开场命令] : [...topCommands],
+      可选在场: Object.hasOwn(entry, '可选在场') ? [...entry.可选在场] : [...topOptionalPresent],
+      必需角色组: Object.hasOwn(entry, '必需角色组') ? [...entry.必需角色组] : [...topRequiredGroups],
+    };
+    checkGroups(resolved.可选在场, `按方案.${id}.可选在场`);
+    checkGroups(resolved.必需角色组, `按方案.${id}.必需角色组`);
+    const conflict = overlap(resolved.可选在场, resolved.必需角色组);
+    if (conflict) throw new PackError(`方案“${id}”的角色组不能同时出现在“可选在场”与“必需角色组”：${conflict}`);
+    planOpenings[id] = resolved;
+  }
+
   const bundle = {
     root: `${RUNTIME_ROOT}/世界书`,
     files,
     templates,
     opening: face.开局,
-    openingCommands: face.开场命令 ?? [],
+    openingCommands: topCommands,
+    openingGreeting: face.开场白,
+    openingOptionalPresent: topOptionalPresent,
+    openingRequiredGroups: topRequiredGroups,
+    planOpenings,
     manifest,
     权限: permissionIds,
   };
 
-  // 构建时执行一次独立开场，提前拦下会失败或改变协议语义的命令。
-  const {protocol} = await loadRouter(path.join(projectDir, '世界书'), {fs, path});
-  const opening = applyCommands(protocol, seal(protocol, face.开局), bundle.openingCommands);
-  if (opening.失败.length) {
-    for (const item of opening.失败) stderr.write(`开场命令 ${item.序号} ${item.命令}：${item.错误码} ${item.说明}\n`);
-    throw new PackError(`开场命令执行存在 ${opening.失败.length} 处失败`, {alreadyPrinted: true});
+  // 构建时对顶层与每个声明方案各执行一次独立开场，提前拦下会失败或改变协议语义的命令。
+  // 干跑用封卷后的启用状态适配可选在场，关停的非必选角色不阻断打包。
+  const dryRun = (prefix, config, commands, optionalPresent) => {
+    let state;
+    try { state = seal(protocol, config); }
+    catch (error) {
+      throw new PackError(`${prefix}封卷失败：${[error?.code, error?.message].filter(Boolean).join(' ')}`.trim());
+    }
+    const enabledGroups = Object.fromEntries(Object.entries(state.开局?.角色组 ?? {})
+      .map(([id, run]) => [id, run?.启用 === true]));
+    const opening = applyCommands(protocol, state,
+      adaptOpeningCommands(commands, state.开局?.玩家, {enabledGroups, optionalPresent}));
+    if (opening.失败.length) {
+      for (const item of opening.失败) stderr.write(`${prefix}开场命令 ${item.序号} ${item.命令}：${item.错误码} ${item.说明}\n`);
+      throw new PackError(`${prefix}开场命令执行存在 ${opening.失败.length} 处失败`, {alreadyPrinted: true});
+    }
+  };
+  dryRun('', face.开局, topCommands, topOptionalPresent);
+  // 方案干跑采用与开局草稿相同的优先级：方案字段覆盖卡面初值，而不是反过来。
+  const planConfig = plan => {
+    const config = {...face.开局}, source = isMap(plan.内容) ? plan.内容 : {};
+    for (const key of ['开局时间', '角色组', '玩家', '历史选择'])
+      if (Object.hasOwn(source, key)) config[key] = source[key];
+    config.方案 = plan.id;
+    return config;
+  };
+  for (const plan of catalog.openingPlans) {
+    const entry = planOpenings[plan.id];
+    if (!entry) continue;
+    dryRun(`方案“${plan.id}”`, planConfig(plan), entry.开场命令, entry.可选在场);
+  }
+
+  // 方案开场白按世界书中的方案顺序导出并去重；与主开场白相同的方案不进入 alternate_greetings。
+  const alternateGreetings = [];
+  for (const plan of catalog.openingPlans) {
+    const entry = planOpenings[plan.id];
+    if (entry && entry.开场白 !== face.开场白 && !alternateGreetings.includes(entry.开场白)) alternateGreetings.push(entry.开场白);
   }
 
   const bundleFile = path.join(adapterDir, 'bundle.generated.json');
@@ -153,7 +256,7 @@ export async function packCard({
   const data = {
     name: face.名称, description: face.描述, personality: '', scenario: '', first_mes: face.开场白, mes_example: '',
     creator_notes: '世界树角色卡。需要酒馆助手并允许本卡脚本；关闭记账时还需允许并启用本卡局部正则。', system_prompt: '', post_history_instructions: '',
-    alternate_greetings: [], tags: ['世界树'], creator: '', character_version: face.卡版本,
+    alternate_greetings: alternateGreetings, tags: ['世界树'], creator: '', character_version: face.卡版本,
     extensions: {talkativeness: '0.5', fav: false, world: '', depth_prompt: {prompt: '', depth: 4, role: 'system'},
       regex_scripts: [hideCommands], tavern_helper: {scripts: [scriptEntry], variables: {}}},
   };

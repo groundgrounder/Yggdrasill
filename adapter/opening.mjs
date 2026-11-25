@@ -14,6 +14,21 @@ export function openingError(error) {
   return {code: error?.code ?? '开局.失败', 说明: String(error?.message ?? error ?? '未知错误')};
 }
 
+// 方案条目只覆盖写出的字段；其余回退顶层打包值，未配置时为 []。返回结构可直接用于封卷与命令执行。
+export function resolvePlanOpening(planID, openingSpec = {}) {
+  const plan = typeof planID === 'string' && isMap(openingSpec?.planOpenings) && Object.hasOwn(openingSpec.planOpenings, planID)
+    ? openingSpec.planOpenings[planID] : null;
+  const list = value => Array.isArray(value) ? [...value] : [];
+  const pick = (key, fallback) => has(plan, key) ? clone(plan[key]) : fallback;
+  return {
+    方案: planID ?? null,
+    开场白: pick('开场白', typeof openingSpec?.openingGreeting === 'string' ? openingSpec.openingGreeting : ''),
+    开场命令: pick('开场命令', list(openingSpec?.commands)),
+    可选在场: pick('可选在场', list(openingSpec?.optionalPresent)),
+    必需角色组: pick('必需角色组', list(openingSpec?.requiredGroups)),
+  };
+}
+
 // 方案提供同名字段时优先使用方案；玩家明确改过的字段覆盖方案；其余由卡面初值补充。
 export function composeOpeningInput({defaults = {}, plan = null, overrides = {}} = {}) {
   const input = {}, source = plan?.内容 ?? {};
@@ -48,25 +63,42 @@ export function previewOpening(protocol, input) {
 }
 
 // 当前地点写入后，扮演角色组自动在场并随当前地点移动，协议不允许用写场景改写它。
-// 开场命令按最终封卷的玩家调整：只从写场景的“在场”与“所在”里删掉扮演角色组，其余字段原样保留；
-// 删空的映射整键省略，写场景因此变空则整条省略。其他命令与畸形命令不在此改写，仍交原校验。
-export function adaptOpeningCommands(commands, player) {
+// 可选在场里被关停的角色同样静默略去：写场景的在场/所在删键，确认初始化整条省略；其余命令与字段原样保留。
+// 扮演角色组只从写场景裁剪，确认初始化保留（否则玩家的角色会失去开局能力与装备）。
+// 不在可选在场里的角色即使被关停也不裁剪，仍由协议触发明确失败。畸形命令不在此改写，仍交原校验。
+const enabledGroup = (enabledGroups, id) => enabledGroups === undefined ? true
+  : enabledGroups instanceof Set ? enabledGroups.has(id) : isMap(enabledGroups) && enabledGroups[id] === true;
+const idSet = value => value instanceof Set ? value : new Set(Array.isArray(value) ? value : []);
+
+export function adaptOpeningCommands(commands, player, options = {}) {
   if (!Array.isArray(commands)) return commands;
   const roleplay = player?.模式 === '扮演' && typeof player.扮演角色组 === 'string' && player.扮演角色组
     ? player.扮演角色组 : null;
+  const disabled = new Set();
+  if (options?.enabledGroups !== undefined)
+    for (const id of idSet(options?.optionalPresent)) if (!enabledGroup(options.enabledGroups, id)) disabled.add(id);
+  const sceneSkip = new Set(disabled);
+  if (roleplay) sceneSkip.add(roleplay);
   const result = [];
   for (const command of commands) {
-    if (!roleplay || !isMap(command) || Object.keys(command).length !== 1
-      || !has(command, '写场景') || !isMap(command.写场景)) {
+    if (!isMap(command) || Object.keys(command).length !== 1) {
+      result.push(clone(command));
+      continue;
+    }
+    if (has(command, '确认初始化') && isMap(command.确认初始化) && disabled.has(command.确认初始化.角色组ID)) continue;
+    if (!has(command, '写场景') || !isMap(command.写场景)) {
       result.push(clone(command));
       continue;
     }
     const scene = clone(command.写场景);
     let removed = false;
     for (const field of ['在场', '所在']) {
-      if (!isMap(scene[field]) || !has(scene[field], roleplay)) continue;
-      delete scene[field][roleplay];
-      removed = true;
+      if (!isMap(scene[field])) continue;
+      for (const id of sceneSkip) {
+        if (!has(scene[field], id)) continue;
+        delete scene[field][id];
+        removed = true;
+      }
       if (!Object.keys(scene[field]).length) delete scene[field];
     }
     if (!removed) result.push(clone(command));
@@ -75,20 +107,65 @@ export function adaptOpeningCommands(commands, player) {
   return result;
 }
 
+// 汇总当前方案下必须启用的角色组与原因：方案必需角色组、非可选的开场命令涉及角色、生效历史事件的核心参与者、玩家扮演组。
+// 返回 {角色组ID: [原因…]}；原因去重，顺序稳定。
+export function requiredOpeningGroups({catalog = {}, planID = null, openingSpec = {}, choiceOverrides = {}, player = null, state = null} = {}) {
+  const active = resolvePlanOpening(planID, openingSpec);
+  const optional = new Set(active.可选在场);
+  const groups = new Set((catalog.groups ?? []).map(group => group.id));
+  const events = new Map((catalog.events ?? []).map(event => [event.id, event]));
+  const plans = new Map((catalog.openingPlans ?? []).map(plan => [plan.id, plan]));
+  const required = Object.create(null);
+  const add = (id, reason) => {
+    if (typeof id !== 'string' || !id || id === '玩家' || !groups.has(id)) return;
+    const reasons = required[id] ?? (required[id] = []);
+    if (!reasons.includes(reason)) reasons.push(reason);
+  };
+  for (const id of active.必需角色组) add(id, '开局方案必需角色组');
+  const commandAdd = id => { if (!optional.has(id)) add(id, '开场命令必需在场或初始化'); };
+  for (const command of active.开场命令) {
+    if (!isMap(command) || Object.keys(command).length !== 1) continue;
+    const scene = command.写场景;
+    const params = command.确认事件 ?? command.确认动态事件;
+    if (has(command, '写场景') && isMap(scene)) {
+      for (const field of ['在场', '所在']) if (isMap(scene[field]))
+        for (const id of Object.keys(scene[field])) commandAdd(id);
+    } else if (has(command, '确认初始化') && isMap(command.确认初始化)) {
+      commandAdd(command.确认初始化.角色组ID);
+    } else if (isMap(params)) {
+      for (const id of Array.isArray(params.实际参与者) ? params.实际参与者 : []) commandAdd(id);
+      const event = has(command, '确认事件') ? events.get(params.事件ID) : null;
+      for (const id of event?.内容?.核心参与者 ?? []) commandAdd(id);
+    }
+  }
+  const plan = planID ? plans.get(planID) : null;
+  const base = isMap(state?.开局?.历史选择) ? state.开局.历史选择
+    : isMap(plan?.内容?.历史选择) ? plan.内容.历史选择 : {};
+  const history = {...base, ...(isMap(choiceOverrides) ? choiceOverrides : {})};
+  for (const [eventID, branch] of Object.entries(history)) {
+    if (!branch || branch === '未发生') continue;
+    const event = events.get(eventID), name = event?.内容?.事件标题 ?? eventID;
+    for (const id of event?.内容?.核心参与者 ?? []) add(id, `前置历史事件「${name}」核心参与者`);
+  }
+  if (player?.模式 === '扮演' && typeof player.扮演角色组 === 'string') add(player.扮演角色组, '玩家扮演角色组');
+  return required;
+}
+
 // 最终封卷与全部开场命令成功后才生成记录草稿；任一条失败都返回失败，不暴露部分本局。
-export function prepareOpeningRecord(protocol, input, commands) {
+export function prepareOpeningRecord(protocol, input, commands, options = {}) {
   let state;
   try { state = protocol.seal(input); }
   catch (error) { return {ok: false, 阶段: '封卷', error: openingError(error)}; }
 
   // 记录里保存实际执行的命令，重放才能得到同一状态。
-  const adjusted = adaptOpeningCommands(commands, state.开局?.玩家);
+  const adjusted = adaptOpeningCommands(commands, state.开局?.玩家, options);
   let executed;
   try { executed = applyCommands(protocol, state, adjusted); }
   catch (error) { return {ok: false, 阶段: '开场命令', error: openingError(error)}; }
   if (executed.失败?.length) {
+    const first = executed.失败[0];
     return {ok: false, 阶段: '开场命令', failures: clone(executed.失败),
-      error: {code: '开场.命令', 说明: `有 ${executed.失败.length} 条开场命令未执行`}};
+      error: {code: '开场.命令', 说明: `有 ${executed.失败.length} 条开场命令未执行：${first.错误码} ${first.说明}`}};
   }
   return {ok: true, record: {
     本局: executed.state,
@@ -99,7 +176,15 @@ export function prepareOpeningRecord(protocol, input, commands) {
   }};
 }
 
-export function createOpeningDraft({protocol, catalog, decl, defaults = {}, commands = []}) {
+export function createOpeningDraft({protocol, catalog, decl, defaults = {}, commands = [], openingSpec = null}) {
+  // 兼容旧调用：只传 commands 时按顶层单方案处理；打包值存在时以它为准。
+  const spec = {
+    openingGreeting: typeof openingSpec?.openingGreeting === 'string' ? openingSpec.openingGreeting : '',
+    commands: Array.isArray(openingSpec?.commands) ? openingSpec.commands : commands,
+    optionalPresent: Array.isArray(openingSpec?.optionalPresent) ? openingSpec.optionalPresent : [],
+    requiredGroups: Array.isArray(openingSpec?.requiredGroups) ? openingSpec.requiredGroups : [],
+    planOpenings: isMap(openingSpec?.planOpenings) ? openingSpec.planOpenings : {},
+  };
   const calendar = createCalendar(decl.calendar);
   const plans = catalog.openingPlans ?? [];
   const planMap = new Map(plans.map(plan => [plan.id, plan]));
@@ -133,6 +218,11 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
   }
   const inputNow = () => composeOpeningInput({defaults, plan: planId ? planMap.get(planId) : null,
     overrides: {...overrides, 玩家: playerNow()}});
+  const activeNow = () => resolvePlanOpening(planId, spec);
+  const enabledNow = state => Object.fromEntries(Object.entries(state?.开局?.角色组 ?? {})
+    .map(([id, run]) => [id, run?.启用 === true]));
+  const requiredNow = state => requiredOpeningGroups({protocol, catalog, planID: planId, openingSpec: spec,
+    choiceOverrides: overrides.历史选择, player: state?.开局?.玩家 ?? playerNow(), state});
 
   function groupNow(id) {
     const group = catalog.groups.find(item => item.id === id);
@@ -168,12 +258,32 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     }));
   }
 
-  function previewNow() {
+  // 预演与提交共用同一套管道：封卷 → 按方案适配开场命令并试跑 → 查处必需角色未启用。
+  // 任一步失败都保留上一份有效预览；previewNow 与 prepare 的分歧只剩档案错误。
+  function evaluate() {
     const input = inputNow();
-    const result = previewOpening(protocol, input);
-    if (result.ok) { preview = result; failure = null; }
-    else failure = result.error;
-    return {...result, error: failure};
+    const sealed = previewOpening(protocol, input);
+    if (!sealed.ok) return {...sealed, error: sealed.error};
+    const active = activeNow(), enabledGroups = enabledNow(sealed.state);
+    const prepared = prepareOpeningRecord(protocol, input, active.开场命令,
+      {optionalPresent: active.可选在场, enabledGroups});
+    if (!prepared.ok) {
+      return {ok: false, input: sealed.input, 阶段: prepared.阶段, failures: prepared.failures, error: prepared.error};
+    }
+    const required = requiredNow(sealed.state);
+    const missing = Object.entries(required).filter(([id]) => enabledGroups[id] !== true);
+    if (missing.length) {
+      return {ok: false, 阶段: '必需角色组', input: sealed.input, error: {code: '开局.必需角色组',
+        说明: '必需角色未启用：' + missing.map(([id, reasons]) => `${id}（${reasons.join('；')}）`).join('、')}};
+    }
+    return {ok: true, input: sealed.input, state: sealed.state, record: prepared.record, greeting: active.开场白, required};
+  }
+
+  function previewNow() {
+    const result = evaluate();
+    if (result.ok) { preview = {ok: true, input: result.input, state: result.state}; failure = null; }
+    else failure = clone(result.error);
+    return {...result, error: failure ? clone(failure) : null};
   }
 
   // 档案错误只属于自建玩家；扮演模式不提交这份档案，预览与提交不受旧错误阻断。
@@ -283,42 +393,76 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     previewNow,
     setPlan, setTime, setGroup, setPlayerMode, setPlayerGroup, setProfileText, setHistory, fail,
     input: inputNow,
-    prepare: () => playerMode === '自建' && profileFailure
-      ? {ok: false, 阶段: '封卷', error: clone(profileFailure)}
-      : prepareOpeningRecord(protocol, inputNow(), commands),
-    snapshot: () => ({
-      计划: plans.map(plan => ({id: plan.id, 概述: plan.内容?.概述 ?? '', 内容: clone(plan.内容 ?? {})})),
-      方案: planId,
-      时间: has(overrides, '开局时间') ? overrides.开局时间
-        : stateNow()?.开局?.开局时间 ?? planContent().开局时间 ?? defaults.开局时间 ?? '',
-      时间格式: calendar.pattern,
-      方案内容: clone(planContent()),
-      自由组合: freeCombination,
-      角色组: catalog.groups.map(group => groupNow(group.id)).filter(Boolean),
-      玩家: playerNow(),
-      档案文本: profileText,
-      历史: historyControls(),
-      预览: stateNow() ? clone(stateNow()) : null,
-      上次预览: preview ? clone(preview.state) : null,
-      错误: failure ? clone(failure) : null,
-    }),
+    prepare: () => {
+      if (playerMode === '自建' && profileFailure) return {ok: false, 阶段: '封卷', error: clone(profileFailure)};
+      const result = evaluate();
+      return result.ok
+        ? {ok: true, record: result.record, greeting: result.greeting}
+        : {ok: false, 阶段: result.阶段 ?? '开场命令', failures: result.failures, error: clone(result.error)};
+    },
+    snapshot: () => {
+      const active = activeNow(), required = requiredNow(stateNow());
+      return {
+        计划: plans.map(plan => ({id: plan.id, 概述: plan.内容?.概述 ?? '', 内容: clone(plan.内容 ?? {})})),
+        方案: planId,
+        开场白: active.开场白,
+        主开场白: spec.openingGreeting,
+        可选在场: [...active.可选在场],
+        必需角色组: [...active.必需角色组],
+        时间: has(overrides, '开局时间') ? overrides.开局时间
+          : stateNow()?.开局?.开局时间 ?? planContent().开局时间 ?? defaults.开局时间 ?? '',
+        时间格式: calendar.pattern,
+        方案内容: clone(planContent()),
+        自由组合: freeCombination,
+        角色组: catalog.groups.map(group => {
+          const row = groupNow(group.id);
+          if (!row) return null;
+          const reasons = required[row.id] ?? [];
+          return {...row, 必选: reasons.length > 0, 依赖原因: [...reasons]};
+        }).filter(Boolean),
+        玩家: playerNow(),
+        档案文本: profileText,
+        历史: historyControls(),
+        预览: stateNow() ? clone(stateNow()) : null,
+        上次预览: preview ? clone(preview.state) : null,
+        错误: failure ? clone(failure) : null,
+      };
+    },
   };
 }
 
 // ---------- 开局流程 ----------
+// 宿主写正文：注入回调优先；否则按 setChatMessages → setChatMessage 降级。都没有时返回 false，
+// 极简只读宿主照常写入记录，不把缺少可选 API 当作权限缺口。
+async function writeOpeningGreeting(greeting, id = 0) {
+  const writeMany = globalThis.setChatMessages;
+  if (typeof writeMany === 'function') {
+    const patch = [{message_id: id, message: greeting}];
+    try { await writeMany(patch, {refresh: 'affected'}); return true; }
+    catch (error) {
+      try { await writeMany(patch); return true; }
+      catch { throw error; }
+    }
+  }
+  const writeOne = globalThis.setChatMessage;
+  if (typeof writeOne === 'function') { await writeOne(id, greeting); return true; }
+  return false;
+}
+
 // 弹窗、提交与失败提示：宿主函数（聊天读写、记录写入、队列与路由刷新）由调用方注入，草稿与预演仍用本文件上方的纯函数。
-export function createOpeningFlow({protocol, catalog, decl, defaults, commands, messages, chatId, ownershipOf, recordOf,
-  validateRecord, manifest, store, taskFor, enqueue, refresh, audit, session, status, nodeOf, popup}) {
+export function createOpeningFlow({protocol, catalog, decl, defaults, commands, openingSpec = null, updateOpeningMessage = null,
+  messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh, audit, session, status, nodeOf, popup}) {
   function openingFailure(draft, message, error = null) {
-    const failure = error ? {code: error.code ?? '开局.失败', 说明: error.说明 ?? error.message ?? String(error)}
-      : {code: '开局.失败', 说明: message};
+    const detail = error ? (error.说明 ?? error.message ?? String(error)) : '';
+    const failure = {code: error?.code ?? '开局.失败',
+      说明: message && detail ? `${message}（${detail}）` : (message || detail)};
     draft.fail(failure);
-    status.pendingOpening(message);
+    status.pendingOpening(failure.说明);
     toastr.error(failure.说明, '世界树：无法开局');
     return false;
   }
 
-  // 第 0 楼提交是原子的：最后一次检查在完整封卷与命令执行之后、变量写入之前；写入失败时回滚原变量。
+  // 第 0 楼提交是原子的：先封卷与执行命令，再同步正文，最后写变量；任一步失败都回滚已改的正文与变量。
   async function commit(draft, origin) {
     return enqueue(async () => {
       if (chatId() !== origin.聊天ID) return openingFailure(draft, '聊天已切换，本次开局草稿已作废');
@@ -338,16 +482,28 @@ export function createOpeningFlow({protocol, catalog, decl, defaults, commands, 
       }
       if (list.length !== 1) return openingFailure(draft, '新聊天已有其它楼层，不能把开局写进第 0 楼');
 
-      const task = taskFor(0, '开场命令');
       const prepared = draft.prepare();
       if (!prepared.ok) return openingFailure(draft, prepared.error?.说明 ?? '开局准备失败', prepared.error);
 
-      // 最后一次检查放在完整封卷与命令执行之后、变量写入之前，避免并发提交覆盖。
+      const greeting = typeof prepared.greeting === 'string' ? prepared.greeting : '';
+      const originalGreeting = first.message ?? '';
+      const updateGreeting = typeof updateOpeningMessage === 'function' ? updateOpeningMessage : writeOpeningGreeting;
+      let updated = false;
+      if (greeting && greeting !== originalGreeting) {
+        try { updated = await updateGreeting(greeting, 0) !== false; }
+        catch (error) { return openingFailure(draft, '同步第 0 楼开场白失败：' + (error?.message ?? error), error); }
+        if (updated) session.openingSelfEdit = ownershipOf({message: greeting}).正文指纹;
+      }
+
+      // 最后一次检查放在正文同步之后、变量写入之前；正文指纹按同步后的文本或原文本核对。
       list = messages(); first = list[0];
+      const expected = updated ? session.openingSelfEdit : origin.正文指纹;
       if (chatId() !== origin.聊天ID || !first || first.role !== 'assistant'
-        || ownershipOf(first).正文指纹 !== origin.正文指纹) return openingFailure(draft, '聊天或开场白已变化，本次开局草稿已作废');
+        || ownershipOf(first).正文指纹 !== expected) return openingFailure(draft, '聊天或开场白已变化，本次开局草稿已作废');
       if (recordOf(first) !== undefined) return openingFailure(draft, '第 0 楼已经出现记录，本次开局草稿已作废');
 
+      // 任务在第 0 楼正文定稿后生成，正文指纹与写入内容一致；后再写入记录。
+      const task = taskFor(0, '开场命令');
       const original = structuredClone(getVariables({type: 'message', message_id: 0}));
       try {
         const written = await store(0, prepared.record, task);
@@ -355,6 +511,14 @@ export function createOpeningFlow({protocol, catalog, decl, defaults, commands, 
         const checked = validateRecord(recordOf(messages()[0]), messages()[0], manifest);
         if (!checked.ok) throw new Error('开场记录写入后校验失败：' + checked.说明);
       } catch (error) {
+        if (updated) {
+          try {
+            await updateGreeting(originalGreeting, 0);
+            session.openingSelfEdit = origin.正文指纹;
+          } catch (rollbackError) {
+            return openingFailure(draft, '开局保存失败，且第 0 楼开场白回滚失败：' + rollbackError.message, error);
+          }
+        }
         try { await replaceVariables(original, {type: 'message', message_id: 0}); }
         catch (rollbackError) {
           return openingFailure(draft, '开局保存失败，且原变量回滚失败：' + rollbackError.message, error);
@@ -394,7 +558,7 @@ export function createOpeningFlow({protocol, catalog, decl, defaults, commands, 
     session.integrity = null;
     if (session.openingOpen) { status.renderFloors(); return false; }
     session.openingOpen = true;
-    const draft = createOpeningDraft({protocol, catalog, decl, defaults, commands});
+    const draft = createOpeningDraft({protocol, catalog, decl, defaults, commands, openingSpec});
     const origin = {聊天ID: chatId(), 正文指纹: ownershipOf(first).正文指纹};
     try {
       await modal(nodeOf(draft), {

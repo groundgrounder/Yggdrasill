@@ -17,6 +17,7 @@ import {
 } from '../adapter/records.mjs';
 import {diffWorldbookState} from '../adapter/upgrade.mjs';
 import {repairNode} from '../adapter/ui.mjs';
+import {createOpeningDraft, adaptOpeningCommands, requiredOpeningGroups, resolvePlanOpening} from '../adapter/opening.mjs';
 
 const ids = {脚本ID: '11111111-1111-4111-8111-111111111111', 正则ID: '22222222-2222-4222-8222-222222222222'};
 const script = (extra = {}) => ({id: ids.脚本ID, enabled: true, ...extra});
@@ -906,4 +907,101 @@ test('适配-REL-01-A2：repairNode 非调试模式隐藏原始命令与敏感�
   const nonDebugJson = repairNode({id: 4, line: {摘要: '无变化', 详情: []}, record: jsonErrorRecord, debug: false}).node.text();
   assert.match(nonDebugJson, /记账：找不到 JSON 对象/);
   assert.doesNotMatch(nonDebugJson, /记账\/记账\.JSON|\[\]/);
+});
+
+test('YG-OPEN-01-A2：预览与准备共用试跑管道，可选在场裁剪、非可选角色不裁剪', async () => {
+  const {protocol, catalog, decl} = await loadProtocol();
+  const commands = [
+    {确认初始化: {角色组ID: '白棠'}},
+    {确认初始化: {角色组ID: '秦守'}},
+    {写场景: {在场: {白棠: true, 秦守: true}}},
+    {写场景: {所在: {周岚: '码头区'}}},
+    {写场景: {当前时间: '潮历071年04月02日', 在场: {白棠: true}}},
+  ];
+  const openingSpec = {openingGreeting: '主开场白。', commands, optionalPresent: ['白棠', '周岚'],
+    requiredGroups: [], planOpenings: {}};
+  const draft = createOpeningDraft({protocol, catalog, decl, defaults: {开局时间: '潮历071年04月01日'}, openingSpec});
+  assert.equal(draft.snapshot().开场白, '主开场白。');
+  assert.equal(draft.snapshot().错误, null, '关闭周岚属于可选在场，预演应通过');
+  assert.equal(draft.setGroup('白棠', {启用: false}).ok, true);
+  const prepared = draft.prepare();
+  assert.equal(prepared.ok, true);
+  assert.deepEqual(prepared.record.命令, [
+    {确认初始化: {角色组ID: '秦守'}},
+    {写场景: {在场: {秦守: true}}},
+    {写场景: {当前时间: '潮历071年04月02日'}},
+  ], '可选角色从初始化、在场、所在中静默裁掉，其他字段保留');
+  assert.equal(prepared.record.本局.角色.白棠, undefined, '关停的可选角色不写入初始化或在场');
+  assert.equal(draft.previewNow().ok, true, 'previewNow 与 prepare 对同一配置一致通过');
+
+  const rejected = draft.setGroup('秦守', {启用: false});
+  assert.equal(rejected.ok, false, '关闭非可选角色必须立即失败');
+  assert.equal(draft.snapshot().错误.code, '开场.命令');
+  assert.match(draft.snapshot().错误.说明, /秦守|在场/u);
+  assert.equal(draft.prepare().ok, false, 'prepare 与 previewNow 一致拒绝');
+
+  // 三参适配保留扮演角色组的确认初始化，只从写场景裁剪；两参旧签名仍保持原行为。
+  const roleplayCommands = [
+    {确认初始化: {角色组ID: '灯塔学徒'}},
+    {写场景: {在场: {灯塔学徒: true, 秦守: true}}},
+  ];
+  const roleplay = {模式: '扮演', 扮演角色组: '灯塔学徒'};
+  const roleplayAdapted = [
+    {确认初始化: {角色组ID: '灯塔学徒'}},
+    {写场景: {在场: {秦守: true}}},
+  ];
+  assert.deepEqual(adaptOpeningCommands(roleplayCommands, roleplay), roleplayAdapted, '两参旧签名保持原行为');
+  assert.deepEqual(adaptOpeningCommands(roleplayCommands, roleplay, {optionalPresent: [], enabledGroups: {}}),
+    roleplayAdapted, '三参未关停可选角色时结果与旧签名一致');
+});
+
+test('YG-OPEN-01-A3：必需角色组、命令与历史依赖统一标记并拦截', async () => {
+  const {protocol, catalog, decl} = await loadProtocol();
+  const openingSpec = {openingGreeting: '主开场白。', commands: [], optionalPresent: [], requiredGroups: [],
+    planOpenings: {补考之年: {开场白: '补考开场白。', 开场命令: [], 可选在场: [], 必需角色组: ['周岚']}}};
+  const draft = createOpeningDraft({protocol, catalog, decl,
+    defaults: {开局时间: '潮历071年04月01日', 方案: '补考之年'}, openingSpec});
+  let snapshot = draft.snapshot();
+  assert.equal(snapshot.方案, '补考之年');
+  assert.equal(snapshot.开场白, '补考开场白。');
+  assert.equal(snapshot.错误.code, '开局.必需角色组', '方案必需角色组默认关闭时预演即拦截');
+  const zhou = snapshot.角色组.find(group => group.id === '周岚');
+  assert.equal(zhou.必选, true);
+  assert.ok(zhou.依赖原因.includes('开局方案必需角色组'));
+  const qin = snapshot.角色组.find(group => group.id === '秦守');
+  assert.equal(qin.必选, true, '方案预设历史的生效分支核心参与者应标记');
+  assert.ok(qin.依赖原因.some(reason => reason.startsWith('前置历史事件')));
+
+  assert.equal(draft.setGroup('周岚', {启用: true}).ok, true);
+  snapshot = draft.snapshot();
+  assert.equal(snapshot.错误, null);
+  assert.equal(snapshot.角色组.find(group => group.id === '周岚').必选, true);
+  assert.equal(draft.setGroup('周岚', {启用: false}).ok, false);
+  assert.equal(draft.previewNow().error.code, '开局.必需角色组');
+  assert.equal(draft.prepare().ok, false);
+
+  // 纯推导覆盖命令涉及角色、预设事件核心参与者、可选排除与玩家扮演组。
+  const synthetic = {
+    groups: ['甲', '乙', '丙', '丁', '戊'].map(id => ({id})),
+    events: [{id: '旧事', 内容: {事件标题: '旧事标题', 核心参与者: ['丙', '戊']}}],
+    openingPlans: [{id: 'P', 内容: {历史选择: {旧事: '发生'}}}],
+  };
+  const required = requiredOpeningGroups({catalog: synthetic, planID: 'P', openingSpec: {planOpenings: {P: {
+    必需角色组: ['甲'], 可选在场: ['乙'], 开场命令: [
+      {写场景: {在场: {乙: true, 丙: true}, 所在: {甲: '甲地'}}},
+      {确认初始化: {角色组ID: '丁'}},
+      {确认事件: {事件ID: '旧事', 分支ID: '发生'}},
+    ],
+  }}}, choiceOverrides: {}, player: {模式: '扮演', 扮演角色组: '戊'}});
+  assert.deepEqual(required.甲, ['开局方案必需角色组', '开场命令必需在场或初始化']);
+  assert.equal(required.乙, undefined, '可选在场角色不标必选');
+  assert.deepEqual(required.丙, ['开场命令必需在场或初始化', '前置历史事件「旧事标题」核心参与者']);
+  assert.deepEqual(required.丁, ['开场命令必需在场或初始化']);
+  assert.deepEqual(required.戊, ['开场命令必需在场或初始化', '前置历史事件「旧事标题」核心参与者', '玩家扮演角色组']);
+
+  assert.deepEqual(resolvePlanOpening('P', {openingGreeting: '主', commands: [{写场景: {}}],
+    optionalPresent: ['乙'], requiredGroups: ['甲'], planOpenings: {P: {开场白: '方案'}}}),
+  {方案: 'P', 开场白: '方案', 开场命令: [{写场景: {}}], 可选在场: ['乙'], 必需角色组: ['甲']});
+  assert.deepEqual(resolvePlanOpening(null, {openingGreeting: '主'}),
+    {方案: null, 开场白: '主', 开场命令: [], 可选在场: [], 必需角色组: []});
 });

@@ -53,6 +53,10 @@ const CSS = `
 .ygg-opening .ygg-opening-error { margin: 8px 0; padding: 6px 9px; border-radius: 5px; border-left: 4px solid #b54848; background: color-mix(in srgb, #b54848 16%, transparent); white-space: pre-wrap; }
 .ygg-opening .ygg-opening-preview { margin: 8px 0; padding: 7px 10px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; background: var(--black30a); }
 .ygg-opening .ygg-group-row { display: grid; grid-template-columns: minmax(10em, 1fr) minmax(9em, 1fr) auto; gap: 8px; align-items: center; margin: 5px 0; }
+.ygg-opening .ygg-group-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.ygg-opening .ygg-required { border-color: #b54848; color: #d98080; }
+.ygg-opening .ygg-required-reason { grid-column: 1 / -1; font-size: 0.85em; color: #d98080; margin: -2px 0 4px; }
+.ygg-opening .ygg-opening-greeting { white-space: pre-wrap; margin: 4px 0; }
 .ygg-opening .ygg-opening-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .ygg-opening .ygg-opening-status .menu_button { width: auto; margin: 0; }
 `;
@@ -109,6 +113,13 @@ export function openingNode(draft) {
       field('开局方案', plans, chosenPlan?.概述 || '不选方案时使用卡面初值与协议默认值。'),
       field('开局时间', time, `卡纪年格式：${snapshot.时间格式}`)));
 
+    const greeting = snapshot.开场白 ?? '';
+    root.append(section('开场白预览',
+      $('<div>').addClass('ygg-line ygg-opening-greeting').text(greeting || '（当前方案没有开场白）'),
+      ...(greeting && greeting !== (snapshot.主开场白 ?? '')
+        ? [hint('确认开局后将同步第 0 楼开场白；写入失败会恢复原正文。')]
+        : [hint('确认开局后使用这段正文作为第 0 楼开场白。')])));
+
     const groups = snapshot.角色组.map(group => {
       const version = select(group.版本.map(id => {
         const declared = group.版本内容.find(item => item.版本ID === id) ?? {};
@@ -117,9 +128,14 @@ export function openingNode(draft) {
         .on('change', event => { draft.setGroup(group.id, {版本ID: event.target.value}); render(); });
       const enabled = $('<input>').attr('type', 'checkbox').prop('checked', group.启用 === true)
         .on('change', event => { draft.setGroup(group.id, {启用: event.target.checked}); render(); });
+      const tags = $('<span>').addClass('ygg-group-tags').append(
+        $('<span>').addClass('ygg-tag').text(group.启用 ? '启用' : '停用'),
+        ...(group.必选 ? [$('<span>').addClass('ygg-tag ygg-required').text('必选')] : []));
       return $('<div>').addClass('ygg-group-row').append(
         $('<label>').addClass('ygg-check').append(enabled, $('<span>').text(`${group.显示名}${group.分类 ? `（${group.分类}）` : ''}`)),
-        version, $('<span>').addClass('ygg-tag').text(group.启用 ? '启用' : '停用'));
+        version, tags,
+        ...(group.必选 && group.依赖原因?.length
+          ? [$('<div>').addClass('ygg-required-reason').text('依赖：' + group.依赖原因.join('；'))] : []));
     });
     root.append(section('角色组', ...(groups.length ? groups : [hint('这张卡没有声明角色组。')])));
 
