@@ -7,7 +7,7 @@ import {fromText, parseBlock, parseCommands, stripCommands} from '../adapter/com
 import {DEFAULTS, HOST_FUNCTIONS, SETTINGS_KEY, hostMissing, keeperSettings, permissionFailure} from '../adapter/settings.mjs';
 import {
   buildKeepRecord, canIncrementalRepair, createBookkeeper, formatRepairHint,
-  isBetterOutcome, preservesWritten, repairRecord, runKeeperLoop,
+  isBetterOutcome, lostEffects, preservesWritten, repairRecord, runKeeperLoop,
 } from '../adapter/bookkeeper.mjs';
 import {applyCommands} from '../core/commands.mjs';
 import {createCalendar} from '../core/calendar.mjs';
@@ -349,6 +349,140 @@ test('适配-10-A1：新情况治本校验、防倒退比较与自动修补内�
     assert.ok(Array.isArray(rec.命令) && rec.命令.length === 2, `${label} 不得退化为 null 或丢命令`);
     assert.deepEqual(rec.已写入, ['好发现'], `${label} 应保留原有已写入`);
   }
+});
+
+test('适配-FIX-01-A1/A2：已排除/异分支事件拒绝与空/丢失重试防倒退（纯场景、混合、已写入）', async () => {
+  const {protocol, catalog, decl} = await loadProtocol();
+  const keeper = createBookkeeper({protocol, catalog, decl});
+  const base = S(protocol, '071-04-01');
+  const config = {方式: '同一模型', 应答格式: '提示词'};
+  const full = (patch = {}) => ({
+    时间: {方式: '不变', 日期: '', 事件ID: ''},
+    地点: {地标: '', 场景: ''},
+    在场: [],
+    发生的事件: [],
+    新情况: [],
+    ...patch,
+  });
+  const goodNew = {事件ID: '好发现', 摘要: '好', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起风'}]};
+  const badNew = {事件ID: '坏路径', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]};
+  const fixedNew = {事件ID: '坏路径', 摘要: '修正后记入知识', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '秦守在栈桥'}]};
+  const location = {地标: '码头区', 场景: '栈桥'};
+
+  // F-05：已排除与异分支事件在记账层被拒绝，不进入可重放命令，同轮合法地点与动态事件照常执行
+  const excluded = S(protocol, '071-04-31', {历史选择: {港务署问责: '未发生'}});
+  const rejected = keeper.run(excluded, full({
+    地点: location,
+    发生的事件: [{事件ID: '港务署问责', 分支ID: '问责秦守'}],
+    新情况: [goodNew],
+  }));
+  assert.ok(rejected.失败.some(item => item.错误码 === '协议.事件状态' && item.命令 === '确认事件' && /已排除/.test(item.说明)));
+  assert.ok(!rejected.commands.some(command => command.确认事件));
+  assert.equal(rejected.state.世界.当前地点.地标, '码头区');
+  assert.ok(rejected.已写入.includes('好发现'));
+  const branchMismatch = keeper.run(excluded, full({发生的事件: [{事件ID: '拜师', 分支ID: '未拜师'}]}));
+  assert.ok(branchMismatch.失败.some(item => item.错误码 === '协议.事件状态' && /其他分支/.test(item.说明)));
+  assert.deepEqual(branchMismatch.commands, []);
+
+  // 纯场景（无已写入）：第 1 次合法地点 + 转换失败，第 2 次空变化必须判倒退并保留 best
+  const sceneOnly = JSON.stringify(full({地点: location, 新情况: [{事件ID: '  ', 摘要: '', 变化: []}]}));
+  let index = 0;
+  const sceneLoop = await runKeeperLoop({
+    keeper, base, input: '', narration: '只有场景变化。', config, attempts: 2,
+    call: async () => (index++ === 0 ? sceneOnly : JSON.stringify(full({}))),
+  });
+  const sceneRecord = buildKeepRecord({base, loop: sceneLoop, config, debugging: false});
+  assert.equal(sceneRecord.记账.状态, '部分失败');
+  assert.equal(sceneRecord.记账.尝试次数, 2);
+  assert.deepEqual(sceneRecord.已写入, []);
+  assert.equal(sceneRecord.命令.length, 1);
+  assert.equal(sceneRecord.本局.世界.当前地点.地标, '码头区');
+  assert.ok(sceneRecord.失败.length > 0);
+
+  // 混合（已写入 + 场景）：第 2 次空变化、丢场景或丢已写入均判倒退，保留第 1 次最佳结果
+  const partialMixed = JSON.stringify(full({地点: location, 新情况: [goodNew, badNew]}));
+  const regressions = [
+    ['空变化', JSON.stringify(full({}))],
+    ['丢场景', JSON.stringify(full({新情况: [goodNew]}))],
+    ['丢已写入', JSON.stringify(full({地点: location, 新情况: []}))],
+  ];
+  for (const [label, retry] of regressions) {
+    index = 0;
+    const loop = await runKeeperLoop({
+      keeper, base, input: '', narration: '局部成功后退回。', config, attempts: 2,
+      call: async () => (index++ === 0 ? partialMixed : retry),
+    });
+    const record = buildKeepRecord({base, loop, config, debugging: false});
+    assert.equal(record.记账.状态, '部分失败', label);
+    assert.equal(record.记账.尝试次数, 2, label);
+    assert.equal(record.记账.重试, 1, label);
+    assert.deepEqual(record.已写入, ['好发现'], `${label} 应保留原有已写入`);
+    assert.equal(record.命令.length, 2, `${label} 应保留合法地点与动态事件命令`);
+    assert.equal(record.本局.世界.当前地点.地标, '码头区', `${label} 应保留合法地点`);
+    assert.ok(record.失败.length > 0, `${label} 未解决失败项必须保留`);
+  }
+
+  // 第 2 次空变化未被采纳且仍有尝试次数时，下一轮 hint 追加丢失提醒并保留 best 的失败项
+  const prompts = [];
+  index = 0;
+  const remindedLoop = await runKeeperLoop({
+    keeper, base, input: '', narration: '先丢后退回。', config, attempts: 3,
+    call: async request => {
+      prompts.push(request.prompts[1].content);
+      return [partialMixed, JSON.stringify(full({})), partialMixed][index++];
+    },
+  });
+  assert.match(prompts[2], /丢失了已成功的场景或写入改动/);
+  assert.match(prompts[2], /保留上一次已经合理且成功的改动/);
+  const remindedRecord = buildKeepRecord({base, loop: remindedLoop, config, debugging: false});
+  assert.equal(remindedRecord.记账.状态, '部分失败');
+  assert.equal(remindedRecord.记账.尝试次数, 3);
+  assert.equal(remindedRecord.记账.重试, 2);
+  assert.deepEqual(remindedRecord.已写入, ['好发现']);
+  assert.equal(remindedRecord.本局.世界.当前地点.地标, '码头区');
+
+  // 第 2 次保住全部合法变化并修好失败项：正常胜出
+  prompts.length = 0; index = 0;
+  const fixedLoop = await runKeeperLoop({
+    keeper, base, input: '', narration: '修正失败项。', config, attempts: 2,
+    call: async request => { prompts.push(request.prompts[1].content); return index++ === 0 ? partialMixed : JSON.stringify(full({地点: location, 新情况: [goodNew, fixedNew]})); },
+  });
+  const fixedRecord = buildKeepRecord({base, loop: fixedLoop, config, debugging: false});
+  assert.equal(fixedRecord.记账.状态, '成功');
+  assert.deepEqual(fixedRecord.已写入, ['好发现', '坏路径']);
+  assert.equal(fixedRecord.命令.length, 3);
+  assert.equal(fixedRecord.本局.世界.当前地点.地标, '码头区');
+  assert.deepEqual(fixedRecord.失败, []);
+
+  // 第 2 次在保住原有变化之外追加新的合法变化：也正常胜出
+  prompts.length = 0; index = 0;
+  const expandedLoop = await runKeeperLoop({
+    keeper, base, input: '', narration: '追加新变化。', config, attempts: 2,
+    call: async request => { prompts.push(request.prompts[1].content); return index++ === 0 ? partialMixed
+      : JSON.stringify(full({地点: location, 新情况: [goodNew, fixedNew,
+        {事件ID: '追加发现', 摘要: '追加', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮声渐急'}]}]})); },
+  });
+  const expandedRecord = buildKeepRecord({base, loop: expandedLoop, config, debugging: false});
+  assert.equal(expandedRecord.记账.状态, '成功');
+  assert.deepEqual(expandedRecord.已写入, ['好发现', '坏路径', '追加发现']);
+  assert.equal(expandedRecord.命令.length, 4);
+
+  // 纯比较函数同时核对已写入、时间、地点、在场、所在与待定项，保住全部效果才比较失败数
+  const sceneBase = {世界: {当前时间: '潮历071年04月01日', 当前地点: {地标: '灯塔', 场景: '值守室'}},
+    角色: {秦守: {在场: true}}, 待定项: []};
+  const sceneBest = structuredClone(sceneBase);
+  sceneBest.世界.当前时间 = '潮历071年04月02日';
+  sceneBest.世界.当前地点 = location;
+  sceneBest.角色.秦守 = {在场: false, 所在: '灯塔'};
+  sceneBest.待定项 = [{字段路径: '角色.灯塔学徒.名望', 候选值: ['匠人'], 事件ID: '好发现', 说明: '待定'}];
+  const bestOutcome = {失败: [{错误码: '协议.变化'}], 已写入: ['好发现'], commands: [{}, {}, {}], state: sceneBest};
+  const emptyOutcome = {失败: [], 已写入: [], commands: [], state: structuredClone(sceneBase)};
+  assert.deepEqual(lostEffects(emptyOutcome, bestOutcome, sceneBase).sort(), ['已写入：好发现', '当前地点退回原值', '当前时间退回原值',
+    '待定项.角色.灯塔学徒.名望退回原状态', '角色.秦守.在场退回原值', '角色.秦守.所在退回原值'].sort());
+  assert.equal(isBetterOutcome(emptyOutcome, bestOutcome, sceneBase), false);
+  const keptOutcome = {失败: [], 已写入: ['好发现'], commands: [{}, {}, {}, {}], state: structuredClone(sceneBest)};
+  assert.deepEqual(lostEffects(keptOutcome, bestOutcome, sceneBase), []);
+  assert.equal(isBetterOutcome(keptOutcome, bestOutcome, sceneBase), true);
 });
 
 test('适配-10-A2/A3：手动修补（留空增量优先、空增量/顺序冲突全量回退防丢失、带说明增改撤回、失败零覆写）', async () => {

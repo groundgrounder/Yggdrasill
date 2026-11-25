@@ -194,7 +194,11 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
     if (has(params, '实际参与者') && !Array.isArray(params.实际参与者)) fail('协议.参数', '实际参与者须为列表');
     const context = writeBase(state, {checked: true}), {draft, writeIDs} = context;
     const extras = params.实际参与者 ?? [];
-    if (own(state.事件, params.事件ID)) {
+    const existing = getOwn(state.事件, params.事件ID);
+    if (existing?.状态 === 2) fail('协议.事件状态', `事件已排除：${params.事件ID}`);
+    if (existing?.状态 === 1 && existing.分支 !== params.分支ID)
+      fail('协议.事件状态', `事件已以其他分支确认：${params.事件ID}/${existing.分支}`);
+    if (existing?.状态 === 1) {
       history.validateParticipants(draft, extras);
       return finishWrite(context);
     }

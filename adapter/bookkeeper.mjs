@@ -290,14 +290,61 @@ export function keeperFailures(items) {
   return items.map(item => ({...item, 阶段: Number.isSafeInteger(item.序号) ? '协议执行' : '转换'}));
 }
 
-// 防倒退比较：无失败严格优于有失败；均有失败时比较失败数更少，相同则优先保留原有已写入且成功命令数不少于前者。
-export function isBetterOutcome(candidate, best) {
+// 读嵌套字段：缺键与 undefined 同义，不触碰原型。
+const fieldOf = (value, ...keys) => {
+  let current = value;
+  for (const key of keys) {
+    if (current === null || typeof current !== 'object' || !Object.hasOwn(current, key)) return undefined;
+    current = current[key];
+  }
+  return current;
+};
+
+// 合法效果丢失清单：best 已实现而 candidate 退回 base 原状的部分。已写入无论是否传 base 都核对。
+export function lostEffects(candidate, best, base = null) {
+  if (!candidate || !best) return [];
+  const lost = [];
+  const candWritten = new Set(Array.isArray(candidate.已写入) ? candidate.已写入 : []);
+  for (const item of Array.isArray(best.已写入) ? best.已写入 : []) if (!candWritten.has(item)) lost.push(`已写入：${item}`);
+  if (!base) return lost;
+  if (!isMap(best.state) || !isMap(candidate.state)) return lost;
+  const baseTime = fieldOf(base, '世界', '当前时间'), bestTime = fieldOf(best.state, '世界', '当前时间');
+  const candTime = fieldOf(candidate.state, '世界', '当前时间');
+  if (!sameSnapshot(bestTime, baseTime) && sameSnapshot(candTime, baseTime)) lost.push('当前时间退回原值');
+  const baseLocation = fieldOf(base, '世界', '当前地点'), bestLocation = fieldOf(best.state, '世界', '当前地点');
+  const candLocation = fieldOf(candidate.state, '世界', '当前地点');
+  if (!sameSnapshot(bestLocation, baseLocation) && sameSnapshot(candLocation, baseLocation)) lost.push('当前地点退回原值');
+  const baseRoles = fieldOf(base, '角色') ?? {};
+  const bestRoles = fieldOf(best.state, '角色') ?? {};
+  const candRoles = fieldOf(candidate.state, '角色') ?? {};
+  for (const id of new Set([...Object.keys(baseRoles), ...Object.keys(bestRoles)])) {
+    for (const key of ['在场', '所在']) {
+      const before = fieldOf(baseRoles, id, key), after = fieldOf(bestRoles, id, key), now = fieldOf(candRoles, id, key);
+      if (!sameSnapshot(after, before) && sameSnapshot(now, before)) lost.push(`角色.${id}.${key}退回原值`);
+    }
+  }
+  const pendingOf = state => {
+    const items = fieldOf(state, '待定项');
+    return new Map((Array.isArray(items) ? items : []).map(item => [item?.字段路径, item]));
+  };
+  const basePending = pendingOf(base), bestPending = pendingOf(best.state), candPending = pendingOf(candidate.state);
+  for (const path of new Set([...basePending.keys(), ...bestPending.keys()])) {
+    const before = basePending.get(path), after = bestPending.get(path);
+    if (!sameSnapshot(after, before) && sameSnapshot(candPending.get(path), before))
+      lost.push(`待定项.${path}退回原状态`);
+  }
+  return lost;
+}
+
+// 防倒退比较：先核对 best 的已写入与场景/待定项效果是否全部保住；保住后才比较失败数与成功命令数。
+// 空变化或把已成功改动退回 base 原状的 candidate 一律淘汰，即便失败项更少。
+export function isBetterOutcome(candidate, best, base = null) {
   if (!candidate) return false;
   if (!best) return true;
+  if (lostEffects(candidate, best, base).length) return false;
   const cFail = candidate.失败?.length ?? 0, bFail = best.失败?.length ?? 0;
   if (cFail !== bFail) return cFail < bFail;
   const bestWritten = new Set(best.已写入 ?? []), candWritten = new Set(candidate.已写入 ?? []);
-  if ([...bestWritten].some(item => !candWritten.has(item))) return false;
   const cCmds = candidate.commands?.length ?? 0, bCmds = best.commands?.length ?? 0;
   if (cCmds < bCmds) return false;
   return candWritten.size > bestWritten.size || cCmds > bCmds;
@@ -401,10 +448,14 @@ export async function runKeeperLoop({
       break;
     }
     outcome.失败 = keeperFailures(outcome.失败 ?? []);
-    if (isBetterOutcome(outcome, best?.outcome ?? null)) best = {outcome, raw, attempt: attempt + 1};
-    if (!outcome.失败.length) break;
+    const lost = best ? lostEffects(outcome, best.outcome, base) : [];
+    const accepted = isBetterOutcome(outcome, best?.outcome ?? null, base);
+    if (accepted) best = {outcome, raw, attempt: attempt + 1};
+    if (!outcome.失败.length && accepted) break;
     const target = best ?? {outcome, raw};
     hint = formatRepairHint({raw: target.raw, failures: target.outcome.失败, commands: target.outcome.原命令});
+    if (best && lost.length && attempt + 1 < attempts)
+      hint += '\n\n注意：上一轮输出丢失了已成功的场景或写入改动，请务必完整保留后再修正上述失败项。';
   }
   return {best, calls, lastError, lastCode, executor, stale: false};
 }

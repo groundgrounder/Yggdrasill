@@ -37,6 +37,22 @@ test('运行-5：非候选、未知分支与未启用参与者', () => {
   assert.throws(() => C(p, P1, '夜间值守', '出海'), errorCode('协议.参数'));
   assert.throws(() => C(p, P1, '夜间值守', '完成', {实际参与者: ['周岚']}), errorCode('协议.参与者'));
 });
+test('运行-44：已排除与异分支事件确认即报错，同分支仍幂等', () => {
+  const excluded = S(p, '071-04-31', {历史选择: {港务署问责: '未发生'}});
+  assert.deepEqual(excluded.事件.港务署问责, {状态: 2});
+  const excludedBefore = structuredClone(excluded);
+  for (const branch of ['问责秦守', '备案了结'])
+    assert.throws(() => C(p, excluded, '港务署问责', branch), errorCode('协议.事件状态'));
+  assert.deepEqual(excluded, excludedBefore);
+  const confirmed = S(p, '071-04-31');
+  const confirmedBefore = structuredClone(confirmed);
+  assert.deepEqual(confirmed.事件.拜师.分支, '拜师');
+  assert.throws(() => C(p, confirmed, '拜师', '未拜师'), errorCode('协议.事件状态'));
+  assert.deepEqual(confirmed, confirmedBefore);
+  const idempotent = C(p, confirmed, '拜师', '拜师');
+  assert.deepEqual(idempotent.已写入, []);
+  assert.deepEqual(idempotent.state, confirmed);
+});
 test('运行-6：缺综合实力的自建玩家使分支门槛未知', () => {
   assert.deepEqual(eventStatus(p, P2, '秦守讲旧事'), {状态: '候选', 分支: ['讲述']});
 });

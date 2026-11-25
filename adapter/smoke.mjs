@@ -11,7 +11,7 @@ import {createProtocol} from '../core/protocol.mjs';
 import {createMemFs} from './memfs.mjs';
 import {manifestIssue, storedManifest, MANIFEST_FIELDS} from './records.mjs';
 import {createOpeningDraft, adaptOpeningCommands} from './opening.mjs';
-import {createBookkeeper} from './bookkeeper.mjs';
+import {createBookkeeper, buildKeepRecord, runKeeperLoop} from './bookkeeper.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
 
 const face = parseYaml(await fs.readFile(new URL('./卡面.yaml', import.meta.url), 'utf8'));
@@ -2352,3 +2352,47 @@ await openIsoOn;
 holdPopup = false;
 await restoreChat();
 console.log('39 YG-REL-01 修补弹窗隔离对比：非调试隐藏原始命令 YAML 与内部失败明细，调试模式完整展示');
+
+// ---------- 40. YG-FIX-01：已排除/异分支事件确认拒绝与自动重试防倒退 ----------
+const keeper = createBookkeeper({protocol, catalog: router.catalog, decl: router.decl});
+const fixBase = seal(protocol, {开局时间: '潮历071年04月01日'});
+const fixFull = (patch = {}) => ({时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''},
+  在场: [], 发生的事件: [], 新情况: [], ...patch});
+const fixLocation = {地标: '码头区', 场景: '栈桥'};
+const fixGood = {事件ID: '好发现', 摘要: '好', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起风'}]};
+const fixBad = {事件ID: '坏路径', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]};
+const fixFixed = {事件ID: '坏路径', 摘要: '修正后记入知识', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '秦守在栈桥'}]};
+const excludedState = seal(protocol, {开局时间: '潮历071年04月31日', 历史选择: {港务署问责: '未发生'}});
+const rejectedRun = keeper.run(excludedState, fixFull({地点: fixLocation,
+  发生的事件: [{事件ID: '港务署问责', 分支ID: '问责秦守'}], 新情况: [fixGood]}));
+assert.ok(rejectedRun.失败.some(item => item.错误码 === '协议.事件状态' && item.命令 === '确认事件'));
+assert.ok(!rejectedRun.commands.some(command => command.确认事件), '已排除事件的确认命令不得进入可重放命令');
+assert.ok(rejectedRun.已写入.includes('好发现'));
+assert.equal(rejectedRun.state.世界.当前地点.地标, '码头区');
+const mismatchRun = keeper.run(excludedState, fixFull({发生的事件: [{事件ID: '拜师', 分支ID: '未拜师'}]}));
+assert.ok(mismatchRun.失败.some(item => item.错误码 === '协议.事件状态' && /其他分支/.test(item.说明)));
+
+const partialReply = JSON.stringify(fixFull({地点: fixLocation, 新情况: [fixGood, fixBad]}));
+const fixConfig = {方式: '同一模型', 应答格式: '提示词'}, retained = [];
+for (const [label, retry] of [['空变化', fixFull({})], ['丢场景', fixFull({新情况: [fixGood]})],
+  ['丢已写入', fixFull({地点: fixLocation})]]) {
+  let index = 0;
+  const loop = await runKeeperLoop({keeper, base: fixBase, narration: '栈桥局部成功。', config: fixConfig, attempts: 2,
+    call: async () => (index++ === 0 ? partialReply : JSON.stringify(retry))});
+  const rec = buildKeepRecord({base: fixBase, loop, config: fixConfig, debugging: false});
+  assert.equal(rec.记账.状态, '部分失败', label);
+  assert.deepEqual(rec.已写入, ['好发现'], label);
+  assert.equal(rec.命令.length, 2, label);
+  assert.equal(rec.本局.世界.当前地点.地标, '码头区', label);
+  assert.ok(rec.失败.length > 0, label);
+  retained.push(label);
+}
+let fixedIndex = 0;
+const fixedLoop = await runKeeperLoop({keeper, base: fixBase, narration: '栈桥修正。', config: fixConfig, attempts: 2,
+  call: async () => (fixedIndex++ === 0 ? partialReply
+    : JSON.stringify(fixFull({地点: fixLocation, 新情况: [fixGood, fixFixed]})))});
+const fixedRecord = buildKeepRecord({base: fixBase, loop: fixedLoop, config: fixConfig, debugging: false});
+assert.equal(fixedRecord.记账.状态, '成功');
+assert.deepEqual(fixedRecord.已写入, ['好发现', '坏路径']);
+assert.deepEqual(fixedRecord.失败, []);
+console.log(`40 YG-FIX-01：已排除/异分支确认均报 协议.事件状态 且不进入重放；自动重试 ${retained.join('/')} 均保留合法地点与已写入并判部分失败；修正后成功`);
