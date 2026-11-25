@@ -4,7 +4,7 @@ import {previewContext, ContextError} from '../core/context-preview.mjs';
 import {compileWorldbook, createProtocol, seal, writeScene, createRouter, route, renderContext,
   DEFAULT_TAGS, readSettings} from '../core/index.mjs';
 import {loadProtocol, S, W} from './protocol-helpers.mjs';
-import {test, assert, fs, path, project, example, fixture, edit} from './helpers.mjs';
+import {test, assert, fs, path, project, example, fixture, edit, write} from './helpers.mjs';
 async function run(args, options = {}) {
   const cliArgs = args[0] === 'context' ? args.slice(1) : args;
   let stdout = '', stderr = '';
@@ -220,4 +220,34 @@ test('上下文-6：自建模式玩家在场边界', async () => {
   assert.equal(missing.status, 1);
   assert.equal(missing.value.异常[0].规则, '上下文.场景');
   assert.ok(missing.value.异常[0].说明.includes('自建模式玩家在场须先指定 --地点 或本局已有当前地点'));
+});
+
+test('ROUTE-F09a-4：ygg context 输出在场预算与降级标注，preview 透传审计', async t => {
+  const sceneArgs = ['context', 'test/fixtures/雾港/世界书', '--地点', '灯塔', '--场景', '值守室', '--在场', '秦守', '--在场', '灯塔学徒'];
+  const scene = await run([...sceneArgs, '--json']);
+  assert.equal(scene.status, 0, scene.stderr);
+  assert.deepEqual(Object.keys(scene.value.预算.在场角色), ['已用人数', '完整人数', '完整人数上限', '已用字符', '字符上限']);
+  assert.equal(scene.value.预算.在场角色.已用人数, 3);
+  assert.equal(scene.value.预算.在场角色.完整人数, 3);
+  assert.equal(scene.value.预算.在场角色.完整人数上限, 6);
+  assert.equal(scene.value.预算.在场角色.字符上限, 12000);
+  assert.equal(scene.value.审计.在场角色.选入.length, 3);
+  assert.deepEqual(scene.value.审计.在场角色.预算, {完整人数: 6, 字符: 12000});
+  for (const item of scene.value.审计.在场角色.选入) assert.deepEqual(Object.keys(item), ['角色组ID', '形式', '字符']);
+
+  const text = await run(sceneArgs);
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /在场角色：3 人（完整 3\/6）、\d+\/12000 字符/u);
+  assert.match(text.stdout, /在场角色（3）：/u);
+
+  const root = await fixture(t);
+  await write(path.dirname(root), 'yggdrasill.yaml', {运行参数: {在场角色: {完整人数: 1}}});
+  const tight = await run(['context', root, '--地点', '灯塔', '--场景', '值守室', '--在场', '秦守', '--在场', '灯塔学徒', '--json']);
+  assert.equal(tight.status, 0, tight.stderr);
+  assert.equal(tight.value.预算.在场角色.完整人数, 1);
+  assert.equal(tight.value.预算.在场角色.完整人数上限, 1);
+  const tightText = await run(['context', root, '--地点', '灯塔', '--场景', '值守室', '--在场', '秦守', '--在场', '灯塔学徒']);
+  assert.equal(tightText.status, 0, tightText.stderr);
+  assert.match(tightText.stdout, /在场角色：3 人（完整 1\/1）/u);
+  assert.match(tightText.stdout, /·降级/u);
 });

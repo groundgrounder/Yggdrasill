@@ -1005,3 +1005,74 @@ test('YG-OPEN-01-A3：必需角色组、命令与历史依赖统一标记并拦�
   assert.deepEqual(resolvePlanOpening(null, {openingGreeting: '主'}),
     {方案: null, 开场白: '主', 开场命令: [], 可选在场: [], 必需角色组: []});
 });
+
+test('ROUTE-F09b-A4：长聊已验真前缀缓存增量重放、篡改零降级与精确失效', async () => {
+  const {protocol} = await loadProtocol();
+  const manifest = {卡ID: 'fog.test.card', 卡版本: '1.0.0', 程序版本: '0.1.0', 记录格式: RECORD_FORMAT,
+    程序指纹: '1'.repeat(64), 世界书哈希: 'a'.repeat(64), 兼容程序: []};
+  const makeMsg = (id, role, text, record = undefined) => ({message_id: id, role, message: text, swipe_id: 0,
+    ...(record ? {data: {世界树: record}} : {})});
+  const makeRecord = ({msg, state, commands, written}) => ({记录格式: RECORD_FORMAT, 运行清单: storedManifest(manifest),
+    归属: ownershipOf(msg), 本局: state, 命令: commands, 失败: [], 已写入: written,
+    记账: {方式: '正文', 应答格式: '正文命令', 状态: '成功', 尝试次数: 1}});
+  const opening = protocol.seal({开局时间: '潮历071年04月01日'});
+  const m0 = makeMsg(0, 'assistant', '开场。');
+  m0.data = {世界树: makeRecord({msg: m0, state: opening, commands: [], written: []})};
+  const chat = [m0];
+  let state = opening;
+  for (let id = 1; id < 12; id++) {
+    const commands = [{写场景: {当前时间: `潮历071年04月${String(id + 1).padStart(2, '0')}日`}}];
+    const run = applyCommands(protocol, state, commands);
+    assert.deepEqual(run.失败, []);
+    const message = makeMsg(id, 'assistant', `第${id}楼。`);
+    message.data = {世界树: makeRecord({msg: message, state: run.state, commands, written: run.已写入})};
+    chat.push(message); state = run.state;
+  }
+
+  const audit = createHistoryAudit({protocol, manifest});
+  const first = audit.audit(chat);
+  assert.equal(first.ok, true);
+  assert.equal(first.state, chat.at(-1).data.世界树.本局);
+  assert.deepEqual(audit.cacheStats(), {hits: 0, misses: 12, replayedFloors: 12, cachedFloors: 12});
+  assert.equal(audit.audit(chat).ok, true);
+  assert.deepEqual(audit.cacheStats(), {hits: 12, misses: 12, replayedFloors: 12, cachedFloors: 12});
+
+  const extra = makeMsg(12, 'assistant', '第12楼。');
+  const commands = [{写场景: {当前时间: '潮历071年04月20日'}}], run = applyCommands(protocol, state, commands);
+  extra.data = {世界树: makeRecord({msg: extra, state: run.state, commands, written: run.已写入})};
+  chat.push(extra);
+  assert.equal(audit.audit(chat).ok, true);
+  assert.deepEqual(audit.cacheStats(), {hits: 24, misses: 13, replayedFloors: 13, cachedFloors: 13});
+
+  const expectSame = (mutate, code) => {
+    const tampered = structuredClone(chat); mutate(tampered);
+    const fresh = createHistoryAudit({protocol, manifest}).audit(tampered);
+    const cached = audit.audit(tampered);
+    assert.equal(fresh.ok, false);
+    assert.equal(fresh.code, code);
+    assert.equal(cached.ok, false);
+    assert.equal(cached.code, fresh.code);
+    assert.equal(cached.楼号, fresh.楼号);
+    assert.equal(cached.说明, fresh.说明);
+    assert.equal(audit.cacheStats().cachedFloors, fresh.楼号);
+  };
+  expectSame(chat => { chat[7].data.世界树.本局.世界.当前时间 = '潮历071年05月01日'; }, '重放.失配');
+  expectSame(chat => { chat[7].data.世界树.命令 = [{写场景: {当前时间: '潮历071年04月01日'}}]; }, '重放.命令');
+  expectSame(chat => { chat[7].data.世界树.已写入.push('伪造'); }, '重放.写入');
+  expectSame(chat => { chat[7].message = '被改写过的正文。'; }, '归属.失配');
+
+  audit.clearCache();
+  assert.deepEqual(audit.cacheStats(), {hits: 45, misses: 16, replayedFloors: 13, cachedFloors: 0});
+  assert.equal(audit.audit(chat).ok, true);
+  assert.deepEqual(audit.cacheStats(), {hits: 45, misses: 29, replayedFloors: 26, cachedFloors: 13});
+  audit.invalidateFrom(7);
+  assert.equal(audit.cacheStats().cachedFloors, 7);
+  assert.equal(audit.audit(chat).ok, true);
+  assert.deepEqual(audit.cacheStats(), {hits: 52, misses: 35, replayedFloors: 32, cachedFloors: 13});
+
+  const ignoredChat = structuredClone(chat);
+  ignoredChat[3].data.世界树.归属 = {...ignoredChat[3].data.世界树.归属, 正文指纹: '0'.repeat(64)};
+  const before = audit.cacheStats();
+  assert.equal(audit.audit(ignoredChat, {ignoreOwnership: 3}).ok, true);
+  assert.deepEqual(audit.cacheStats(), before);
+});

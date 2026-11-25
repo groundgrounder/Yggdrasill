@@ -9,7 +9,7 @@ import {pathToFileURL} from 'node:url';
 import {loadRouter, seal, applyCommands, route, renderContext, parseYaml} from '../core/index.mjs';
 import {createProtocol} from '../core/protocol.mjs';
 import {createMemFs} from './memfs.mjs';
-import {manifestIssue, storedManifest, MANIFEST_FIELDS} from './records.mjs';
+import {manifestIssue, storedManifest, MANIFEST_FIELDS, createHistoryAudit, ownershipOf, RECORD_FORMAT} from './records.mjs';
 import {createOpeningDraft, adaptOpeningCommands} from './opening.mjs';
 import {openingNode} from './ui.mjs';
 import {createBookkeeper, buildKeepRecord, runKeeperLoop} from './bookkeeper.mjs';
@@ -2492,3 +2492,55 @@ assert.match(requiredText, /依赖：开局方案必需角色组/);
 assert.match(requiredText, /开局\.必需角色组|必需角色未启用/);
 assert.equal(requiredDraft.prepare().ok, false, '必选角色默认关闭时提交必须被拒绝');
 console.log('41 YG-OPEN-01：第 0 楼开场白同步并回滚成功；可选在场角色裁剪初始化与在场；方案预览与必选依赖在 UI 可见且阻断提交');
+
+// ---------- 42. YG-ROUTE-01：长聊已验真前缀缓存与增量重放 ----------
+const cacheManifest = {...manifest};
+const auditMsg = (id, text) => ({message_id: id, role: 'assistant', message: text, swipe_id: 0});
+const auditRecord = (message, state, commands) => ({记录格式: RECORD_FORMAT, 运行清单: storedManifest(cacheManifest),
+  归属: ownershipOf(message), 本局: state, 命令: commands, 失败: [], 已写入: [],
+  记账: {方式: '正文', 应答格式: '正文命令', 状态: '成功', 尝试次数: 1}});
+const longChat = [];
+let longState = seal(protocol, face.开局);
+const firstMessage = auditMsg(0, '开场白。');
+firstMessage.data = {世界树: auditRecord(firstMessage, longState, [])};
+longChat.push(firstMessage);
+for (let id = 1; id < 11; id++) {
+  const commands = [{写场景: {当前时间: `潮历071年04月${String(id + 1).padStart(2, '0')}日`}}];
+  const run = applyCommands(protocol, longState, commands);
+  assert.deepEqual(run.失败, []);
+  const message = auditMsg(id, `第 ${id} 楼正文。`);
+  message.data = {世界树: auditRecord(message, run.state, commands)};
+  longChat.push(message); longState = run.state;
+}
+const longAudit = createHistoryAudit({protocol, manifest: cacheManifest});
+assert.equal(longAudit.audit(longChat).ok, true);
+const firstReplay = longAudit.cacheStats().replayedFloors;
+assert.deepEqual(longAudit.cacheStats(), {hits: 0, misses: 11, replayedFloors: 11, cachedFloors: 11});
+assert.equal(longAudit.audit(longChat).ok, true);
+assert.equal(longAudit.cacheStats().replayedFloors, firstReplay);
+const extraCommands = [{写场景: {当前时间: '潮历071年04月20日'}}];
+const extraRun = applyCommands(protocol, longState, extraCommands);
+const extraMessage = auditMsg(11, '第 11 楼正文。');
+extraMessage.data = {世界树: auditRecord(extraMessage, extraRun.state, extraCommands)};
+longChat.push(extraMessage);
+assert.equal(longAudit.audit(longChat).ok, true);
+assert.deepEqual(longAudit.cacheStats(), {hits: 22, misses: 12, replayedFloors: 12, cachedFloors: 12});
+
+const tamperedChat = structuredClone(longChat);
+tamperedChat[6].data.世界树.本局.世界.当前时间 = '潮历071年05月01日';
+const noCache = createHistoryAudit({protocol, manifest: cacheManifest}).audit(tamperedChat);
+const withCache = longAudit.audit(tamperedChat);
+assert.equal(noCache.ok, false);
+assert.equal(withCache.ok, false);
+assert.equal(withCache.code, noCache.code);
+assert.equal(withCache.楼号, noCache.楼号);
+assert.equal(withCache.说明, noCache.说明);
+assert.equal(longAudit.cacheStats().cachedFloors, 6);
+longAudit.clearCache();
+assert.equal(longAudit.cacheStats().cachedFloors, 0);
+assert.equal(longAudit.audit(longChat).ok, true);
+longAudit.invalidateFrom(4);
+assert.equal(longAudit.cacheStats().cachedFloors, 4);
+assert.equal(longAudit.audit(longChat).ok, true);
+assert.equal(longAudit.cacheStats().cachedFloors, 12);
+console.log(`42 YG-ROUTE-01：12 楼长聊首次重放 ${firstReplay} 层，重复审计新增 0 层，追加仅重放新增尾楼；篡改历史本局报 ${noCache.code} 与无缓存一致；clearCache/invalidateFrom 精确失效通过`);

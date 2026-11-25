@@ -94,10 +94,10 @@ function locationChain(router, state, anomalies) {
   return result;
 }
 
-function presentCharacters(router, view, present, anomalies) {
-  const state = view.state, result = [], initialization = [];
+function presentCharacters(router, view, present, anomalies, mentions) {
+  const state = view.state, entries = [], initialization = [];
   for (const id of present) {
-    const group = router.groups.find(item => item.id === id);
+    const group = id === '玩家' ? null : router.groups.find(item => item.id === id);
     const identity = id === '玩家' ? {角色组ID: id, 显示名: state.开局.玩家.档案.姓名 ?? id}
       : pick(groupIdentity(group, state), ['角色组ID', '显示名']);
     let profile;
@@ -106,7 +106,7 @@ function presentCharacters(router, view, present, anomalies) {
       const resolved = view.resolveProfile(id);
       const files = group.档案.find(item => item.id === resolved.档案ID);
       if (resolved.结果 !== '成立' || !isMap(files?.基本信息) || !isMap(files?.角色印象)) {
-        result.push(identity);
+        entries.push({id, identity, form: '异常'});
         anomalies.push({类型: resolved.结果 === '冲突' ? '档案冲突' : '档案异常', 角色组ID: id,
           ...resolved, 说明: '当前档案不能用于上下文'});
         continue;
@@ -123,11 +123,59 @@ function presentCharacters(router, view, present, anomalies) {
     const birth = id === '玩家' ? profile.出生年 : profile.基本信息.出生年;
     const currentYear = router.calendar.year(state?.世界?.当前时间), birthYear = router.calendar.year(birth);
     const run = pick(state?.角色?.[id], [...Object.keys(router.decl.variables.角色), '装备']);
-    result.push({...identity, ...(currentYear !== null && birthYear !== null ? {年龄: currentYear - birthYear} : {}),
+    const full = {...identity, ...(currentYear !== null && birthYear !== null ? {年龄: currentYear - birthYear} : {}),
       ...(state.开局.玩家.模式 === '扮演' && state.开局.玩家.扮演角色组 === id ? {玩家扮演: true} : {}),
-      档案: profile, 当前能力: view.currentAbility(id), 可用技能: view.availableSkills(id), ...(nonempty(run) ? {本局状态: run} : {})});
+      档案: profile, 当前能力: view.currentAbility(id), 可用技能: view.availableSkills(id), ...(nonempty(run) ? {本局状态: run} : {})};
+    entries.push({id, full});
   }
-  return {characters: result, initialization};
+
+  // 分级压缩：按「玩家 > 最近提及 > 码点」逐人分配完整、精简或最小，最终仍按在场规范顺序输出。
+  const budget = router.settings.在场角色, playerID = present.includes('玩家') ? '玩家'
+    : state.开局.玩家.模式 === '扮演' && present.includes(state.开局.玩家.扮演角色组) ? state.开局.玩家.扮演角色组 : null;
+  const mentioned = list(mentions?.角色组).map(item => item.角色组ID).filter(id => present.includes(id) && id !== playerID);
+  const priority = [...new Set([playerID, ...mentioned, ...[...present].sort(codepointCompare)].filter(id => id !== null && present.includes(id)))];
+  const byID = new Map(entries.map(entry => [entry.id, entry])), chosen = new Map();
+  let complete = 0, used = 0;
+  for (const id of priority) {
+    const entry = byID.get(id);
+    if (entry.form === '异常') {
+      const size = chars(entry.identity);
+      chosen.set(id, {form: '异常', item: entry.identity, size}); used += size;
+      continue;
+    }
+    const full = entry.full, simple = compactCharacter(entry), minimal = minimalCharacter(entry);
+    let form, item;
+    if (complete < budget.完整人数 && used + chars(full) <= budget.字符) { form = '完整'; item = full; complete += 1; }
+    else if (used + chars(simple) <= budget.字符) { form = '精简'; item = simple; }
+    else { form = '最小'; item = minimal; }
+    const size = chars(item);
+    chosen.set(id, {form, item, size}); used += size;
+  }
+  const characters = [], selected = [];
+  for (const id of present) {
+    const choice = chosen.get(id);
+    characters.push(choice.item);
+    selected.push({角色组ID: id, 形式: choice.form, 字符: choice.size});
+  }
+  return {characters, initialization, present: {选入: selected, 字符: used}};
+}
+
+function compactCharacter({id, full}) {
+  const profile = id === '玩家' ? pick(full.档案, ['姓名', '称号', '性别', '种族'])
+    : {基本信息: pick(full.档案?.基本信息, ['姓名', '称号', '性别', '种族']),
+      角色印象: pick(full.档案?.角色印象, ['核心身份', '表现禁区'])};
+  const compact = id === '玩家' ? profile
+    : {...(nonempty(profile.基本信息) ? {基本信息: profile.基本信息} : {}),
+      ...(nonempty(profile.角色印象) ? {角色印象: profile.角色印象} : {})};
+  return {角色组ID: full.角色组ID, 显示名: full.显示名, ...(has(full, '年龄') ? {年龄: full.年龄} : {}),
+    ...(has(full, '玩家扮演') ? {玩家扮演: full.玩家扮演} : {}),
+    ...(id === '玩家' && !nonempty(compact) ? {} : {档案: compact}),
+    当前能力: full.当前能力, 可用技能: full.可用技能, ...(has(full, '本局状态') ? {本局状态: full.本局状态} : {})};
+}
+
+function minimalCharacter({full}) {
+  return {角色组ID: full.角色组ID, 显示名: full.显示名, ...(has(full, '年龄') ? {年龄: full.年龄} : {}),
+    ...(has(full, '玩家扮演') ? {玩家扮演: full.玩家扮演} : {}), ...(has(full, '本局状态') ? {本局状态: full.本局状态} : {})};
 }
 
 function worldState(router, view) {
@@ -225,8 +273,13 @@ function historyItem(router, view, id, present) {
   if (!event) return {事件ID: id, 摘要: record.摘要, 实际时间: record.实际时间};
   const branch = list(event.内容?.分支).find(item => item.分支ID === record.分支);
   const positions = eventPositions(event, present, [record.分支], true);
-  return {事件ID: id, 事件标题: event.内容?.事件标题 ?? id, ...pick(event.内容, ['事件概要', '影响范围']), 实际时间: record.实际时间,
-    ...pick(branch, ['分支结果']), ...pick(event.内容, ['公开信息', '隐秘信息']), ...(positions.length ? {角色位置: positions} : {})};
+  // 所走分支声明了专属文本时覆盖事件顶层，未声明才回退；不拼接，避免原作主线文本混入 IF 分支。
+  const text = key => {
+    const value = nonempty(branch?.[key]) ? branch[key] : event.内容?.[key];
+    return nonempty(value) ? {[key]: clone(value)} : {};
+  };
+  return {事件ID: id, 事件标题: event.内容?.事件标题 ?? id, ...text('事件概要'), ...text('影响范围'), 实际时间: record.实际时间,
+    ...pick(branch, ['分支结果']), ...text('公开信息'), ...text('隐秘信息'), ...(positions.length ? {角色位置: positions} : {})};
 }
 
 function fitEvents(rows, budget, compact, log) {
@@ -315,7 +368,8 @@ export function route(router, state, messages) {
     候选: {选入: [], 略过: [], 字符: 0, 预算: clone(router.settings.候选)}, 条目: {}, 提及: mentions, 异常: []};
   const present = view.presentIDs().sort((a, b) => a === '玩家' ? 1 : b === '玩家' ? -1 : codepointCompare(a, b));
   const places = locationChain(router, view.state, audit.异常);
-  const {characters, initialization} = presentCharacters(router, view, present, audit.异常);
+  const {characters, initialization, present: presentAudit} = presentCharacters(router, view, present, audit.异常, mentions);
+  audit.在场角色 = {...presentAudit, 预算: clone(router.settings.在场角色)};
   mentions.未启用 = mentions.角色组.filter(item => !view.enabled(item.角色组ID)).map(clone);
   const mentioned = mentions.角色组.filter(item => view.enabled(item.角色组ID) && !present.includes(item.角色组ID))
     .map(item => groupIdentity(router.groups.find(group => group.id === item.角色组ID), view.state));

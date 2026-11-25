@@ -1,5 +1,5 @@
-import {test, assert, fs, path, fixture, edit, remove, read, example, eventFile, loadRouting, R0, U1, route, renderContext, messages,
-  S, W, D, time, currentAbility, availableSkills, eventStatus, pendingEvents} from './router-helpers.mjs';
+import {test, assert, fs, path, project, fixture, edit, remove, read, example, eventFile, loadRouting, R0, U1, route, renderContext, messages,
+  S, W, C, D, time, currentAbility, availableSkills, eventStatus, pendingEvents} from './router-helpers.mjs';
 
 function ids(items = []) { return items.map(item => item.事件ID); }
 
@@ -145,4 +145,121 @@ test('路由边界：消息、状态与未知地点异常', async () => {
   assert.throws(() => route(router, state, [1]));
   const changed = structuredClone(state); changed.世界.当前地点.地标 = '未知地点';
   const result = route(router, changed, []); assert.ok(result.audit.异常.some(item => item.类型 === '地点异常'));
+});
+
+test('ROUTE-F04-1：所走分支专属文本覆盖顶层，未声明回退，待登记同口径', async t => {
+  const root = await fixture(t);
+  await edit(root, eventFile('大雾之夜'), event => {
+    event.事件概要 = '顶层大事概要。';
+    event.影响范围 = '顶层大事范围。';
+    event.公开信息 = ['顶层公开消息。'];
+    event.隐秘信息 = ['顶层隐秘消息。'];
+    Object.assign(event.分支.find(item => item.分支ID === '发生'),
+      {事件概要: '发生分支概要。', 影响范围: '发生分支范围。', 公开信息: ['发生分支公开。'], 隐秘信息: ['发生分支隐秘。']});
+    event.分支.push({分支ID: '未发生', 分支条件: '雾没有压进港镇。', 分支结果: '灯塔整夜亮着。', 影响范围: '未发生分支范围。', 变化: []});
+  });
+  const {protocol, router} = await loadRouting(root);
+  const base = W(protocol, S(protocol, '071-04-19'), {当前时间: time('071-04-20')}).state;
+  const historyItem = state => route(router, state, ['听说大雾之夜出事了。']).context.事件.已确认经历
+    .find(item => item.事件ID === '大雾之夜');
+  const occurred = historyItem(C(protocol, base, '大雾之夜', '发生').state);
+  assert.deepEqual(Object.keys(occurred), ['事件ID', '事件标题', '事件概要', '影响范围', '实际时间', '分支结果', '公开信息', '隐秘信息']);
+  assert.equal(occurred.事件概要, '发生分支概要。');
+  assert.equal(occurred.影响范围, '发生分支范围。');
+  assert.deepEqual(occurred.公开信息, ['发生分支公开。']);
+  assert.deepEqual(occurred.隐秘信息, ['发生分支隐秘。']);
+
+  // 未声明专属字段的分支逐项回退顶层，声明了的字段仍覆盖。
+  const skipped = historyItem(C(protocol, base, '大雾之夜', '未发生').state);
+  assert.equal(skipped.事件概要, '顶层大事概要。');
+  assert.equal(skipped.影响范围, '未发生分支范围。');
+  assert.deepEqual(skipped.公开信息, ['顶层公开消息。']);
+  assert.deepEqual(skipped.隐秘信息, ['顶层隐秘消息。']);
+
+  const late = structuredClone(base); late.世界.当前时间 = time('071-04-25');
+  const pending = route(router, late, []).context.事件.待登记.find(item => item.事件ID === '大雾之夜');
+  assert.equal(pending.事件概要, '发生分支概要。');
+  assert.equal(pending.影响范围, '发生分支范围。');
+  assert.deepEqual(pending.公开信息, ['发生分支公开。']);
+  assert.deepEqual(pending.隐秘信息, ['发生分支隐秘。']);
+  assert.equal(pending.已经发生, true);
+});
+
+test('ROUTE-F04-2：候选只输出事件顶层文本与分支三字段，绝不泄出分支专属文本', async t => {
+  const root = await fixture(t);
+  await edit(root, eventFile('秦守讲旧事'), event => {
+    event.影响范围 = '顶层旧事范围。';
+    for (const branch of event.分支) Object.assign(branch,
+      {事件概要: '分支概要。', 影响范围: '分支范围。', 公开信息: ['分支公开。'], 隐秘信息: ['分支隐秘。']});
+  });
+  const {protocol, router} = await loadRouting(root);
+  const candidate = route(router, R0(protocol), messages).context.事件.候选.find(item => item.事件ID === '秦守讲旧事');
+  assert.equal(candidate.事件概要, '秦守在值守室讲起年轻时在雾里救人的经历，并示范辨认灯号。');
+  assert.equal(candidate.影响范围, '顶层旧事范围。');
+  assert.ok(candidate.分支.length > 0);
+  for (const branch of candidate.分支) assert.deepEqual(Object.keys(branch), ['分支ID', '分支条件', '分支结果']);
+  assert.ok(!Object.hasOwn(candidate, '隐秘信息'));
+  assert.ok(!JSON.stringify(candidate).includes('分支概要。'));
+  assert.ok(!JSON.stringify(candidate).includes('分支公开。'));
+});
+
+
+test('ROUTE-F09a-1：默认预算下雾港在场角色全部完整，审计与既有输出形状不变', async () => {
+  const {protocol, router} = await loadRouting(), result = route(router, R0(protocol), messages);
+  assert.deepEqual(result.audit.在场角色.预算, {完整人数: 6, 字符: 12000});
+  assert.deepEqual(result.audit.在场角色.选入.map(item => [item.角色组ID, item.形式]),
+    [['灯塔学徒', '完整'], ['秦守', '完整'], ['玩家', '完整']]);
+  assert.equal(result.audit.在场角色.字符, result.audit.在场角色.选入.reduce((sum, item) => sum + item.字符, 0));
+  for (const item of result.context.在场角色) assert.ok(Object.hasOwn(item, '档案'));
+});
+
+test('ROUTE-F09a-2：玩家最优先，完整名额耗尽后按码点降为精简，档案只留四项与两项', async () => {
+  const {protocol, router} = await loadRouting(undefined, {在场角色: {完整人数: 1}}), result = route(router, R0(protocol), messages);
+  assert.deepEqual(result.audit.在场角色.选入.map(item => [item.角色组ID, item.形式]),
+    [['灯塔学徒', '精简'], ['秦守', '精简'], ['玩家', '完整']]);
+  const apprentice = result.context.在场角色.find(item => item.角色组ID === '灯塔学徒');
+  assert.deepEqual(Object.keys(apprentice), ['角色组ID', '显示名', '年龄', '档案', '当前能力', '可用技能', '本局状态']);
+  assert.deepEqual(Object.keys(apprentice.档案), ['基本信息', '角色印象']);
+  assert.deepEqual(Object.keys(apprentice.档案.基本信息), ['姓名', '称号', '性别', '种族']);
+  assert.deepEqual(Object.keys(apprentice.档案.角色印象), ['核心身份', '表现禁区']);
+
+  const compactAll = await loadRouting(undefined, {在场角色: {完整人数: 0}}), compact = route(compactAll.router, R0(compactAll.protocol), messages);
+  const player = compact.context.在场角色.find(item => item.角色组ID === '玩家');
+  assert.deepEqual(Object.keys(player), ['角色组ID', '显示名', '当前能力', '可用技能']);
+  assert.ok(compact.audit.在场角色.选入.every(item => item.形式 === '精简'));
+
+  const minimal = await loadRouting(undefined, {在场角色: {完整人数: 0, 字符: 0}}), least = route(minimal.router, R0(minimal.protocol), messages);
+  assert.ok(least.audit.在场角色.选入.every(item => item.形式 === '最小'));
+  assert.deepEqual(least.context.在场角色.map(item => item.角色组ID), ['灯塔学徒', '秦守', '玩家']);
+  for (const item of least.context.在场角色) {
+    assert.equal(Object.hasOwn(item, '档案'), false);
+    assert.equal(Object.hasOwn(item, '当前能力'), false);
+    assert.equal(Object.hasOwn(item, '可用技能'), false);
+  }
+});
+
+test('ROUTE-F09a-3：三国 12 人同场默认分级压缩、提及优先且顺序与人员不丢', async () => {
+  const root = path.join(project, 'examples/三国演义/世界书'), ids = ['刘备', '关羽', '张飞', '曹操', '袁绍', '袁术', '吕布', '董卓', '孙坚', '卢植', '皇甫嵩'];
+  const send = (protocol, router, text = []) => route(router, W(protocol, S(protocol, null, {开局时间: '中平001年04月02日'}),
+    {当前地点: {地标: '涿县', 场景: '张榜处'}, 在场: Object.fromEntries(ids.map(id => [id, true]))}).state, text);
+  const loaded = await loadRouting(root), tight = send(loaded.protocol, loaded.router);
+  const fullLoaded = await loadRouting(root, {在场角色: {完整人数: 999, 字符: 999999}}), full = send(fullLoaded.protocol, fullLoaded.router);
+  const expected = [...ids].sort(), actual = tight.context.在场角色.map(item => item.角色组ID);
+  assert.deepEqual(actual, [...expected, '玩家']);
+  assert.deepEqual(tight.audit.在场角色.选入.map(item => item.角色组ID), actual);
+  assert.deepEqual(full.audit.在场角色.选入.map(item => item.角色组ID), actual);
+  const forms = tight.audit.在场角色.选入.map(item => item.形式);
+  assert.equal(forms.filter(form => form === '完整').length, 6);
+  assert.equal(forms.filter(form => form === '精简').length, 6);
+  assert.ok(tight.audit.在场角色.字符 < full.audit.在场角色.字符);
+  const compact = tight.context.在场角色.find(item => tight.audit.在场角色.选入.find(entry => entry.角色组ID === item.角色组ID).形式 === '精简');
+  assert.deepEqual(Object.keys(compact.档案.基本信息).every(key => ['姓名', '称号', '性别', '种族'].includes(key)), true);
+  assert.deepEqual(Object.keys(compact.档案.角色印象).every(key => ['核心身份', '表现禁区'].includes(key)), true);
+
+  const mentionedLoaded = await loadRouting(root, {在场角色: {完整人数: 2}});
+  const mentioned = send(mentionedLoaded.protocol, mentionedLoaded.router, ['董卓在远处观望。']);
+  const chosen = mentioned.audit.在场角色.选入;
+  assert.equal(chosen.find(item => item.角色组ID === '玩家').形式, '完整');
+  assert.equal(chosen.find(item => item.角色组ID === '董卓').形式, '完整');
+  assert.equal(chosen.find(item => item.角色组ID === '关羽').形式, '精简');
 });

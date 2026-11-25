@@ -234,7 +234,7 @@ export function assessWorldbookCompat({list, end = list.length, skip = null, ign
 
 // B 级待升级事务执行器：在串行队列中重新校验归属与 B 级前置，逐楼写入新快照与清单，中途失败即停。
 export function createUpgradeFlow({manifest, recordKey, recordFormat, validateRecord, ownershipOf, sanitizeText,
-  messages, chatId, enqueue, audit, refresh, session, status}) {
+  messages, chatId, enqueue, audit, clearCache, refresh, session, status}) {
   async function upgrade() {
     if (!session.upgrade) return false;
     const originChatId = session.upgrade.chatId;
@@ -292,6 +292,8 @@ export function createUpgradeFlow({manifest, recordKey, recordFormat, validateRe
       }
       session.upgrade = null;
       session.integrity = null;
+      // 写入已全部提交；丢弃升级前的旧前缀快照，再让整局校验重建新清单下的已验真前缀。
+      clearCache?.();
       const verified = audit(messages());
       if (!verified.ok) {
         if (verified.级别 === 'B') status.upgradePending(verified);

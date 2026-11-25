@@ -82,6 +82,8 @@ export function formatContext(result) {
   lines.push(`  候选：${budget.候选.已用条数}/${budget.候选.条数上限} 条、${budget.候选.已用字符}/${budget.候选.字符上限} 字符`);
   for (const [name, item] of Object.entries(budget.条目))
     lines.push(`  条目.${name}：${item.已用字符}/${item.预算上限} 字符`);
+  lines.push(`  在场角色：${budget.在场角色.已用人数} 人（完整 ${budget.在场角色.完整人数}/${budget.在场角色.完整人数上限}）、`
+    + `${budget.在场角色.已用字符}/${budget.在场角色.字符上限} 字符`);
   lines.push('', '审计');
   appendLogs(lines, '经历', audit.经历);
   appendLogs(lines, '候选', audit.候选);
@@ -91,6 +93,9 @@ export function formatContext(result) {
     if (log.略过.length) lines.push(`  条目.${name} 略过（${log.略过.length}）：`
       + `${log.略过.map(item => `${item.条目ID}（${item.原因}）`).join('、')}`);
   }
+  const present = audit.在场角色.选入;
+  if (present.length) lines.push(`  在场角色（${present.length}）：${present.map(item =>
+    `${item.角色组ID}（${item.形式}${['精简', '最小'].includes(item.形式) ? '·降级' : ''}，${item.字符} 字）`).join('、')}`);
   lines.push(`  异常（${audit.异常.length}）：${audit.异常.length ? '' : '无'}`);
   for (const item of audit.异常) lines.push(`    - ${item.类型}：${item.说明}`);
   return `${lines.join('\n')}\n`;

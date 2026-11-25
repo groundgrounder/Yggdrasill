@@ -260,9 +260,22 @@ export function createHistoryAudit({protocol, manifest}) {
     return validateRecord({...stored, 归属: ownershipOf(message)}, message, manifest, RECORD_FORMAT, {allowWorldbookDiff});
   }
 
+  // 已验真前缀快照缓存：键含楼号、归属、七项运行清单与 本局/命令/已写入 的逐字快照。
+  // 任何已缓存楼层的编辑、swipe 切换或原地篡改都会让键失配，从失配处起完整重放，错误码与无缓存一致。
+  let prefixCache = [];
+  const stats = {hits: 0, misses: 0, replayedFloors: 0};
+  const stepKey = (record, id) => JSON.stringify([id, record.归属, record.运行清单,
+    JSON.stringify([record.本局, record.命令, record.已写入])]);
+  function clearCache() { prefixCache = []; }
+  function invalidateFrom(floorId) { prefixCache = prefixCache.filter(item => item.楼号 < floorId); }
+  function cacheStats() {
+    return {hits: stats.hits, misses: stats.misses, replayedFloors: stats.replayedFloors, cachedFloors: prefixCache.length};
+  }
+
   // 载入只读校验：先过硬门禁；若存在世界书哈希差异则走内存只读试重放分级（A/B/C），同哈希仍按原严格重放。
   function audit(list, {end = list.length, skip = null, ignoreOwnership = null} = {}) {
     let hasAssistant0 = false, hasWorldbookDiff = false;
+    const floors = [];
     for (let id = 0; id < end; id++) {
       const message = list[id];
       if (message.role !== 'assistant' || id === skip) continue;
@@ -279,6 +292,7 @@ export function createHistoryAudit({protocol, manifest}) {
         return {ok: false, code: '记录.缺失', 说明: '第 0 楼没有可用的开局记录', 楼号: 0};
       }
       if (candidate.运行清单.世界书哈希 !== manifest.世界书哈希) hasWorldbookDiff = true;
+      floors.push({id, record: candidate});
     }
     if (hasWorldbookDiff) {
       return assessWorldbookCompat({
@@ -286,44 +300,51 @@ export function createHistoryAudit({protocol, manifest}) {
         recordOf, replayRecord, storedManifest, ownershipOf, recordFormat: RECORD_FORMAT,
       });
     }
-    let state = null;
-    for (let id = 0; id < end; id++) {
-      const message = list[id];
-      if (message.role !== 'assistant' || id === skip) continue;
-      const record = recordOf(message);
-      const candidate = id === ignoreOwnership && record?.归属 && typeof record.归属 === 'object'
-        ? {...record, 归属: ownershipOf(message)} : record;
+    // 常规严格路径（ignoreOwnership === null）才读写缓存；试重放分级与忽略归属路径不碰缓存。
+    const cached = ignoreOwnership === null, keys = cached ? floors.map(floor => stepKey(floor.record, floor.id)) : null;
+    let start = 0, state = null;
+    if (cached) {
+      while (start < floors.length && start < prefixCache.length
+        && prefixCache[start].楼号 === floors[start].id && prefixCache[start].键 === keys[start]) start += 1;
+      if (start < floors.length && start < prefixCache.length) prefixCache.length = start;
+      stats.hits += start;
+      if (start > 0) state = prefixCache[start - 1].state;
+    }
+    for (let index = start; index < floors.length; index++) {
+      const {id, record} = floors[index];
+      if (cached) stats.misses += 1;
       if (id === 0) {
         let replayed;
         try {
-          const opening = candidate.本局.开局;
+          const opening = record.本局.开局;
           const seeded = protocol.seal({开局时间: opening.开局时间, 角色组: opening.角色组, 玩家: opening.玩家,
             历史选择: opening.历史选择, ...(opening.方案 ? {方案: opening.方案} : {})});
-          replayed = replayRecord(candidate, seeded, (base, commands) => applyCommands(protocol, base, commands));
-          protocol.createReadView(candidate.本局);
+          replayed = replayRecord(record, seeded, (base, commands) => applyCommands(protocol, base, commands));
+          protocol.createReadView(record.本局);
         } catch (error) {
           return {ok: false, code: error.code ?? '开局.封卷', 说明: '第 0 楼不是可重放的已封卷本局：' + error.message, 楼号: 0};
         }
         if (replayed.失败.length) return {ok: false, code: '重放.命令', 说明: '第 0 楼保存的开场命令重放失败', 楼号: 0};
-        if (!sameSnapshot(replayed.state, candidate.本局))
+        if (!sameSnapshot(replayed.state, record.本局))
           return {ok: false, code: '重放.失配', 说明: '第 0 楼命令重放结果与保存的本局不一致', 楼号: 0};
-        if (JSON.stringify(replayed.已写入) !== JSON.stringify(candidate.已写入))
+        if (JSON.stringify(replayed.已写入) !== JSON.stringify(record.已写入))
           return {ok: false, code: '重放.写入', 说明: '第 0 楼开场命令写入摘要与记录不一致', 楼号: 0};
-        state = candidate.本局;
-        continue;
+        state = record.本局;
+      } else {
+        let replayed;
+        try { replayed = replayRecord(record, state, (base, commands) => applyCommands(protocol, base, commands)); }
+        catch (error) { return {ok: false, code: '重放.执行', 说明: error.message, 楼号: id}; }
+        if (replayed.失败.length) return {ok: false, code: '重放.命令', 说明: '保存的成功命令在当前底本上执行失败', 楼号: id};
+        if (!sameSnapshot(replayed.state, record.本局))
+          return {ok: false, code: '重放.失配', 说明: '命令重放结果与保存的本局不一致', 楼号: id};
+        if (JSON.stringify(replayed.已写入) !== JSON.stringify(record.已写入))
+          return {ok: false, code: '重放.写入', 说明: '命令重放写入摘要与记录不一致', 楼号: id};
+        state = record.本局;
       }
-      let replayed;
-      try { replayed = replayRecord(candidate, state, (base, commands) => applyCommands(protocol, base, commands)); }
-      catch (error) { return {ok: false, code: '重放.执行', 说明: error.message, 楼号: id}; }
-      if (replayed.失败.length) return {ok: false, code: '重放.命令', 说明: '保存的成功命令在当前底本上执行失败', 楼号: id};
-      if (!sameSnapshot(replayed.state, record.本局))
-        return {ok: false, code: '重放.失配', 说明: '命令重放结果与保存的本局不一致', 楼号: id};
-      if (JSON.stringify(replayed.已写入) !== JSON.stringify(record.已写入))
-        return {ok: false, code: '重放.写入', 说明: '命令重放写入摘要与记录不一致', 楼号: id};
-      state = record.本局;
+      if (cached) { prefixCache.push({楼号: id, 键: keys[index], state}); stats.replayedFloors += 1; }
     }
     return {ok: true, state};
   }
 
-  return {replay, checkRecords, checkChangedAssistant, audit};
+  return {replay, checkRecords, checkChangedAssistant, audit, clearCache, invalidateFrom, cacheStats};
 }

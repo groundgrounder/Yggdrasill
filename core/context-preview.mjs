@@ -162,8 +162,11 @@ export async function previewContext(root, options = {}) {
         已用字符: audit.候选.字符, 字符上限: audit.候选.预算.字符},
       条目: Object.fromEntries(pairs(audit.条目).map(([name, log]) =>
         [name, {已用字符: log.字符, 预算上限: log.预算}])),
+      在场角色: {已用人数: audit.在场角色.选入.length,
+        完整人数: audit.在场角色.选入.filter(item => item.形式 === '完整').length,
+        完整人数上限: audit.在场角色.预算.完整人数, 已用字符: audit.在场角色.字符, 字符上限: audit.在场角色.预算.字符},
     },
-    审计: {经历: audit.经历, 候选: audit.候选, 条目: audit.条目, 提及: audit.提及, 异常: audit.异常},
+    审计: {经历: audit.经历, 候选: audit.候选, 条目: audit.条目, 提及: audit.提及, 在场角色: audit.在场角色, 异常: audit.异常},
     正文: options.raw === true ? rendered : null,
   };
 }

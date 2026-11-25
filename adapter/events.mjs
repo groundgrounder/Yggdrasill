@@ -106,6 +106,7 @@ export function registerAdapterEvents({
 
   eventOn(tavern_events.MESSAGE_EDITED, id => {
     const number = Number(id);
+    history.invalidateFrom(number);
     // 开场提交会先写第 0 楼正文，宿主随后发出的编辑事件属于本次写入而非玩家改动。
     // 提交期间不使任务失效；提交完成后按正文指纹识别自己写入的那一版。
     const selfEdit = () => {
@@ -137,6 +138,7 @@ export function registerAdapterEvents({
 
   eventOn(tavern_events.MESSAGE_SWIPED, id => {
     invalidateTasks();
+    history.invalidateFrom(Number(id));
     return enqueue(async () => {
       if (session.integrity || session.upgrade) return status.renderFloors();
       const number = Number(id), list = messages(), message = list[number];
@@ -161,6 +163,7 @@ export function registerAdapterEvents({
   // 删除事件只带新长度。从第 0 楼起用保留楼层的成功命令重放；只读/待升级态删楼后自动重审，若合法即刻解锁恢复。
   eventOn(tavern_events.MESSAGE_DELETED, () => {
     invalidateTasks();
+    history.clearCache();
     return enqueue(async () => {
       const wasBlocked = Boolean(session.integrity || session.upgrade);
       session.integrity = null; session.upgrade = null;
@@ -182,6 +185,7 @@ export function registerAdapterEvents({
 
   eventOn(tavern_events.CHAT_CHANGED, () => {
     invalidateTasks();
+    history.clearCache();
     return enqueue(async () => {
       for (const key of ['openingPopup', 'repairPopup']) {
         if (!session[key]) continue;

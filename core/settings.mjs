@@ -3,7 +3,7 @@ import {ProtocolError} from './protocol.mjs';
 import {freeze, has, isMap} from './utils.mjs';
 
 export const DEFAULT_SETTINGS = freeze({经历: {条数: 6, 字符: 3000}, 候选: {条数: 4, 字符: 4000},
-  条目字符: {默认: 1500}, 提及窗口: 2});
+  在场角色: {完整人数: 6, 字符: 12000}, 条目字符: {默认: 1500}, 提及窗口: 2});
 
 export function normalizeSettings(input = {}, libraries = {}) {
   const fail = message => { throw new ProtocolError('运行参数.格式', message); };
@@ -19,6 +19,14 @@ export function normalizeSettings(input = {}, libraries = {}) {
       if (!['条数', '字符'].includes(name)) fail(`${key}含未知键“${name}”`);
       integer(value, `${key}.${name}`);
       result[key][name] = value;
+    }
+  }
+  if (has(input, '在场角色')) {
+    if (!isMap(input.在场角色)) fail('在场角色须为映射');
+    for (const [name, value] of Object.entries(input.在场角色)) {
+      if (!['完整人数', '字符'].includes(name)) fail(`在场角色含未知键“${name}”`);
+      integer(value, `在场角色.${name}`);
+      result.在场角色[name] = value;
     }
   }
   if (has(input, '提及窗口')) { integer(input.提及窗口, '提及窗口'); result.提及窗口 = input.提及窗口; }

@@ -433,3 +433,35 @@ test('格式-10：全量真实世界书副本幂等、语义与检查不退化',
   assert.deepEqual(after.errors, before.errors);
   assert.deepEqual(after.hints, before.hints);
 });
+
+test('ROUTE-F04-格式：分支专属文本按契约键序且二次往返幂等', async t => {
+  const root = await tempRoot(t);
+  const file = await put(root, '历史/事件/乙/事件.txt', `分支:
+  - 变化: []
+    隐秘信息: [分支隐秘。]
+    公开信息: [分支公开。]
+    影响范围: 分支影响。
+    事件概要: 分支概要。
+    分支结果: 结果
+    分支条件: 条件
+    分支ID: 分支一
+默认分支: 分支一
+核心参与者: []
+确认策略: 条件确认
+事件结果: [剧情条件变化]
+触发时间: {最晚: 潮历001年01月02日, 最早: 潮历001年01月01日}
+标签: [天灾]
+主类型: 世界
+事件概要: 顶层概要。
+事件ID: 乙
+`);
+  const first = await cli(['format', root, '--write', '--json']);
+  assert.equal(first.code, 0, first.stderr);
+  const text = await readText(file), branchText = text.slice(text.indexOf('分支:'));
+  const order = ['分支ID:', '分支条件:', '分支结果:', '事件概要:', '影响范围:', '公开信息:', '隐秘信息:', '变化:'];
+  const positions = order.map(token => branchText.indexOf(token));
+  assert.ok(positions.every((value, index) => value >= 0 && (index === 0 || value > positions[index - 1])), text);
+  assert.equal((await cli(['format', root, '--check', '--json'])).code, 0);
+  assert.equal((await cli(['format', root, '--write', '--json'])).code, 0);
+  assert.equal(await readText(file), text);
+});

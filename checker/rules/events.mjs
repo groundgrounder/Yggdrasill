@@ -60,6 +60,10 @@ export function checkEvents(catalog, decl) {
       if (!isText(branch.分支ID)) add('分支.格式', file, '分支ID须为非空文本');
       ids.push(branch.分支ID);
       if (!isText(branch.分支条件) || !isText(branch.分支结果)) add('分支.格式', file, '分支条件与分支结果须为非空文本');
+      for (const key of ['事件概要', '影响范围'])
+        if (has(branch, key) && !isText(branch[key])) add('分支.格式', file, `分支“${branch.分支ID ?? '?'}”的${key}须为非空文本`);
+      for (const key of ['公开信息', '隐秘信息'])
+        if (has(branch, key) && !textList(branch[key])) add('分支.格式', file, `分支“${branch.分支ID ?? '?'}”的${key}须为非空无重复文本列表`);
       if (has(branch, '门槛')) {
         if (branch.门槛 === null) add('条件.格式', file, `分支“${branch.分支ID ?? '?'}”门槛不能为 null`);
         else issues.push(...checkCondition(branch.门槛, {decl, catalog, file, policy: content.确认策略, writtenValues}, `分支“${branch.分支ID ?? '?'}”门槛`));

@@ -188,6 +188,7 @@ async function bookkeep(list, id, base, task) {
 // ---------- 重放、编辑与删除后的传播 ----------
 async function replayFrom(from, base, {fresh = false, kind = '重放', shifted = false, end = null} = {}) {
   let state = base, list = messages();
+  history.invalidateFrom(Math.max(0, from));
   for (let id = Math.max(0, from); id < (end === null ? list.length : Math.min(end, list.length)); id++) {
     const message = list[id];
     if (message.role !== 'assistant') continue;
@@ -294,6 +295,7 @@ async function rekeepFloor(list, id) {
   if (!prefix.ok) return status.blocked(prefix);
   const records = history.checkRecords(list, {from: id, allowWorldbookDiff: true});
   if (!records.ok) return status.blocked(records);
+  history.invalidateFrom(id);
   invalidateTasks();
   if (await replayFrom(id, prefix.state, {fresh: true, kind: '重新记账'})) refresh();
 }
@@ -361,6 +363,7 @@ async function openRepair(id) {
           return false;
         }
         try {
+          history.invalidateFrom(id);
           if (!(await store(id, outcome.record, task))) return true;
         } catch (error) {
           dialog.setError('写入失败：' + sanitizeText(error.message));
@@ -385,7 +388,7 @@ const status = createStatusView({session, injectId: INJECT_ID, messages, chatId,
   keeperSettings, openOpening: () => openingFlow.open(), rekeepFor, repairFor: id => () => openRepair(id),
   runUpgrade: () => upgradeFlow.upgrade()});
 upgradeFlow = createUpgradeFlow({manifest, recordKey: KEY, recordFormat: RECORD_FORMAT, validateRecord, ownershipOf,
-  sanitizeText, messages, chatId, enqueue, audit: history.audit, refresh, session, status});
+  sanitizeText, messages, chatId, enqueue, audit: history.audit, clearCache: history.clearCache, refresh, session, status});
 
 const openingFlow = createOpeningFlow({protocol, catalog, decl, defaults: bundle.opening, commands: bundle.openingCommands,
   openingSpec: {openingGreeting: bundle.openingGreeting, commands: bundle.openingCommands,
