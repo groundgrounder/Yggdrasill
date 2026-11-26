@@ -2,7 +2,7 @@ import {GROUP_FIELDS, VERSION_FIELDS, PROFILE_ITEM_FIELDS, INITIALIZATION_MODES}
 import {dimensionKeys, referenceExists} from '../../core/fields.mjs';
 import {has, isMap, isText, texts, pairs, list, issue, matches} from '../../core/utils.mjs';
 import {checkId} from './layout.mjs';
-import {checkCondition, conditionReferences} from '../../core/conditions.mjs';
+import {checkCondition, hasPositiveCondition} from '../../core/conditions.mjs';
 
 export function checkGroups(catalog, decl) {
   const issues = [], aliases = new Map();
@@ -70,7 +70,7 @@ export function checkGroups(catalog, decl) {
       if (has(item, '生效条件')) {
         if (item.生效条件 === null) issues.push(issue('条件.格式', '错误', file, `档案“${item.档案ID}”生效条件：不能为 null`));
         else issues.push(...checkCondition(item.生效条件, {decl, catalog, file, policy: '条件确认'}, `档案“${item.档案ID}”生效条件`));
-        if (item.默认 !== true && !conditionReferences(item.生效条件).some(ref => !ref.排斥)) add('档案项.生效条件', file, `${item.档案ID}生效条件必须含正向事件确认`);
+        if (item.默认 !== true && !hasPositiveCondition(item.生效条件, ['事件确认', '世界线'])) add('档案项.生效条件', file, `${item.档案ID}生效条件必须含正向事件确认或正向世界线条件`);
       }
       if (has(item, '前置档案') && !isText(item.前置档案)) add('档案项.前置档案', file, '前置档案须为非空档案ID');
       if (has(item, '初始能力')) checkInitialAbility(item.初始能力, item.档案ID, file, catalog, decl, add);

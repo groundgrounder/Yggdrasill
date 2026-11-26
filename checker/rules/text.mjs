@@ -45,6 +45,7 @@ export function checkText(catalog, decl) {
     checkValues(group.文件, group.内容, values, null);
   }
   for (const chain of catalog.chains) checkValues(chain.文件, chain.内容, [chain.内容?.概述].filter(value => typeof value === 'string'), null);
+  for (const worldline of list(catalog.worldlines)) checkValues(worldline.文件, worldline.内容, [worldline.内容?.概述].filter(value => typeof value === 'string'), null);
   if (catalog.openingOptions) {
     const values = [];
     for (const option of list(catalog.openingOptions.内容?.选项)) {

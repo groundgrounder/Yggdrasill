@@ -7,6 +7,7 @@ const add = (out, rule, file, message, level = '错误') => out.push(issue(rule,
 
 export function checkLayout(catalog, decl) {
   const out = [], directories = new Set(catalog.directories), files = catalog.files;
+  const worldlineIds = new Set(list(catalog.worldlines).map(worldline => worldline.id));
   for (const name of FIXED_ROOTS) if (!directories.has(name)) add(out, '目录.缺少固定根', name, `缺少固定目录“${name}”`);
   for (const directory of catalog.directories) {
     const top = directory.split('/')[0];
@@ -15,12 +16,18 @@ export function checkLayout(catalog, decl) {
     if (directory.split('/').length === 1 && TEXT_CONTAINERS.includes(directory)) continue;
     if (directory.split('/').length > 1 && !FIXED_ROOTS.includes(top) && !TEXT_CONTAINERS.includes(top) && !has(decl.libraries, top)) add(out, '目录.未声明目录', directory, '目录不属于固定根或已声明条目库');
     const parts = directory.split('/');
+    if (top === '世界概况' && parts.length > 1) {
+      if (parts[1] !== '世界线' || parts.length > 3) add(out, '目录.未知文件', directory, '世界概况下仅允许世界线专属概况目录 世界概况/世界线/{世界线ID}');
+      else if (parts.length === 3 && !worldlineIds.has(parts[2])) add(out, '开局.世界线引用', directory, `世界线专属概况目录引用不存在的世界线“${parts[2]}”`);
+    }
     if (top === '历史') {
       const eventSubdirectory = parts[1] === '事件';
       if ((eventSubdirectory && parts.length === 4 && parts[3] !== '角色') || (eventSubdirectory && parts.length >= 5))
         add(out, parts.length >= 3 ? '事件.未知文件' : '目录.未知文件', directory, '事件目录下出现未规定的目录');
-      else if (!['历史', '事件', '事件串', '开局方案'].includes(parts.at(-1)) && parts.length < 3)
+      else if (!['历史', '事件', '事件串', '世界线', '开局方案'].includes(parts.at(-1)) && parts.length < 3)
         add(out, '目录.未知文件', directory, '历史下出现未规定的目录');
+      else if (parts[1] === '世界线' && parts.length >= 3)
+        add(out, '目录.未知文件', directory, '世界线目录下不能嵌套子目录');
     }
     if ((top === '设定' && parts.length > 1) || (top === '角色' && parts.length > 2 && parts[2] !== '档案')
       || (top === '角色' && parts.length > 4)) add(out, '目录.未知文件', directory, '固定根下出现未规定的目录结构');
@@ -49,6 +56,8 @@ export function checkLayout(catalog, decl) {
     if (extension && suffix !== extension) add(out, '目录.扩展名不符', name, `此类文件必须使用 ${extension}`);
     if (kind === '历史' && !validHistoryPath(parts)) add(out, parts[1] === '事件' ? '事件.未知文件' : '目录.未知文件', name, '历史下出现未规定的文件或目录');
     if (kind === '历史' && parts[1] === '事件' && parts.length >= 4 && parts[3] === '角色' && parts.length === 5 && !parts[4].endsWith('.txt')) add(out, '事件.未知文件', name, '角色目录下只能有角色位置文本文件');
+    if (kind === '文本容器文件' && parts[0] === '世界概况' && parts.length > 2 && (parts[1] !== '世界线' || parts.length !== 4))
+      add(out, '目录.未知文件', name, '世界线专属概况文件须位于 世界概况/世界线/{世界线ID}/*.txt');
     if (kind === '条目库说明') {
       if (source !== null && !hasContent(content)) add(out, '目录.空壳说明', name, '说明文件没有任何内容', '提示');
       continue;
@@ -59,6 +68,7 @@ export function checkLayout(catalog, decl) {
     }
   }
   for (const eventId of catalog.eventIds) out.push(...checkId(eventId, `历史/事件/${eventId}`, '事件ID', true, decl));
+  for (const worldline of list(catalog.worldlines)) out.push(...checkId(worldline.id, worldline.文件, '世界线ID', true, decl));
   for (const [library, entries] of Object.entries(catalog.entries)) for (const entry of entries) {
     out.push(...checkId(entry.id, entry.文件, `${library}ID`, true, decl));
     const schema = decl.libraries[library];
@@ -87,7 +97,7 @@ function validHistoryPath(parts) {
   const name = parts.at(-1) ?? '';
   const stem = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
   if (parts.length === 2 && parts[0] === '历史' && stem === '开局选项') return true;
-  if (parts.length === 3 && parts[0] === '历史' && ['事件串', '开局方案'].includes(parts[1])) return true;
+  if (parts.length === 3 && parts[0] === '历史' && ['事件串', '世界线', '开局方案'].includes(parts[1])) return true;
   if (parts.length === 4 && parts[0] === '历史' && parts[1] === '事件' && stem === '事件') return true;
   if (parts.length === 5 && parts[0] === '历史' && parts[1] === '事件' && parts[3] === '角色') return true;
   return false;
@@ -97,7 +107,7 @@ function expectedExtension(kind, parts) {
   if (['设定', '角色组文件'].includes(kind)) return '.yaml';
   if (['档案文件', '文本容器文件', '条目库实例', '条目库说明'].includes(kind)) return '.txt';
   if (kind === '历史') {
-    if ((parts.length === 3 && ['事件串', '开局方案'].includes(parts[1]))
+    if ((parts.length === 3 && ['事件串', '世界线', '开局方案'].includes(parts[1]))
       || (parts.length === 2 && parts[1].startsWith('开局选项.'))) return '.yaml';
     if ((parts.length === 4 && parts[1] === '事件') || (parts.length === 5 && parts[1] === '事件' && parts[3] === '角色')) return '.txt';
   }

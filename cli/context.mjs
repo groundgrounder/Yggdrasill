@@ -2,10 +2,10 @@ import * as defaultFs from 'node:fs/promises';
 import defaultPath from 'node:path';
 import {previewContext, ContextError} from '../core/context-preview.mjs';
 
-const USAGE = '用法：ygg context <世界书目录> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>]\n'
+const USAGE = '用法：ygg context <世界书目录> [--世界线 <世界线ID>] [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>]\n'
   + '      [--地点 <地标ID>] [--场景 <场景文本>] [--在场 <角色组ID>]... [--消息 <文本>]...\n'
   + '      [--不自动初始化] [--raw] [--json]';
-const SINGLE_OPTIONS = ['--开局', '--方案', '--本局', '--地点', '--场景'];
+const SINGLE_OPTIONS = ['--世界线', '--开局', '--方案', '--本局', '--地点', '--场景'];
 
 export async function runContext(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
   fs = defaultFs, path = defaultPath} = {}) {
@@ -23,7 +23,7 @@ export async function runContext(args, {cwd = process.cwd(), stdout = process.st
   const root = path.resolve(cwd, parsed.世界书);
   try {
     const result = await previewContext(root, {fs, path, cwd,
-      开局: parsed.开局, 方案: parsed.方案, 本局: parsed.本局, 地点: parsed.地点, 场景: parsed.场景,
+      世界线: parsed.世界线, 开局: parsed.开局, 方案: parsed.方案, 本局: parsed.本局, 地点: parsed.地点, 场景: parsed.场景,
       在场: parsed.在场, 消息: parsed.消息, 自动初始化: parsed.自动初始化, raw: parsed.raw});
     if (parsed.json) stdout.write(`${JSON.stringify({...result, 异常: []}, null, 2)}\n`);
     else if (parsed.raw) stdout.write(result.正文);
@@ -40,7 +40,7 @@ export async function runContext(args, {cwd = process.cwd(), stdout = process.st
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('context 参数须为列表');
-  const result = {世界书: null, 开局: null, 方案: null, 本局: null, 地点: null, 场景: null,
+  const result = {世界书: null, 世界线: null, 开局: null, 方案: null, 本局: null, 地点: null, 场景: null,
     在场: [], 消息: [], 自动初始化: true, raw: false, json: false, help: false};
   const positionals = [], seen = new Set();
   for (let index = 0; index < args.length; index++) {
@@ -69,6 +69,7 @@ export function formatContext(result) {
   const input = result.输入, summary = result.汇总, budget = result.预算, audit = result.审计;
   const lines = ['输入'];
   lines.push(`  世界书：${input.世界书}`);
+  if (input.世界线) lines.push(`  世界线：${input.世界线}`);
   lines.push(`  开局：${input.开局 ?? '无'}${input.方案 ? `（方案：${input.方案}）` : ''}`);
   lines.push(`  地点：${input.地点 ?? '无'}｜场景：${input.场景 ?? '无'}`);
   lines.push(`  在场：${input.在场.length ? input.在场.join('、') : '无'}`

@@ -20,8 +20,8 @@ export async function compileWorldbook(root, {fs, path} = {}) {
 }
 
 export async function loadWorldbook(root, {fs, path, decl}) {
-  const catalog = {entries: {}, descriptions: [], groups: [], texts: [], events: [], chains: [], openingOptions: null,
-    openingPlans: [], sources: null, eventIds: [], files: [], directories: []};
+  const catalog = {entries: {}, descriptions: [], groups: [], texts: [], events: [], chains: [], worldlines: [],
+    openingOptions: null, openingPlans: [], sources: null, eventIds: [], files: [], directories: []};
   const issues = [];
   const libraries = decl?.libraries ?? {};
   for (const name of Object.keys(libraries)) Object.defineProperty(catalog.entries, name, {value: [], enumerable: true});
@@ -94,6 +94,8 @@ export async function loadWorldbook(root, {fs, path, decl}) {
       原文: eventRecord?.原文 ?? null, 角色位置: positions};
   });
   catalog.chains = catalog.files.filter(record => /^历史\/事件串\/[^/]+\.yaml$/u.test(record.文件))
+    .map(record => ({id: record.文件.split('/').at(-1).slice(0, -5), 文件: record.文件, 内容: record.内容}));
+  catalog.worldlines = catalog.files.filter(record => /^历史\/世界线\/[^/]+\.yaml$/u.test(record.文件))
     .map(record => ({id: record.文件.split('/').at(-1).slice(0, -5), 文件: record.文件, 内容: record.内容}));
   const optionRecord = catalog.files.find(record => record.文件 === '历史/开局选项.yaml');
   if (optionRecord) catalog.openingOptions = {文件: optionRecord.文件, 内容: optionRecord.内容};

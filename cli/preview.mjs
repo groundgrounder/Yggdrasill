@@ -4,7 +4,7 @@ import {compileWorldbook} from '../core/catalog.mjs';
 import {createProtocol} from '../core/protocol.mjs';
 import {timelineEnd} from '../core/what-if.mjs';
 
-const USAGE = '用法：ygg preview <世界书目录> <角色组ID> [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--状态] [--json]';
+const USAGE = '用法：ygg preview <世界书目录> <角色组ID> [--世界线 <世界线ID>] [--开局 <纪年>] [--方案 <方案ID>] [--本局 <本局JSON>] [--状态] [--json]';
 
 export class PreviewError extends Error {
   constructor(code, message) {
@@ -46,8 +46,10 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
       throw error;
     }
     const reason = preview ? null : explain(state, parsed.角色组);
+    const worldline = parsed.世界线 ?? state?.开局?.世界线 ?? null;
     const result = {
       角色组: parsed.角色组,
+      ...(worldline ? {世界线: worldline} : {}),
       开局: state?.世界?.当前时间 ?? null,
       方案: parsed.方案 ?? state?.开局?.方案 ?? null,
       预览: preview ?? null,
@@ -66,7 +68,7 @@ export async function runPreview(args, {cwd = process.cwd(), stdout = process.st
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw new PreviewError('预览.参数', 'preview 参数须为列表');
-  const result = {世界书: null, 角色组: null, 开局: null, 方案: null, 本局: null, 状态: false, json: false, help: false};
+  const result = {世界书: null, 角色组: null, 世界线: null, 开局: null, 方案: null, 本局: null, 状态: false, json: false, help: false};
   const positionals = [];
   const seen = new Set();
   for (let index = 0; index < args.length; index++) {
@@ -74,6 +76,11 @@ export function parseArgs(args) {
     if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
     if (value === '--状态') { result.状态 = true; continue; }
+    if (value === '--世界线') {
+      once(seen, '--世界线');
+      result.世界线 = optionValue(args, ++index, '--世界线');
+      continue;
+    }
     if (value === '--开局') {
       once(seen, '--开局');
       result.开局 = optionValue(args, ++index, '--开局');
@@ -97,13 +104,14 @@ export function parseArgs(args) {
       ? `多余位置参数：${positionals.slice(2).join(' ')}` : '需要世界书目录与角色组ID');
   result.世界书 = positionals[0] ?? null;
   result.角色组 = positionals[1] ?? null;
-  if (result.本局 && (result.开局 || result.方案))
-    throw new PreviewError('预览.参数', '--本局 不能与 --开局 或 --方案 同用');
+  if (result.本局 && (result.开局 || result.方案 || result.世界线))
+    throw new PreviewError('预览.参数', '--本局 不能与 --世界线、--开局 或 --方案 同用');
   return result;
 }
 
 export function formatPreview(result) {
   const lines = [`角色组：${result?.角色组 ?? '无'}`];
+  if (result?.世界线) lines.push(`世界线：${result.世界线}`);
   lines.push(`开局：${result?.开局 ?? '无'}`);
   lines.push(`方案：${result?.方案 ?? '默认'}`);
   if (result?.预览) {
@@ -126,10 +134,13 @@ export function formatPreview(result) {
 }
 
 function sealState(protocol, catalog, decl, parsed) {
+  if (parsed.世界线 && !listWorldlines(catalog).some(worldline => worldline.id === parsed.世界线))
+    throw new PreviewError('预览.世界线', `世界线不存在：${parsed.世界线}`);
   if (parsed.方案 && !listPlans(catalog).some(plan => plan.id === parsed.方案))
     throw new PreviewError('预览.方案', `开局方案不存在：${parsed.方案}`);
   const opening = parsed.开局 ?? axisEnd(catalog, decl);
   const config = {开局时间: opening};
+  if (parsed.世界线) config.世界线 = parsed.世界线;
   if (parsed.方案) config.方案 = parsed.方案;
   try { return protocol.seal(config); }
   catch (error) {
@@ -197,6 +208,7 @@ function once(seen, option) {
 
 function listGroups(catalog) { return Array.isArray(catalog?.groups) ? catalog.groups : []; }
 function listPlans(catalog) { return Array.isArray(catalog?.openingPlans) ? catalog.openingPlans : []; }
+function listWorldlines(catalog) { return Array.isArray(catalog?.worldlines) ? catalog.worldlines : []; }
 
 function abilityText(ability) {
   const entries = Object.entries(ability ?? {});

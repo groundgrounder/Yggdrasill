@@ -5,9 +5,20 @@ import {codepointCompare, has, isMap, list, pairs} from './utils.mjs';
 export const trimNewlines = value => value.replace(/[\r\n]+$/u, '');
 
 export function containerText(catalog, name) {
-  return list(catalog.texts).filter(record => record.文件.startsWith(`${name}/`))
+  return list(catalog.texts).filter(record => record.文件.startsWith(`${name}/`)
+    && !(name === '世界概况' && record.文件.startsWith('世界概况/世界线/')))
     .sort((left, right) => codepointCompare(left.文件, right.文件))
     .map(record => trimNewlines(record.原文 ?? '')).join('\n\n');
+}
+
+export function worldOverview(catalog, worldlineID = null) {
+  const shared = containerText(catalog, '世界概况');
+  if (typeof worldlineID !== 'string' || !worldlineID.length) return shared;
+  const prefix = `世界概况/世界线/${worldlineID}/`;
+  const extra = list(catalog.texts).filter(record => record.文件.startsWith(prefix) && record.文件.split('/').length === 4)
+    .sort((left, right) => codepointCompare(left.文件, right.文件))
+    .map(record => trimNewlines(record.原文 ?? '')).join('\n\n');
+  return [shared, extra].filter(Boolean).join('\n\n');
 }
 
 export function formatCalendar(calendar) {

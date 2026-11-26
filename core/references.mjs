@@ -3,7 +3,7 @@ import {conditionReferences} from './conditions.mjs';
 import {analyzeEventTree} from './graph.mjs';
 import {codepointCompare, has, isMap, isText, issue, list, pairs} from './utils.mjs';
 
-const OBJECT_TYPES = new Set(['事件', '事件串', '角色组', '档案', '条目', '剧情标记', '开局选项', '开局方案']);
+const OBJECT_TYPES = new Set(['事件', '事件串', '角色组', '档案', '条目', '剧情标记', '世界线', '开局选项', '开局方案']);
 const QUERYABLE_TARGETS = new Set(OBJECT_TYPES);
 const CONDITION_TYPES_SET = new Set(CONDITION_TYPES);
 
@@ -30,6 +30,7 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
   const archiveKey = (groupID, id) => `档案:${groupID}:${id}`;
   const entryKey = (library, id) => `条目:${library}:${id}`;
   const markKey = id => `剧情标记:${id}`;
+  const worldlineKey = id => `世界线:${id}`;
   const versionKey = (groupID, id) => `角色版本:${groupID}:${id}`;
 
   for (const event of list(catalog.events)) register({
@@ -53,6 +54,9 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
   });
   for (const id of Object.keys(isMap(decl.marks) ? decl.marks : {})) register({
     key: markKey(id), type: '剧情标记', id, file: '设定/剧情标记.yaml', content: decl.marks[id], source: decl.marks[id],
+  });
+  for (const worldline of list(catalog.worldlines)) register({
+    key: worldlineKey(worldline.id), type: '世界线', id: worldline.id, file: worldline.文件, content: worldline.内容, source: worldline,
   });
 
   if (catalog.openingOptions) list(catalog.openingOptions.内容?.选项).forEach((option, index) => register({
@@ -103,7 +107,8 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
           : type === '档案' ? archiveKey(options.groupID, id)
             : type === '条目' ? entryKey(options.library, id)
               : type === '剧情标记' ? markKey(id)
-                : type === '角色版本' ? versionKey(options.groupID, id) : null;
+                : type === '世界线' ? worldlineKey(id)
+                  : type === '角色版本' ? versionKey(options.groupID, id) : null;
     return {key, file: key ? keyObject(key)?.file ?? options.file ?? null : options.file ?? null};
   }
 
@@ -186,6 +191,8 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
           id: value?.地标, library: '地点'});
       if (type === '在场实力人数') for (const id of list(value?.排除角色组))
         addTarget({sourceKey, sourceType, sourceFile, field, kind: '在场实力人数.排除角色组', polarity, type: '角色组', id});
+      if (type === '世界线')
+        addTarget({sourceKey, sourceType, sourceFile, field, kind: type, polarity, type: '世界线', id: value?.世界线ID});
       if (type === '角色状态') collectRoleStateReferences({value, sourceKey, sourceType, sourceFile, field, polarity});
     }
   }
@@ -425,6 +432,16 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
   }
 
   function indexOpenings() {
+    for (const worldline of list(catalog.worldlines)) {
+      const sourceKey = worldlineKey(worldline.id), sourceType = '世界线', sourceFile = worldline.文件;
+      for (const [groupID, choice] of pairs(worldline.内容?.角色组)) {
+        addTarget({sourceKey, sourceType, sourceFile, field: `角色组.${groupID}`, kind: '世界线角色组', type: '角色组', id: groupID});
+        if (isText(choice?.版本ID)) addTarget({sourceKey, sourceType, sourceFile,
+          field: `角色组.${groupID}.版本ID`, kind: '世界线版本', type: '角色版本', id: choice.版本ID,
+          groupID, file: `角色/${groupID}/角色组.yaml`,
+        });
+      }
+    }
     if (catalog.openingOptions) for (const [index, option] of list(catalog.openingOptions.内容?.选项).entries()) {
       if (!isText(option?.事件ID)) continue;
       addTarget({sourceKey: `开局选项:${index + 1}`, sourceType: '开局选项', sourceFile: catalog.openingOptions.文件,
@@ -433,6 +450,13 @@ export function buildReferenceIndex(catalog = {}, decl = {}, options = {}) {
     }
     for (const plan of list(catalog.openingPlans)) {
       const sourceKey = `开局方案:${plan.id}`, sourceType = '开局方案', sourceFile = plan.文件;
+      if (isText(plan.内容?.世界线)) addTarget({
+        sourceKey, sourceType, sourceFile, field: '世界线', kind: '开局世界线', type: '世界线', id: plan.内容.世界线,
+      });
+      if (isText(plan.内容?.开局地点)) addTarget({
+        sourceKey, sourceType, sourceFile, field: '开局地点', kind: '开局地点', type: '条目',
+        id: plan.内容.开局地点, library: '地点',
+      });
       for (const eventID of Object.keys(isMap(plan.内容?.历史选择) ? plan.内容.历史选择 : {})) addTarget({
         sourceKey, sourceType, sourceFile, field: `历史选择.${eventID}`, kind: '历史选择', type: '事件', id: eventID,
       });

@@ -4,7 +4,7 @@ import {createProtocol} from './protocol.mjs';
 import {buildReferenceIndex} from './references.mjs';
 import {codepointCompare, has, isMap, isText, issue, list} from './utils.mjs';
 
-const OPTION_KEYS = ['世界书', '方案', '排除', '分支', '停用角色组', 'issues'];
+const OPTION_KEYS = ['世界书', '世界线', '方案', '排除', '分支', '停用角色组', 'issues'];
 
 export class WhatIfError extends Error {
   constructor(code, message) {
@@ -47,6 +47,7 @@ export function whatIf(catalog, decl = {}, options = {}) {
     const protocol = createProtocol({catalog, decl});
     defaultState = protocol.seal({开局时间: resolved.axisEnd});
     ifState = protocol.seal(resolved.ifSeal);
+    if (isText(ifState?.开局?.世界线)) input = {...input, 世界线: ifState.开局.世界线};
     const confirmed = confirmedEvents(catalog, ifState);
     const stopped = stoppedChains(catalog, protocol, ifState, confirmed, analysis, decl);
     const impacts = impactReport(catalog, index);
@@ -71,11 +72,18 @@ function resolveOptions(catalog, decl, options) {
   for (const key of Object.keys(options)) if (!OPTION_KEYS.includes(key)) fail('if.参数', `if 参数含未知字段：${key}`);
   if (has(options, '世界书') && !isText(options.世界书)) fail('if.参数', '世界书路径须为文本');
 
+  const worldlineID = has(options, '世界线') ? options.世界线 : null;
+  if (worldlineID !== null && !isText(worldlineID)) fail('if.参数', '世界线 ID 须为文本');
+  if (worldlineID !== null && !list(catalog?.worldlines).some(item => item.id === worldlineID))
+    fail('if.世界线不存在', `世界线不存在：${worldlineID}`);
+
   const planID = has(options, '方案') ? options.方案 : null;
   if (planID !== null && !isText(planID)) fail('if.参数', '方案 ID 须为文本');
   const plan = planID === null ? null : list(catalog?.openingPlans).find(item => item.id === planID);
   if (planID !== null && !plan) fail('if.方案不存在', `开局方案不存在：${planID}`);
   if (planID !== null && !isMap(plan.内容)) fail('if.方案不存在', `开局方案“${planID}”没有可用的配置`);
+  if (plan && worldlineID !== null && isText(plan.内容?.世界线) && plan.内容.世界线 !== worldlineID)
+    fail('if.参数冲突', `开局方案“${plan.id}”不属于世界线“${worldlineID}”`);
 
   const exclusions = uniqueIDs(options.排除 ?? [], '排除');
   const groups = uniqueIDs(options.停用角色组 ?? [], '停用角色组');
@@ -97,6 +105,7 @@ function resolveOptions(catalog, decl, options) {
 
   const axisEnd = timelineEnd(catalog, decl);
   const ifSeal = {开局时间: axisEnd};
+  if (worldlineID !== null) ifSeal.世界线 = worldlineID;
   if (plan) ifSeal.方案 = plan.id;
 
   const history = Object.fromEntries(exclusions.map(id => [id, '未发生']));
@@ -113,7 +122,9 @@ function resolveOptions(catalog, decl, options) {
   }
 
   return {
-    世界书: options.世界书 ?? null, 方案: planID, 排除: exclusions, 分支: branches,
+    世界书: options.世界书 ?? null,
+    ...(worldlineID !== null ? {世界线: worldlineID} : isText(plan?.内容?.世界线) ? {世界线: plan.内容.世界线} : {}),
+    方案: planID, 排除: exclusions, 分支: branches,
     停用角色组: groups, axisEnd, ifSeal,
   };
 }
@@ -165,6 +176,7 @@ function inputSummary(value, axisEnd = null) {
     ? value[field].filter(isText).slice().sort(codepointCompare) : [];
   return {
     世界书: isText(value?.世界书) ? value.世界书 : null,
+    ...(isText(value?.世界线) ? {世界线: value.世界线} : {}),
     时间轴末尾: axisEnd,
     方案: isText(value?.方案) ? value.方案 : null,
     排除: strings('排除'),

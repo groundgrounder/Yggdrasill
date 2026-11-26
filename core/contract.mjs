@@ -47,15 +47,16 @@ export const PROFILE_FIELDS = freeze({
 
 export const CONFIRMATION_POLICIES = freeze(['自动确认', '条件确认', '仅作候选']);
 export const CONDITION_COMBINATORS = freeze(['all', 'any', 'none']);
-export const CONDITION_TYPES = freeze(['角色启用', '角色版本', '事件确认', '事件串状态', '当前时间', '剧情标记', '角色状态', '同处', '角色已出场', '当前场景', '在场实力人数']);
+export const CONDITION_TYPES = freeze(['角色启用', '角色版本', '事件确认', '事件串状态', '当前时间', '剧情标记', '角色状态', '同处', '角色已出场', '当前场景', '在场实力人数', '世界线']);
 export const UNSEALABLE_CONDITIONS = freeze(['当前场景', '在场实力人数']);
 export const EVENT_FIELDS = freeze(['事件ID', '事件标题', '事件概要', '主类型', '标签', '事件结果', '影响范围', '触发时间', '地点', '确认策略', '核心参与者', '门槛', '关联事件', '叙事条件', '公开信息', '隐秘信息', '默认分支', '分支']);
 export const EVENT_BRANCH_FIELDS = freeze(['分支ID', '门槛', '分支条件', '分支结果', '事件概要', '影响范围', '公开信息', '隐秘信息', '变化']);
 export const POSITION_FIELDS = freeze(['事件ID', '角色组ID', '角色概要', '角色定位', '适用分支', '介入条件', '角色知情', '主观记忆', '按分支', '事件触发语料']);
 export const DIALOGUE_FIELDS = freeze(['触发情境', '候选台词', '表达目的', '情绪或语气', '触发限制']);
 export const CHAIN_FIELDS = freeze(['概述', '事件', '结局']);
+export const WORLDLINE_FIELDS = freeze(['概述', '默认', '角色组']);
 export const OPENING_OPTION_FIELDS = freeze(['自由组合', '选项']);
-export const OPENING_PLAN_FIELDS = freeze(['概述', '开局时间', '角色组', '历史选择']);
+export const OPENING_PLAN_FIELDS = freeze(['世界线', '概述', '开局时间', '开局地点', '角色组', '历史选择']);
 export const FORBIDDEN_TERMS = freeze(['stat_data', '变量', 'schema', '索引', '路由', 'ID', '状态0', '状态1', '状态2',
   '状态0/1/2', '候选事件', '额外模型', '冲突队列', '条目', '注册', '挂载', '加载', '目录',
   '记录规则', '目录规则', '统一格式', '登记规则', '引用边界', '记录边界', '维护']);

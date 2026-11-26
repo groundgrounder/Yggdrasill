@@ -37,6 +37,8 @@ export function checkSampling(catalog, decl) {
   const years = samplingYears(catalog, decl), issues = [];
   const add = (rule, level, file, message) => issues.push(issue(rule, level, file, message));
   const events = new Map(catalog.events.map(event => [event.id, event]));
+  const worldlines = list(catalog.worldlines);
+  const worldlineIDs = worldlines.length ? worldlines.map(worldline => worldline.id) : [null];
   const empty = seal(protocol, {开局时间: calendar.format(0)});
   for (const group of catalog.groups) for (const version of group.版本清单) {
     const profiles = list(group.内容.档案).filter(profile => !has(group.内容, '版本') || profile.适用版本.includes(version));
@@ -47,17 +49,19 @@ export function checkSampling(catalog, decl) {
       add('抽样.组合过多', '提示', group.文件, `角色组“${group.id}”版本“${version}”有 ${count} 种事件状态组合，超过 4096，跳过该版本`);
       continue;
     }
-    for (const year of years) {
+    for (const worldlineID of worldlineIDs) for (const year of years) {
       let reported = false;
       for (const records of combinations(selectedEvents)) {
         const state = structuredClone(empty);
+        if (worldlineID !== null) state.开局.世界线 = worldlineID;
         state.世界.当前时间 = state.开局.开局时间 = calendar.format(year);
         state.开局.角色组[group.id] = {启用: true, 版本ID: version};
         state.事件 = records;
         const result = resolveProfile(protocol, state, group.id, {settle: false});
         if (result.结果 === '冲突' && !reported) {
+          const prefix = worldlineID ? `世界线“${worldlineID}”，` : '';
           add('抽样.档案冲突', '错误', group.文件,
-            `年份 ${year}，角色组“${group.id}”，版本“${version}”，事件状态组合 ${combinationText(state)}；档案冲突：${result.档案.join('、')}`);
+            `${prefix}年份 ${year}，角色组“${group.id}”，版本“${version}”，事件状态组合 ${combinationText(state)}；档案冲突：${result.档案.join('、')}`);
           reported = true;
         }
       }
@@ -68,20 +72,25 @@ export function checkSampling(catalog, decl) {
   for (let index = 0; index < versionCount; index++) variants.push({name: `全部启用·版本${index + 1}`,
     groups: Object.fromEntries(catalog.groups.map(group => [group.id,
       {启用: true, 版本ID: group.版本清单[index] ?? group.内容.默认版本 ?? group.id}]))});
-  for (const year of years) for (const variant of variants) {
+  for (const worldlineID of worldlineIDs) for (const year of years) for (const variant of variants) {
+    const prefix = worldlineID ? `世界线“${worldlineID}”，` : '';
     try {
-      const state = seal(protocol, {开局时间: calendar.format(year), ...(variant.groups ? {角色组: variant.groups} : {})});
+      const state = seal(protocol, {
+        ...(worldlineID !== null ? {世界线: worldlineID} : {}),
+        开局时间: calendar.format(year),
+        ...(variant.groups ? {角色组: variant.groups} : {}),
+      });
       for (const group of catalog.groups) {
         if (state.开局.角色组[group.id].启用 !== true) continue;
         const result = resolveProfile(protocol, state, group.id);
         if (result.结果 === '冲突') add('抽样.档案冲突', '错误', group.文件,
-          `年份 ${year}，开局变体“${variant.name}”，角色组“${group.id}”，版本“${state.开局.角色组[group.id].版本ID}”，事件状态组合 ${combinationText(state)}；档案冲突：${result.档案.join('、')}`);
+          `${prefix}年份 ${year}，开局变体“${variant.name}”，角色组“${group.id}”，版本“${state.开局.角色组[group.id].版本ID}”，事件状态组合 ${combinationText(state)}；档案冲突：${result.档案.join('、')}`);
         else if (result.结果 === '异常') add('抽样.档案异常', '提示', group.文件,
-          `年份 ${year}，开局变体“${variant.name}”，角色组“${group.id}”档案解析异常`);
+          `${prefix}年份 ${year}，开局变体“${variant.name}”，角色组“${group.id}”档案解析异常`);
       }
     } catch (error) {
       if (!(error instanceof ProtocolError)) throw error;
-      add('抽样.封卷失败', '错误', '历史', `年份 ${year}，开局变体“${variant.name}”：${error.code}：${error.message}`);
+      add('抽样.封卷失败', '错误', '历史', `${prefix}年份 ${year}，开局变体“${variant.name}”：${error.code}：${error.message}`);
     }
   }
   for (const plan of catalog.openingPlans) {
@@ -97,12 +106,32 @@ export function checkSampling(catalog, decl) {
   for (const option of list(catalog.openingOptions?.内容?.选项)) {
     const event = events.get(option.事件ID), year = calendar.year(event.内容.触发时间.最晚) + 1;
     for (const branchID of Object.keys(option.选项)) {
-      try { seal(protocol, {开局时间: calendar.format(year), 历史选择: {[event.id]: branchID}}); }
-      catch (error) {
-        if (!(error instanceof ProtocolError)) throw error;
-        const unavailable = error.code === '封卷.历史选择';
-        add(unavailable ? '开局.选项不可选' : '开局.选项封卷失败', unavailable ? '提示' : '错误', catalog.openingOptions.文件,
-          `年份 ${year}，选项“${event.id}/${branchID}”：${error.code}：${error.message}`);
+      if (!worldlines.length) {
+        try { seal(protocol, {开局时间: calendar.format(year), 历史选择: {[event.id]: branchID}}); }
+        catch (error) {
+          if (!(error instanceof ProtocolError)) throw error;
+          const unavailable = error.code === '封卷.历史选择';
+          add(unavailable ? '开局.选项不可选' : '开局.选项封卷失败', unavailable ? '提示' : '错误', catalog.openingOptions.文件,
+            `年份 ${year}，选项“${event.id}/${branchID}”：${error.code}：${error.message}`);
+        }
+        continue;
+      }
+      let succeeded = false;
+      const unavailableErrors = [];
+      for (const worldline of worldlines) {
+        try {
+          seal(protocol, {世界线: worldline.id, 开局时间: calendar.format(year), 历史选择: {[event.id]: branchID}});
+          succeeded = true;
+        } catch (error) {
+          if (!(error instanceof ProtocolError)) throw error;
+          if (error.code === '封卷.历史选择') unavailableErrors.push(error);
+          else add('开局.选项封卷失败', '错误', catalog.openingOptions.文件,
+            `世界线“${worldline.id}”，年份 ${year}，选项“${event.id}/${branchID}”：${error.code}：${error.message}`);
+        }
+      }
+      if (!succeeded && unavailableErrors.length === worldlines.length) {
+        add('开局.选项不可选', '提示', catalog.openingOptions.文件,
+          `年份 ${year}，选项“${event.id}/${branchID}”：${unavailableErrors[0].code}：${unavailableErrors[0].message}`);
       }
     }
   }

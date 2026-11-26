@@ -4,7 +4,7 @@ import {compileWorldbook} from '../core/catalog.mjs';
 import {whatIf} from '../core/what-if.mjs';
 import {codepointCompare} from '../core/utils.mjs';
 
-const USAGE = '用法：ygg if <世界书目录> [--方案 <方案ID>] [--排除 <事件ID>]... '
+const USAGE = '用法：ygg if <世界书目录> [--世界线 <世界线ID>] [--方案 <方案ID>] [--排除 <事件ID>]... '
   + '[--分支 <事件ID>:<分支ID>]... [--停用角色组 <角色组ID>]... [--json]';
 
 export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,
@@ -25,7 +25,9 @@ export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout,
   try {
     const {catalog, decl, issues} = await compileWorldbook(root, {fs, path});
     const result = whatIf(catalog, decl, {
-      世界书: parsed.世界书, 方案: parsed.方案, 排除: parsed.排除, 分支: parsed.分支,
+      世界书: parsed.世界书,
+      ...(parsed.世界线 !== null ? {世界线: parsed.世界线} : {}),
+      方案: parsed.方案, 排除: parsed.排除, 分支: parsed.分支,
       停用角色组: parsed.停用角色组, issues,
     });
     const failed = result.异常.some(item => item?.级别 === '错误');
@@ -43,13 +45,19 @@ export async function runIf(args, {cwd = process.cwd(), stdout = process.stdout,
 
 export function parseArgs(args) {
   if (!Array.isArray(args)) throw argumentError('if 参数须为列表');
-  const result = {世界书: null, 方案: null, 排除: [], 分支: [], 停用角色组: [], json: false, help: false};
+  const result = {世界书: null, 世界线: null, 方案: null, 排除: [], 分支: [], 停用角色组: [], json: false, help: false};
   const positionals = [];
-  let planSeen = false;
+  let planSeen = false, worldlineSeen = false;
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
     if (value === '--help' || value === '-h') { result.help = true; continue; }
     if (value === '--json') { result.json = true; continue; }
+    if (value === '--世界线') {
+      if (worldlineSeen) throw argumentError('--世界线 只能给出一次');
+      result.世界线 = optionValue(args, ++index, '--世界线');
+      worldlineSeen = true;
+      continue;
+    }
     if (value === '--方案') {
       if (planSeen) throw argumentError('--方案 只能给出一次');
       result.方案 = optionValue(args, ++index, '--方案');
@@ -89,6 +97,7 @@ export function formatIf(result) {
   const input = result?.输入 ?? {};
   const lines = ['输入'];
   lines.push(`  世界书：${input.世界书 ?? '无'}`);
+  if (input.世界线) lines.push(`  世界线：${input.世界线}`);
   lines.push(`  时间轴末尾：${input.时间轴末尾 ?? '无'}`);
   lines.push(`  方案：${input.方案 ?? '默认'}`);
   lines.push(`  排除：${listText(input.排除)}`);

@@ -1,7 +1,7 @@
 import {PROFILE_FIELDS} from './contract.mjs';
 import {evaluateCondition} from './conditions.mjs';
 import {createCalendar} from './calendar.mjs';
-import {protocolText, containerText, trimNewlines} from './text.mjs';
+import {protocolText, containerText, worldOverview, trimNewlines} from './text.mjs';
 import {normalizeSettings, readSettings} from './settings.mjs';
 import {createProtocol, ProtocolError} from './protocol.mjs';
 import {compileWorldbook} from './catalog.mjs';
@@ -375,7 +375,8 @@ export function route(router, state, messages) {
     .map(item => groupIdentity(router.groups.find(group => group.id === item.角色组ID), view.state));
   const world = worldState(router, view), entries = entryContext(router, view, present, places, mentions, audit.条目);
   const events = eventContext(router, view, present, places, mentions, initialization, audit);
-  const context = {协议: router.text, ...(router.overview ? {世界概况: router.overview} : {}),
+  const overview = worldOverview(router.catalog, view.state?.开局?.世界线 ?? null);
+  const context = {协议: router.text, ...(overview ? {世界概况: overview} : {}),
     ...(nonempty(world) ? {世界状态: world} : {}), ...(characters.length ? {在场角色: characters} : {}),
     ...(mentioned.length ? {被提及角色: mentioned} : {}), ...(nonempty(entries) ? {条目: entries} : {}), ...(nonempty(events) ? {事件: events} : {})};
   return {context, audit};

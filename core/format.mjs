@@ -7,7 +7,7 @@ import {parseYaml} from './yaml.mjs';
 import {
   CHAIN_FIELDS, DECLARATION_FILES, DIALOGUE_FIELDS, EVENT_BRANCH_FIELDS, EVENT_FIELDS, GROUP_FIELDS,
   OPENING_OPTION_FIELDS, OPENING_PLAN_FIELDS, POSITION_FIELDS, PROFILE_FIELDS, PROFILE_ITEM_FIELDS,
-  TEXT_CONTAINERS, VERSION_FIELDS,
+  TEXT_CONTAINERS, VERSION_FIELDS, WORLDLINE_FIELDS,
 } from './contract.mjs';
 import {codepointCompare, freeze, has, isMap as isPlainMap} from './utils.mjs';
 
@@ -31,6 +31,7 @@ const CONDITION_PARAM_FIELDS = freeze({
   角色已出场: freeze(['角色组ID']),
   当前场景: freeze(['地标', '场景']),
   在场实力人数: freeze(['最低实力', '最少人数', '排除角色组']),
+  世界线: freeze(['世界线ID']),
 });
 
 const mapSpec = (order, children = {}) => ({order, children});
@@ -65,6 +66,7 @@ const POSITION_SPEC = mapSpec(POSITION_FIELDS, {
   事件触发语料: seqSpec(mapSpec(DIALOGUE_FIELDS)),
 });
 const CHAIN_SPEC = mapSpec(CHAIN_FIELDS, {结局: seqSpec(mapSpec(OUTCOME_FIELDS))});
+const WORLDLINE_SPEC = mapSpec(WORLDLINE_FIELDS, {角色组: {values: mapSpec(OPENING_GROUP_FIELDS)}});
 const OPENING_OPTIONS_SPEC = mapSpec(OPENING_OPTION_FIELDS, {选项: seqSpec(mapSpec(OPTION_FIELDS))});
 const OPENING_PLAN_SPEC = mapSpec(OPENING_PLAN_FIELDS, {角色组: {values: mapSpec(OPENING_GROUP_FIELDS)}});
 
@@ -85,6 +87,7 @@ export function recognizeWorldbookFile(relative, libraries = {}) {
   if (parts[0] === '历史') {
     if (parts.length === 2 && name === '开局选项.yaml') return {种类: '开局选项'};
     if (parts.length === 3 && parts[1] === '事件串' && extension === '.yaml') return {种类: '事件串'};
+    if (parts.length === 3 && parts[1] === '世界线' && extension === '.yaml') return {种类: '世界线'};
     if (parts.length === 3 && parts[1] === '开局方案' && extension === '.yaml') return {种类: '开局方案'};
     if (parts.length === 4 && parts[1] === '事件' && name === '事件.txt') return {种类: '事件'};
     if (parts.length === 5 && parts[1] === '事件' && parts[3] === '角色' && extension === '.txt') return {种类: '角色位置'};
@@ -177,6 +180,7 @@ function specFor(kind, libraries) {
     case '事件': return EVENT_SPEC;
     case '角色位置': return POSITION_SPEC;
     case '事件串': return CHAIN_SPEC;
+    case '世界线': return WORLDLINE_SPEC;
     case '开局选项': return OPENING_OPTIONS_SPEC;
     case '开局方案': return OPENING_PLAN_SPEC;
     case '基本信息': return BASIC_SPEC;

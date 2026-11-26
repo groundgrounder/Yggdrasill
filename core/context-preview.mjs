@@ -25,8 +25,8 @@ const TEMPLATE_NAMES = ['变量更新规则', '角色通用约束', '扮演准�
  */
 export async function previewContext(root, options = {}) {
   const fs = options.fs ?? defaultFs, path = options.path ?? defaultPath;
-  if (options.本局 && (options.开局 || options.方案))
-    throw new ContextError('上下文.参数', '--本局 不能与 --开局 或 --方案 同用');
+  if (options.本局 && (options.开局 || options.方案 || options.世界线))
+    throw new ContextError('上下文.参数', '--本局 不能与 --世界线、--开局 或 --方案 同用');
 
   let compiled;
   try { compiled = await compileWorldbook(root, {fs, path}); }
@@ -39,6 +39,7 @@ export async function previewContext(root, options = {}) {
   const groups = new Map(list(catalog.groups).map(group => [group.id, group]));
   const locations = list(catalog.entries?.地点);
   const plans = list(catalog.openingPlans);
+  const worldlines = list(catalog.worldlines);
 
   let state;
   if (options.本局) {
@@ -49,6 +50,8 @@ export async function previewContext(root, options = {}) {
       throw error;
     }
   } else {
+    if (options.世界线 != null && (!isText(options.世界线) || !worldlines.some(item => item.id === options.世界线)))
+      throw new ContextError('上下文.世界线', `世界线不存在：${String(options.世界线)}`);
     if (options.方案 != null && (!isText(options.方案) || !plans.some(plan => plan.id === options.方案)))
       throw new ContextError('上下文.方案', `开局方案不存在：${String(options.方案)}`);
     let opening = isText(options.开局) ? options.开局 : undefined;
@@ -61,6 +64,7 @@ export async function previewContext(root, options = {}) {
       catch (error) { throw new ContextError('上下文.时间轴', error?.message ?? '无法确定时间轴末尾'); }
     }
     const config = {开局时间: opening};
+    if (isText(options.世界线)) config.世界线 = options.世界线;
     if (isText(options.方案)) config.方案 = options.方案;
     try { state = protocol.seal(config); }
     catch (error) {
@@ -150,8 +154,10 @@ export async function previewContext(root, options = {}) {
   for (const key of Object.keys(DEFAULT_TAGS)) if (has(context, key))
     分块字符[key] = [...renderContext({[key]: context[key]})].length;
 
+  const worldline = isText(options.世界线) ? options.世界线 : state?.开局?.世界线 ?? null;
   return {
-    输入: {世界书: root, 开局: state?.开局?.开局时间 ?? state?.世界?.当前时间 ?? null,
+    输入: {世界书: root, ...(worldline ? {世界线: worldline} : {}),
+      开局: state?.开局?.开局时间 ?? state?.世界?.当前时间 ?? null,
       方案: isText(options.方案) ? options.方案 : state?.开局?.方案 ?? null,
       地点: location, 场景: scene, 在场: present, 模拟初始化, 消息: messages, 运行参数来源: settingsSource},
     汇总: {总字符: [...rendered].length, 分块字符},

@@ -54,6 +54,17 @@ export function containsUnsealable(node) {
   return found;
 }
 
+export function hasPositiveCondition(node, types, negative = false) {
+  if (!isMap(node) || Object.keys(node).length !== 1) return false;
+  const [[type, value]] = Object.entries(node);
+  if (CONDITION_COMBINATORS.includes(type)) {
+    if (!Array.isArray(value)) return false;
+    const neg = type === 'none' ? !negative : negative;
+    return value.some(child => hasPositiveCondition(child, types, neg));
+  }
+  return !negative && types.includes(type);
+}
+
 export function checkCondition(condition, context = {}, position = '门槛') {
   const {decl = {}, catalog = {}, file = '', policy = null, writtenValues = null} = context;
   const issues = [];
@@ -61,6 +72,7 @@ export function checkCondition(condition, context = {}, position = '门槛') {
   const groups = new Map(list(catalog.groups).map(group => [group.id, group]));
   const events = new Map(list(catalog.events).map(event => [event.id, event]));
   const chains = new Map(list(catalog.chains).map(chain => [chain.id, chain]));
+  const worldlines = new Set(list(catalog.worldlines).map(worldline => worldline.id));
   const locations = new Set(list(catalog.entries?.地点).map(entry => entry.id));
   const marks = decl.marks ?? {};
   const calendar = decl.calendar ? createCalendar(decl.calendar) : null;
@@ -144,6 +156,11 @@ export function checkCondition(condition, context = {}, position = '门槛') {
       if (has(value, '排除角色组') && (!Array.isArray(value.排除角色组) || new Set(value.排除角色组).size !== value.排除角色组.length)) add('条件.参数', `${path}.排除角色组须为无重复列表`);
       for (const id of list(value.排除角色组)) if (!groups.has(id)) add('条件.引用', `排除角色组“${id}”不存在`);
       if (!decl.ability?.综合实力) add('条件.不可用', `${path}需要综合实力维度`);
+      return;
+    }
+    if (type === '世界线') {
+      if (!isText(value.世界线ID)) add('条件.参数', `${path}.世界线ID须为文本`);
+      else if (!worldlines.has(value.世界线ID)) add('条件.引用', `世界线“${value.世界线ID}”不存在`);
     }
   }
   function validateRoleState(value, path) {
@@ -197,7 +214,8 @@ export function checkCondition(condition, context = {}, position = '门槛') {
 function conditionParameters(type) {
   return ({角色启用: ['角色组ID'], 角色版本: ['角色组ID', '版本ID'], 事件确认: ['事件ID', '分支ID'], 事件串状态: ['事件串ID', '状态'],
     当前时间: ['比较', '值'], 剧情标记: ['标记ID', '比较', '值'], 角色状态: ['角色组ID', '字段', '属于'], 同处: ['角色组ID'],
-    角色已出场: ['角色组ID'], 当前场景: ['地标', '场景'], 在场实力人数: ['最低实力', '最少人数', '排除角色组']})[type] ?? [];
+    角色已出场: ['角色组ID'], 当前场景: ['地标', '场景'], 在场实力人数: ['最低实力', '最少人数', '排除角色组'],
+    世界线: ['世界线ID']})[type] ?? [];
 }
 
 function validReferenceKey(schema, key, catalog) {

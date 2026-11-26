@@ -11,6 +11,7 @@ const get = (value, key) => has(value, key) ? value[key] : undefined;
 
 export function createStateValidator({catalog, decl, calendar, groups, events, chains, locations, fail, abilityValid}) {
   const enabled = (state, id) => groups.has(id) && get(state.开局.角色组, id)?.启用 === true;
+  const worldlines = new Set(list(catalog.worldlines).map(worldline => worldline.id));
   function keys(value, allowed, label) {
     if (!isMap(value) || Object.keys(value).some(key => !allowed.includes(key))) fail('协议.参数', `${label}须为合法映射`);
   }
@@ -41,11 +42,37 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
         fail(code, '扮演角色组不存在或未启用');
     } else {
       const fields = Object.fromEntries(Object.entries(PROFILE_FIELDS.基本信息).filter(([key]) => key !== '能力特征'));
-      if (Object.keys(value).some(key => !['模式', '档案'].includes(key)) || !isMap(value.档案)
+      if (Object.keys(value).some(key => !['模式', '档案', '初始能力', '初始装备'].includes(key)) || !isMap(value.档案)
         || Object.keys(value.档案).some(key => !has(fields, key))) fail(code, '自建玩家档案字段不合法');
       for (const [key, item] of pairs(value.档案)) {
         if (checkField(item, fields[key], {catalog, decl}).some(issue => issue.级别 === '错误'))
           fail(code, `自建玩家档案取值不合法：${key}`);
+      }
+      if (has(value, '初始能力')) {
+        if (!isMap(value.初始能力) || !Object.keys(value.初始能力).length)
+          fail(code, '自建玩家初始能力须为非空维度映射');
+        for (const [name, initial] of pairs(value.初始能力)) {
+          const dimension = get(decl.ability?.维度, name);
+          if (!isMap(dimension)) fail(code, `自建玩家初始能力含未声明维度：${name}`);
+          if (dimension.类型 === '等级映射' && (!isMap(initial) || !Object.keys(initial).length))
+            fail(code, `自建玩家初始能力等级映射不能为空：${name}`);
+          if (!abilityValid(initial, dimension)) fail(code, `自建玩家初始能力取值不合法：${name}`);
+        }
+      }
+      if (has(value, '初始装备')) {
+        if (!Array.isArray(value.初始装备) || !value.初始装备.length)
+          fail(code, '自建玩家初始装备须为非空列表');
+        const seen = new Set(), equipStates = resolveDomain('词表.装备状态', decl);
+        for (const item of value.初始装备) {
+          if (!isMap(item) || Object.keys(item).some(key => !['装备ID', '状态', '位置'].includes(key)))
+            fail(code, '自建玩家初始装备项须只含装备ID、状态、位置');
+          if (!isText(item.装备ID) || !catalog.entries?.装备?.some(entry => entry.id === item.装备ID))
+            fail(code, `自建玩家初始装备不存在：${String(item.装备ID)}`);
+          if (seen.has(item.装备ID)) fail(code, `自建玩家初始装备重复：${item.装备ID}`);
+          seen.add(item.装备ID);
+          if (!equipStates.includes(item.状态) || !isText(item.位置))
+            fail(code, `自建玩家初始装备状态或位置不合法：${item.装备ID}`);
+        }
       }
     }
   }
@@ -70,7 +97,12 @@ export function createStateValidator({catalog, decl, calendar, groups, events, c
     keys(state.世界.剧情标记, Object.keys(decl.marks), '剧情标记');
     for (const [key, value] of pairs(state.世界.剧情标记)) if (!decl.marks[key].includes(value)) fail('协议.参数', `剧情标记取值不合法：${key}`);
     for (const [key, value] of pairs(state.世界)) if (has(decl.variables.世界, key)) variable(value, decl.variables.世界[key], `世界.${key}`, state);
-    keys(state.开局, ['开局时间', '已封卷', '历史选择', '方案', '角色组', '玩家'], '开局');
+    keys(state.开局, ['世界线', '开局时间', '已封卷', '历史选择', '方案', '角色组', '玩家'], '开局');
+    if (worldlines.size > 0) {
+      if (!isText(state.开局.世界线) || !worldlines.has(state.开局.世界线)) fail('协议.参数', '开局世界线缺失或不存在');
+    } else if (has(state.开局, '世界线')) {
+      fail('协议.参数', '当前世界书未声明世界线');
+    }
     if (!calendar.time(state.开局.开局时间)) fail('协议.参数', '开局时间不合法');
     if (!isMap(state.开局.角色组) || Object.keys(state.开局.角色组).length !== groups.size) fail('协议.参数', '开局须记录全部角色组');
     for (const [id, choice] of pairs(state.开局.角色组)) {

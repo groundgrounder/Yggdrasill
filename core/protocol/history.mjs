@@ -8,6 +8,7 @@ const DEBUT_PREFIX = '初次登场·';
 export function createHistoryTools({catalog, decl, calendar, groups, events, chains, locations, validation, fail,
   isEnabled, resolveProfile, changeTools}) {
   const openingPlans = new Map(list(catalog.openingPlans).map(plan => [plan.id, plan]));
+  const worldlines = new Map(list(catalog.worldlines).map(worldline => [worldline.id, worldline]));
   const profiles = new Map(catalog.groups.map(group => [group.id, new Map(list(group.内容?.档案).map(profile => [profile.档案ID, profile]))]));
   const marks = decl.marks ?? {};
   const dimensions = decl.ability?.维度 ?? {};
@@ -122,6 +123,10 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
         }
         if (qualified >= value.最少人数) return true;
         return unknown ? null : false;
+      }
+      case '世界线': {
+        const current = state?.开局?.世界线;
+        return isText(current) ? current === value.世界线ID : false;
       }
       default:
         throw new Error(`未登记条件类型：${type}`);
@@ -372,7 +377,7 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
 
   function seal(config) {
     if (!isMap(config)) fail('封卷.参数', '封卷参数须为映射');
-    const allowed = ['开局时间', '方案', '角色组', '玩家', '历史选择'];
+    const allowed = ['世界线', '开局时间', '方案', '角色组', '玩家', '历史选择'];
     if (Object.keys(config).some(key => !allowed.includes(key))) fail('封卷.参数', '封卷参数含未知字段');
     let plan = null;
     if (has(config, '方案')) {
@@ -380,23 +385,46 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
       if (!plan) fail('封卷.参数', `开局方案不存在：${config.方案}`);
     }
     const source = plan?.内容 ?? {};
+    let selectedWorldline = null;
+    if (worldlines.size === 0) {
+      if (has(config, '世界线') || (plan && has(source, '世界线'))) fail('封卷.参数', '当前世界书未声明世界线');
+    } else {
+      if (has(config, '世界线') && (!isText(config.世界线) || !worldlines.has(config.世界线)))
+        fail('封卷.参数', `世界线不存在：${String(config.世界线)}`);
+      if (plan && has(source, '世界线')) {
+        if (!isText(source.世界线) || !worldlines.has(source.世界线))
+          fail('封卷.参数', `开局方案的世界线不存在：${String(source.世界线)}`);
+        if (has(config, '世界线') && config.世界线 !== source.世界线)
+          fail('封卷.参数', `开局方案“${plan.id}”不属于世界线“${config.世界线}”`);
+      }
+      selectedWorldline = has(config, '世界线') ? config.世界线
+        : isText(source.世界线) ? source.世界线
+          : list(catalog.worldlines).find(item => item.内容?.默认 === true)?.id
+            ?? [...worldlines.keys()].sort(codepointCompare)[0];
+    }
+    const worldlineSource = selectedWorldline ? worldlines.get(selectedWorldline)?.内容 ?? {} : {};
+    if (has(worldlineSource, '角色组') && !isMap(worldlineSource.角色组)) fail('封卷.参数', '角色组须为映射');
+    for (const key of ['角色组', '历史选择']) if ((has(config, key) && !isMap(config[key]))
+      || (has(source, key) && !isMap(source[key]))) fail('封卷.参数', `${key}须为映射`);
+    const wlGroups = worldlineSource.角色组 ?? {}, planGroups = source.角色组 ?? {}, cfgGroups = config.角色组 ?? {};
+    for (const groupMap of [wlGroups, planGroups, cfgGroups]) {
+      for (const [id, choice] of pairs(groupMap)) {
+        if (!groups.has(id)) fail('封卷.参数', `角色组不存在：${id}`);
+        if (!isMap(choice) || Object.keys(choice).some(key => !['启用', '版本ID'].includes(key)))
+          fail('封卷.参数', `角色组选择不合法：${id}`);
+      }
+    }
     const choices = {
       ...source,
       ...config,
-      角色组: {...(source.角色组 ?? {}), ...(config.角色组 ?? {})},
       历史选择: {...(source.历史选择 ?? {}), ...(config.历史选择 ?? {})},
     };
-    for (const key of ['角色组', '历史选择']) if ((has(config, key) && !isMap(config[key]))
-      || (has(source, key) && !isMap(source[key]))) fail('封卷.参数', `${key}须为映射`);
     const openingTime = choices.开局时间;
     const openingInterval = calendar.time(openingTime);
     if (!openingInterval) fail('封卷.参数', '缺少合法开局时间');
-    for (const id of Object.keys(choices.角色组)) if (!groups.has(id)) fail('封卷.参数', `角色组不存在：${id}`);
     const selectedGroups = {};
     for (const [id, group] of groups) {
-      const choice = has(choices.角色组, id) ? getOwn(choices.角色组, id) : {};
-      if (!isMap(choice) || Object.keys(choice).some(key => !['启用', '版本ID'].includes(key)))
-        fail('封卷.参数', `角色组选择不合法：${id}`);
+      const choice = {...(getOwn(wlGroups, id) ?? {}), ...(getOwn(planGroups, id) ?? {}), ...(getOwn(cfgGroups, id) ?? {})};
       const enabled = has(choice, '启用') ? choice.启用 : group.内容?.默认启用;
       const version = has(choice, '版本ID') ? choice.版本ID : group.内容?.默认版本 ?? id;
       if (typeof enabled !== 'boolean' || !group.版本清单.includes(version)) fail('封卷.参数', `角色组启用状态或版本不合法：${id}`);
@@ -404,24 +432,46 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
     }
     const player = has(choices, '玩家') ? choices.玩家 : {模式: '自建', 档案: {}};
     if (!isMap(player) || !['自建', '扮演'].includes(player.模式)) fail('封卷.参数', '玩家模式不合法');
-    if (Object.keys(player).some(key => !['模式', '档案', '扮演角色组'].includes(key))) fail('封卷.参数', '玩家参数含未知字段');
-    if (player.模式 === '扮演' && (!isText(player.扮演角色组)
-      || getOwn(selectedGroups, player.扮演角色组)?.启用 !== true)) fail('封卷.参数', '扮演角色组不存在或未启用');
-    if (player.模式 === '自建' && has(player, '扮演角色组')) fail('封卷.参数', '自建模式不能指定扮演角色组');
-    if (player.模式 === '自建' && player.档案 !== undefined && !isMap(player.档案)) fail('封卷.参数', '玩家档案须为映射');
-    if (player.模式 === '扮演' && (has(player, '档案') || Object.keys(player).some(key => !['模式', '扮演角色组'].includes(key))))
-      fail('封卷.参数', '扮演模式参数不合法');
+    if (player.模式 === '扮演') {
+      if (Object.keys(player).some(key => !['模式', '扮演角色组'].includes(key))) fail('封卷.参数', '扮演模式参数不合法');
+      if (!isText(player.扮演角色组) || getOwn(selectedGroups, player.扮演角色组)?.启用 !== true)
+        fail('封卷.参数', '扮演角色组不存在或未启用');
+    } else {
+      if (has(player, '扮演角色组')) fail('封卷.参数', '自建模式不能指定扮演角色组');
+      if (Object.keys(player).some(key => !['模式', '档案', '初始能力', '初始装备'].includes(key)))
+        fail('封卷.参数', '玩家参数含未知字段');
+      if (player.档案 !== undefined && !isMap(player.档案)) fail('封卷.参数', '玩家档案须为映射');
+    }
     for (const id of Object.keys(choices.历史选择)) if (!isText(id) || !isText(getOwn(choices.历史选择, id))) fail('封卷.历史选择', '历史选择参数不合法');
 
-    const normalizedPlayer = player.模式 === '自建' ? {模式: '自建', 档案: player.档案 ?? {}} : player;
+    const normalizedPlayer = player.模式 === '自建'
+      ? {
+        模式: '自建',
+        档案: player.档案 ?? {},
+        ...(has(player, '初始能力') ? {初始能力: player.初始能力} : {}),
+        ...(has(player, '初始装备') ? {初始装备: player.初始装备} : {}),
+      }
+      : player;
     const provisional = {开局: {角色组: selectedGroups, 玩家: normalizedPlayer}};
     validation.serializable(normalizedPlayer, '封卷.参数');
     validation.player(normalizedPlayer, provisional, '封卷.参数');
     const state = {世界: {当前时间: openingTime, 剧情标记: {}},
-      开局: {开局时间: openingTime, 已封卷: true, 历史选择: clone(choices.历史选择), 角色组: selectedGroups,
-        玩家: clone(normalizedPlayer)},
+      开局: {
+        ...(selectedWorldline !== null ? {世界线: selectedWorldline} : {}),
+        开局时间: openingTime, 已封卷: true, 历史选择: clone(choices.历史选择), 角色组: selectedGroups,
+        玩家: clone(normalizedPlayer),
+      },
       角色: {}, 事件: {}, 待定项: []};
     if (has(choices, '方案')) state.开局.方案 = choices.方案;
+    if (normalizedPlayer.模式 === '自建' && (has(normalizedPlayer, '初始能力') || has(normalizedPlayer, '初始装备'))) {
+      const playerRun = {已初始化: true};
+      for (const [name, initial] of pairs(normalizedPlayer.初始能力)) setOwn(playerRun, name, clone(initial));
+      if (has(normalizedPlayer, '初始装备')) {
+        playerRun.装备 = {};
+        for (const item of normalizedPlayer.初始装备) setOwn(playerRun.装备, item.装备ID, {状态: item.状态, 位置: item.位置});
+      }
+      setOwn(state.角色, '玩家', playerRun);
+    }
     for (const [id, values] of pairs(marks)) if (list(values).length) setOwn(state.世界.剧情标记, id, values[0]);
     const past = [...events.values()].filter(event => event.内容?.确认策略 !== '仅作候选'
       && eventRange(event).latest[1] <= openingInterval[0]);
