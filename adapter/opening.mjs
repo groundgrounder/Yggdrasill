@@ -2,6 +2,7 @@
 // 这里不处理历史求解、排斥检查或命令语义；这些仍由 protocol.seal 与 applyCommands 决定。
 import {createCalendar} from '../core/calendar.mjs';
 import {applyCommands} from '../core/commands.mjs';
+import {conditionReferences} from '../core/conditions.mjs';
 import {dimensionKeys, resolveDomain} from '../core/fields.mjs';
 import {parseYaml, stringifyYaml} from '../core/yaml.mjs';
 import {codepointCompare, isMap} from '../core/utils.mjs';
@@ -300,6 +301,19 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
   const planMap = new Map(plans.map(plan => [plan.id, plan]));
   const groupMap = new Map((catalog.groups ?? []).map(group => [group.id, group]));
   const eventMap = new Map((catalog.events ?? []).map(event => [event.id, event]));
+  // 事件确认引用的正/反向图：门槛与分支门槛中的事件确认按 none 极性拆成前置与排斥两类。
+  const positiveDependents = new Map(), negativeDependents = new Map();
+  for (const event of eventMap.values()) {
+    const gates = [event.内容?.门槛];
+    for (const branch of Array.isArray(event.内容?.分支) ? event.内容.分支 : []) gates.push(branch.门槛);
+    for (const gate of gates) for (const reference of conditionReferences(gate)) {
+      if (typeof reference.事件ID !== 'string') continue;
+      const index = reference.排斥 ? negativeDependents : positiveDependents;
+      if (!index.has(reference.事件ID)) index.set(reference.事件ID, new Set());
+      index.get(reference.事件ID).add(event.id);
+    }
+  }
+  const dependentCache = new Map();
   const locations = catalog.entries?.地点 ?? [];
   const locationMap = new Map(locations.map(entry => [entry.id, entry]));
   const locationOptions = buildLocationList(locations);
@@ -426,35 +440,143 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     return null;
   }
 
-  // 清理已不再早于当前开局时间的失效历史覆盖；切世界线时一并清理在新世界线门槛明确不成立的事件覆盖。
+  // 与 seal() 的 世界线 → 方案 → 输入覆盖 → 角色组默认 次序一致，且不读可能滞后的 stateNow()。
+  function resolvedGroupChoices(input = inputNow()) {
+    const worldlineSource = worldlineId ? worldlineMap.get(worldlineId)?.内容 ?? {} : {};
+    const planSource = planId ? planMap.get(planId)?.内容 ?? {} : {};
+    const config = isMap(input?.角色组) ? input.角色组 : {};
+    const ownChoice = (source, id) => has(source ?? {}, id) && isMap(source[id]) ? source[id] : {};
+    const choices = {};
+    for (const [id, group] of groupMap) {
+      const override = {...ownChoice(worldlineSource.角色组, id), ...ownChoice(planSource.角色组, id),
+        ...ownChoice(config, id)};
+      choices[id] = {
+        启用: has(override, '启用') ? override.启用 === true : group.内容?.默认启用 === true,
+        版本ID: has(override, '版本ID') ? override.版本ID : group.内容?.默认版本 ?? id,
+      };
+    }
+    return choices;
+  }
+
+  function transitivePositiveDependents(eventID) {
+    const cached = dependentCache.get(eventID);
+    if (cached) return cached;
+    const found = new Set(), stack = [...(positiveDependents.get(eventID) ?? [])];
+    while (stack.length) {
+      const id = stack.pop();
+      if (found.has(id)) continue;
+      found.add(id);
+      for (const next of positiveDependents.get(id) ?? []) if (!found.has(next)) stack.push(next);
+    }
+    dependentCache.set(eventID, found);
+    return found;
+  }
+
+  function branchUsable(event, branchID, probeState) {
+    const branch = (Array.isArray(event.内容?.分支) ? event.内容.分支 : []).find(item => item.分支ID === branchID);
+    return Boolean(branch) && (!branch.门槛 || protocol.evaluate(probeState, branch.门槛) === true);
+  }
+
+  // 探测态下门槛与所选分支是否仍成立；条件求值异常时保留覆盖，交由后续封卷报错。
+  function overrideProbeValid(event, branch, probeState) {
+    if (!probeState) return false;
+    try {
+      return (!event.内容?.门槛 || protocol.evaluate(probeState, event.内容.门槛) === true)
+        && (branch === '未发生' || branchUsable(event, branch, probeState));
+    } catch { return true; }
+  }
+
+  function clearHistoryOverride(eventID) {
+    const rest = {...(overrides.历史选择 ?? {})};
+    delete rest[eventID];
+    if (Object.keys(rest).length) overrides = {...overrides, 历史选择: rest};
+    else { const copy = {...overrides}; delete copy.历史选择; overrides = copy; }
+  }
+
+  // 以开局时间封卷，抑制目标事件本身、更晚起点事件、正向下游与同起点排斥方，再评估门槛；
+  // 同年先决事件因此能在 probeState 中正常确认，且更晚的日粒度事件不会反向泄漏。
+  function probeBeforeEvent(event, {input, openingInterval, currentGroups, effectiveHistory}) {
+    const latest = calendar.time(event?.内容?.触发时间?.最晚);
+    if (!latest || !openingInterval || !input?.开局时间 || event.内容?.确认策略 === '仅作候选'
+      || latest[1] > openingInterval[0]) return null;
+    const history = isMap(effectiveHistory) ? effectiveHistory : {};
+    const posDeps = transitivePositiveDependents(event.id);
+    const negatives = negativeDependents.get(event.id) ?? new Set();
+    const inPast = other => {
+      if (!other || other.内容?.确认策略 === '仅作候选') return false;
+      const otherLatest = calendar.time(other.内容?.触发时间?.最晚);
+      return Boolean(otherLatest) && otherLatest[1] <= openingInterval[0];
+    };
+    const suppress = {[event.id]: '未发生'};
+    for (const other of eventMap.values()) {
+      if (other.id === event.id || !inPast(other)) continue;
+      const otherLatest = calendar.time(other.内容.触发时间.最晚);
+      const sameStartNegative = otherLatest[0] === latest[0] && negatives.has(other.id)
+        && (history[other.id] === undefined || history[other.id] === '未发生');
+      if (otherLatest[0] > latest[0] || posDeps.has(other.id) || sameStartNegative) suppress[other.id] = '未发生';
+    }
+    const fullPrefix = {}, strictPrefix = {};
+    for (const [eventID, branch] of Object.entries(history)) {
+      if (eventID === event.id || posDeps.has(eventID)) continue;
+      const other = eventMap.get(eventID);
+      if (!inPast(other)) continue;
+      const otherLatest = calendar.time(other.内容.触发时间.最晚);
+      if (otherLatest[0] <= latest[0]) fullPrefix[eventID] = branch;
+      if (otherLatest[0] < latest[0]) strictPrefix[eventID] = branch;
+    }
+    const base = {
+      ...(worldlines.length && worldlineId ? {世界线: worldlineId} : {}),
+      开局时间: input.开局时间,
+      角色组: currentGroups,
+      玩家: {模式: '自建', 档案: {}},
+    };
+    const attempts = [fullPrefix];
+    if (Object.keys(strictPrefix).length !== Object.keys(fullPrefix).length) attempts.push(strictPrefix);
+    attempts.push({});
+    let probeState = null;
+    for (const prefix of attempts) {
+      try { probeState = protocol.seal({...base, 历史选择: {...prefix, ...suppress}}); break; } catch {}
+    }
+    if (!probeState) return null;
+    probeState.世界.当前时间 = event.内容.触发时间.最晚;
+    return probeState;
+  }
+
+  // 清理已不再早于当前开局时间的失效历史覆盖；切世界线时按起点升序清理新世界线门槛或分支门槛不成立的覆盖。
   function pruneExpiredHistory({worldlineChanged = false} = {}) {
     if (!isMap(overrides.历史选择) || !Object.keys(overrides.历史选择).length) return;
-    const input = inputNow();
-    const openingInterval = calendar.time(input.开局时间);
+    const openingInterval = calendar.time(inputNow().开局时间);
     if (!openingInterval) return;
-    const next = {...overrides.历史选择};
-    let changed = false;
-    for (const eventID of Object.keys(next)) {
+    const rows = [];
+    for (const eventID of Object.keys(overrides.历史选择)) {
       const event = eventMap.get(eventID);
       const latest = event ? calendar.time(event.内容?.触发时间?.最晚) : null;
-      if (!latest || latest[1] > openingInterval[0]) {
-        delete next[eventID];
-        changed = true;
-        continue;
-      }
-      if (worldlineChanged && event?.内容?.门槛) {
-        try {
-          const probe = protocol.seal({...input, 开局时间: event.内容.触发时间.最晚, 历史选择: {}});
-          if (protocol.evaluate(probe, event.内容.门槛) === false) {
-            delete next[eventID];
-            changed = true;
-          }
-        } catch {}
-      }
+      if (!event || event.内容?.确认策略 === '仅作候选' || !latest || latest[1] > openingInterval[0]) clearHistoryOverride(eventID);
+      else rows.push({eventID, event, latest});
     }
-    if (changed) {
-      if (Object.keys(next).length) overrides = {...overrides, 历史选择: next};
-      else { const rest = {...overrides}; delete rest.历史选择; overrides = rest; }
+    if (!worldlineChanged) return;
+    rows.sort((left, right) => left.latest[0] - right.latest[0] || codepointCompare(left.eventID, right.eventID));
+    // 同年逆 codepoint 顺序时，上游可能在同趟稍后才被清理；反复扫描直至一轮无新增删除。
+    let removed = true;
+    while (removed) {
+      removed = false;
+      for (const {eventID, event} of rows) {
+        if (!has(overrides.历史选择 ?? {}, eventID)) continue;
+        const input = inputNow();
+        const currentGroups = resolvedGroupChoices(input);
+        const effectiveHistory = isMap(input.历史选择) ? input.历史选择 : {};
+        const coreParticipants = Array.isArray(event.内容?.核心参与者) ? event.内容.核心参与者 : [];
+        if (coreParticipants.some(id => currentGroups[id]?.启用 !== true)) {
+          clearHistoryOverride(eventID);
+          removed = true;
+          continue;
+        }
+        const probeState = probeBeforeEvent(event, {input, openingInterval, currentGroups, effectiveHistory});
+        if (!overrideProbeValid(event, effectiveHistory[eventID], probeState)) {
+          clearHistoryOverride(eventID);
+          removed = true;
+        }
+      }
     }
   }
 
@@ -488,53 +610,25 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     const input = inputNow();
     const openingInterval = calendar.time(input.开局时间);
     if (!openingInterval) return [];
-    const currentGroups = Object.fromEntries((catalog.groups ?? []).map(group => {
-      const row = groupNow(group.id);
-      return [group.id, {启用: row?.启用 === true, 版本ID: row?.版本ID ?? group.内容?.默认版本 ?? group.id}];
-    }));
+    const currentGroups = resolvedGroupChoices(input);
     const pastOptions = options
       .map(item => {
         const event = eventMap.get(item.事件ID);
         const latest = event ? calendar.time(event.内容?.触发时间?.最晚) : null;
         return {item, event, latest};
       })
-      .filter(({event, latest}) => event && latest && latest[1] <= openingInterval[0])
+      .filter(({event, latest}) => event && event.内容?.确认策略 !== '仅作候选'
+        && latest && latest[1] <= openingInterval[0])
       .sort((a, b) => a.latest[0] - b.latest[0] || codepointCompare(a.item.事件ID, b.item.事件ID));
 
     const effectiveHistory = isMap(input.历史选择) ? input.历史选择 : {};
     const controls = [];
-    for (const {item, event, latest} of pastOptions) {
+    for (const {item, event} of pastOptions) {
       const coreParticipants = Array.isArray(event.内容?.核心参与者) ? event.内容.核心参与者 : [];
       if (coreParticipants.some(id => currentGroups[id]?.启用 !== true)) continue;
-
-      const prefixHistory = {};
-      for (const [eid, branch] of Object.entries(effectiveHistory)) {
-        if (eid === item.事件ID) continue;
-        const other = eventMap.get(eid);
-        const otherLatest = other ? calendar.time(other.内容?.触发时间?.最晚) : null;
-        if (otherLatest && otherLatest[1] <= latest[0]) prefixHistory[eid] = branch;
-      }
-      let prefixState = null;
-      try {
-        prefixState = protocol.seal({
-          ...(worldlines.length && worldlineId ? {世界线: worldlineId} : {}),
-          开局时间: event.内容.触发时间.最晚,
-          角色组: currentGroups,
-          玩家: {模式: '自建', 档案: {}},
-          历史选择: prefixHistory,
-        });
-      } catch {
-        try {
-          prefixState = protocol.seal({
-            ...(worldlines.length && worldlineId ? {世界线: worldlineId} : {}),
-            开局时间: event.内容.触发时间.最晚,
-            角色组: currentGroups,
-            玩家: {模式: '自建', 档案: {}},
-            历史选择: {},
-          });
-        } catch { continue; }
-      }
-      if (event.内容?.门槛 && protocol.evaluate(prefixState, event.内容.门槛) !== true) continue;
+      const probeState = probeBeforeEvent(event, {input, openingInterval, currentGroups, effectiveHistory});
+      if (!probeState) continue;
+      if (event.内容?.门槛 && protocol.evaluate(probeState, event.内容.门槛) !== true) continue;
 
       const branchList = Array.isArray(event.内容?.分支) ? event.内容.分支 : [];
       const eligible = [];
@@ -547,7 +641,7 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
         }
         const branch = branchList.find(b => b.分支ID === branchId);
         if (!branch) continue;
-        if (branch.门槛 && protocol.evaluate(prefixState, branch.门槛) !== true) continue;
+        if (branch.门槛 && protocol.evaluate(probeState, branch.门槛) !== true) continue;
         eligible.push({id: branchId, label: String(label)});
       }
       const realBranches = eligible.filter(b => b.id !== '未发生');
@@ -834,6 +928,33 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     return afterChange();
   }
 
+  // 上游改选后只清理仍残留在历史覆盖里的正向下游；早年合法覆盖与其它事件保持不动。
+  // 同年下游可能排在待清理上游之前，单趟扫描会误用残留覆盖探测，故循环至一轮无新增清理。
+  function dropInvalidDependents(eventID) {
+    const dependents = transitivePositiveDependents(eventID);
+    if (!dependents.size) return;
+    const openingInterval = calendar.time(inputNow().开局时间);
+    if (!openingInterval) return;
+    let removed = true;
+    while (removed && isMap(overrides.历史选择)) {
+      removed = false;
+      for (const eid of Object.keys(overrides.历史选择)) {
+        if (eid === eventID || !dependents.has(eid)) continue;
+        const event = eventMap.get(eid);
+        const latest = event ? calendar.time(event.内容?.触发时间?.最晚) : null;
+        if (!event || event.内容?.确认策略 === '仅作候选' || !latest || latest[1] > openingInterval[0]) continue;
+        const input = inputNow();
+        const currentGroups = resolvedGroupChoices(input);
+        const effectiveHistory = isMap(input.历史选择) ? input.历史选择 : {};
+        const probeState = probeBeforeEvent(event, {input, openingInterval, currentGroups, effectiveHistory});
+        if (!overrideProbeValid(event, effectiveHistory[eid], probeState)) {
+          clearHistoryOverride(eid);
+          removed = true;
+        }
+      }
+    }
+  }
+
   function setHistory(eventID, branch) {
     const item = options.find(option => option.事件ID === eventID);
     if (!freeCombination) {
@@ -847,6 +968,7 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     const next = {...(overrides.历史选择 ?? {})};
     if (branch) next[eventID] = branch; else delete next[eventID];
     overrides = {...overrides, 历史选择: next};
+    dropInvalidDependents(eventID);
     return afterChange();
   }
 

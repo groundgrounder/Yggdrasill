@@ -521,3 +521,335 @@ test('YG-OPEN-02-A6：四模式开场白提交、失败回滚保封面、严格 
     assert.ok(failed.draft.snapshot().错误, `${label}应在草稿保留错误供重试`);
   }
 });
+
+// 年粒度同年先决、跨粒度隔离、同年互斥与切世界线夹具：在雾港临时副本上追加合成事件、选项与双世界线。
+async function yearGranularityProject(t) {
+  const root = await fixture(t);
+  await write(root, '历史/世界线/正史.yaml', {概述: '北湾风浪如常，灯塔照旧巡守。', 默认: true});
+  await write(root, '历史/世界线/异闻.yaml', {
+    概述: '大雾之后北湾暗潮涌动，灯塔另起新规。', 默认: false, 角色组: {白棠: {启用: false}},
+  });
+  await edit(root, '设定/剧情标记.yaml', marks => { marks.雾灯 = ['常亮', '熄灭']; });
+  const addEvent = (id, fields) => write(root, `历史/事件/${id}/事件.txt`, {
+    事件ID: id,
+    事件标题: id,
+    事件概要: `${id}的合成回归事件。`,
+    主类型: '个人',
+    标签: ['修习'],
+    事件结果: ['剧情条件变化'],
+    触发时间: {最早: '潮历071年', 最晚: '潮历071年'},
+    确认策略: '条件确认',
+    核心参与者: [],
+    ...fields,
+  });
+  await addEvent('年链A', {
+    默认分支: '前行',
+    分支: [
+      {分支ID: '前行', 分支条件: '选择继续前行。', 分支结果: '链路开启。'},
+      {分支ID: '止步', 分支条件: '选择止步。', 分支结果: '链路未开。'},
+    ],
+  });
+  await addEvent('年链B', {
+    门槛: {事件确认: {事件ID: '年链A', 分支ID: '前行'}},
+    默认分支: '远行',
+    分支: [
+      {分支ID: '远行', 分支条件: '沿链路远行。', 分支结果: '继续向下游。'},
+      {分支ID: '留守', 分支条件: '中途留守。', 分支结果: '不再向下游。'},
+    ],
+  });
+  await addEvent('年链C', {
+    门槛: {事件确认: {事件ID: '年链B', 分支ID: '远行'}},
+    默认分支: '终局',
+    分支: [{分支ID: '终局', 分支条件: '抵达终局。', 分支结果: '链路收束。'}],
+  });
+  await addEvent('跨粒先', {
+    门槛: {剧情标记: {标记ID: '雾灯', 比较: '等于', 值: '常亮'}},
+    默认分支: '长明',
+    分支: [
+      {分支ID: '长明', 分支条件: '雾灯仍常亮。', 分支结果: '先决成立。'},
+      {分支ID: '暂灭', 分支条件: '雾灯短暂熄灭。', 分支结果: '先决不成立。'},
+    ],
+  });
+  await addEvent('跨粒后', {
+    触发时间: {最早: '潮历071年02月01日', 最晚: '潮历071年02月01日'},
+    门槛: {事件确认: {事件ID: '跨粒先', 分支ID: '长明'}},
+    默认分支: '记下',
+    分支: [{分支ID: '记下', 分支条件: '年粒度先决成立。', 分支结果: '日粒度下游写入。'}],
+  });
+  await addEvent('跨粒影', {
+    触发时间: {最早: '潮历071年03月01日', 最晚: '潮历071年03月01日'},
+    默认分支: '遮灯',
+    分支: [{分支ID: '遮灯', 分支条件: '同年较晚的日粒度事件。', 分支结果: '改写剧情标记。',
+      变化: [{路径: '世界.剧情标记.雾灯', 操作: '设定', 值: '熄灭'}]}],
+  });
+  await addEvent('互斥M1', {
+    门槛: {none: [{事件确认: {事件ID: '互斥M2'}}]},
+    默认分支: '成',
+    分支: [
+      {分支ID: '成', 分支条件: '互斥M2未发生。', 分支结果: '互斥M1成立。'},
+      {分支ID: '不成', 分支条件: '主动放弃。', 分支结果: '互斥M1未发生。'},
+    ],
+  });
+  await addEvent('互斥M2', {
+    门槛: {none: [{事件确认: {事件ID: '互斥M1'}}]},
+    默认分支: '成',
+    分支: [
+      {分支ID: '成', 分支条件: '互斥M1未发生。', 分支结果: '互斥M2成立。'},
+      {分支ID: '不成', 分支条件: '主动放弃。', 分支结果: '互斥M2未发生。'},
+    ],
+  });
+  await addEvent('线年先', {
+    默认分支: '立',
+    分支: [
+      {分支ID: '立', 分支条件: '同年先决成立。', 分支结果: '下游可成立。'},
+      {分支ID: '止', 分支条件: '同年先决不成立。', 分支结果: '下游不成立。'},
+    ],
+  });
+  await addEvent('线年后', {
+    门槛: {事件确认: {事件ID: '线年先', 分支ID: '立'}},
+    默认分支: '成',
+    分支: [{分支ID: '成', 分支条件: '同年先决已立。', 分支结果: '下游成立。'}],
+  });
+  await addEvent('线异门', {
+    门槛: {世界线: {世界线ID: '异闻'}},
+    默认分支: '显',
+    分支: [{分支ID: '显', 分支条件: '异闻世界线。', 分支结果: '仅异闻可见。'}],
+  });
+  await addEvent('线棠枝', {
+    默认分支: '单人',
+    分支: [
+      {分支ID: '双人', 门槛: {角色启用: {角色组ID: '白棠'}}, 分支条件: '白棠启用。', 分支结果: '双人同行。'},
+      {分支ID: '单人', 分支条件: '白棠未启用。', 分支结果: '独自前行。'},
+    ],
+  });
+  await addEvent('线棠核', {
+    核心参与者: ['白棠'],
+    默认分支: '独行',
+    分支: [{分支ID: '独行', 分支条件: '白棠在核心参与者中。', 分支结果: '事件成立。'}],
+  });
+  // v2 返工夹具：上游默认分支不是下游前置分支，用于验证清空上游退回默认分支时的下游清理。
+  await addEvent('回退A', {
+    默认分支: '守旧',
+    分支: [
+      {分支ID: '守旧', 分支条件: '维持旧例。', 分支结果: '下游前置不成立。'},
+      {分支ID: '启程', 分支条件: '选择启程。', 分支结果: '下游前置成立。'},
+    ],
+  });
+  await addEvent('回退B', {
+    门槛: {事件确认: {事件ID: '回退A', 分支ID: '启程'}},
+    默认分支: '同行',
+    分支: [{分支ID: '同行', 分支条件: '上游已启程。', 分支结果: '结伴同行。'}],
+  });
+  // v2 返工夹具：下游事件 ID 的 codepoint 小于上游（果 < 源）；上游选中分支仅异闻有效，
+  // 另有同年 灯灭 保留覆盖在切回正史后改写剧情标记，只有逐轮复扫才能清净下游残留。
+  await addEvent('灯灭', {
+    默认分支: '常亮',
+    分支: [
+      {分支ID: '常亮', 分支条件: '灯仍常亮。', 分支结果: '雾灯不变。'},
+      {分支ID: '熄灭', 分支条件: '选择熄灯。', 分支结果: '雾灯熄灭。',
+        变化: [{路径: '世界.剧情标记.雾灯', 操作: '设定', 值: '熄灭'}]},
+    ],
+  });
+  await addEvent('线异源', {
+    默认分支: '涌',
+    分支: [
+      {分支ID: '涌', 分支条件: '暗潮涌动。', 分支结果: '下游成立。'},
+      {分支ID: '静', 门槛: {世界线: {世界线ID: '异闻'}}, 分支条件: '异闻世界线点灯。', 分支结果: '雾灯常亮。',
+        变化: [{路径: '世界.剧情标记.雾灯', 操作: '设定', 值: '常亮'}]},
+    ],
+  });
+  await addEvent('线异果', {
+    门槛: {all: [
+      {事件确认: {事件ID: '线异源'}},
+      {剧情标记: {标记ID: '雾灯', 比较: '等于', 值: '常亮'}},
+    ]},
+    默认分支: '成',
+    分支: [{分支ID: '成', 分支条件: '上游确认且雾灯常亮。', 分支结果: '果随源成。'}],
+  });
+  await edit(root, '历史/开局选项.yaml', option => {
+    option.自由组合 = true;
+    const entries = {
+      年链A: {前行: '前行', 止步: '止步'},
+      年链B: {远行: '远行', 留守: '留守'},
+      年链C: {终局: '终局'},
+      跨粒先: {长明: '长明', 暂灭: '暂灭'},
+      跨粒后: {记下: '记下'},
+      互斥M1: {成: '成', 不成: '不成'},
+      互斥M2: {成: '成', 不成: '不成'},
+      线年先: {立: '立', 止: '止'},
+      线年后: {成: '成'},
+      线异门: {显: '显'},
+      线棠枝: {双人: '双人', 单人: '单人'},
+      线棠核: {独行: '独行'},
+      回退A: {守旧: '守旧', 启程: '启程'},
+      回退B: {同行: '同行'},
+      灯灭: {常亮: '常亮', 熄灭: '熄灭'},
+      线异源: {涌: '涌', 静: '静'},
+      线异果: {成: '成'},
+    };
+    for (const [事件ID, 选项] of Object.entries(entries)) option.选项.push({事件ID, 选项});
+  });
+  return root;
+}
+
+async function yearGranularityDraft(t, defaults = {}) {
+  const wbDir = await yearGranularityProject(t);
+  const {catalog, decl} = await compileWorldbook(wbDir, {fs, path});
+  const protocol = createProtocol({catalog, decl});
+  const draft = createOpeningDraft({protocol, catalog, decl, defaults: {世界线: '正史', 开局时间: '潮历072年', ...defaults}});
+  return {draft, protocol, catalog, decl};
+}
+
+test('YG-OPEN-03-A3-1：年粒度同年先决链 A→B→C 三点均进入历史选项', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  const ids = draft.snapshot().历史.map(item => item.事件ID);
+  assert.deepEqual(ids.filter(id => id.startsWith('年链')), ['年链A', '年链B', '年链C'],
+    '同年先决链三点应按起点升序与 codepoint 顺序全部可见');
+  assert.equal(draft.prepare().ok, true);
+});
+
+test('YG-OPEN-03-A3-2：同年上下游联动隐藏与失效下游覆盖自动清理', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  const ids = () => draft.snapshot().历史.map(item => item.事件ID);
+  assert.ok(ids().includes('年链B') && ids().includes('年链C'));
+
+  assert.equal(draft.setHistory('年链A', '止步').ok, true);
+  assert.ok(!ids().includes('年链B'), '上游改选非前置分支后下游应立即隐藏');
+  assert.ok(!ids().includes('年链C'), '传递下游也应隐藏');
+  assert.equal(draft.setHistory('年链A', '').ok, true);
+  assert.ok(ids().includes('年链B') && ids().includes('年链C'), '撤销上游覆盖后下游恢复');
+  assert.equal(draft.setHistory('年链A', '未发生').ok, true);
+  assert.ok(!ids().includes('年链B') && !ids().includes('年链C'), '上游置为未发生后下游隐藏');
+  assert.equal(draft.setHistory('年链A', '前行').ok, true);
+  assert.equal(draft.setHistory('年链B', '远行').ok, true);
+  assert.equal(draft.setHistory('年链C', '终局').ok, true);
+
+  assert.equal(draft.setHistory('年链A', '止步').ok, true);
+  const snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.年链B, undefined, '上游改选后失效的下游覆盖应自动清理');
+  assert.equal(snapshot.预览.开局.历史选择.年链C, undefined, '传递下游的残留覆盖也应清理');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true, '清理后封卷应成功');
+});
+
+test('YG-OPEN-03-A3-3：跨粒度同年先决可见且同年较晚日粒度事件不反向泄漏', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  let snapshot = draft.snapshot();
+  let ids = snapshot.历史.map(item => item.事件ID);
+  assert.ok(ids.includes('跨粒先'), '年粒度先决事件应可见（同年较晚的日粒度标记不得泄漏）');
+  assert.ok(ids.includes('跨粒后'), '同年日粒度下游应读到年粒度先决事件');
+  const prior = snapshot.历史.find(item => item.事件ID === '跨粒先');
+  assert.ok(prior.分支.some(branch => branch.id === '长明'));
+
+  // 显式选中年粒度先决后，日粒度下游保持可见并可封卷。
+  assert.equal(draft.setHistory('跨粒先', '长明').ok, true);
+  ids = draft.snapshot().历史.map(item => item.事件ID);
+  assert.ok(ids.includes('跨粒后'));
+  assert.equal(draft.prepare().ok, true);
+});
+
+test('YG-OPEN-03-A3-4：同年互斥事件默认同现、显式选择后互斥方隐藏', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  let ids = draft.snapshot().历史.map(item => item.事件ID);
+  assert.ok(ids.includes('互斥M1') && ids.includes('互斥M2'), '未选择时互斥双方都应展示');
+
+  assert.equal(draft.setHistory('互斥M1', '成').ok, true);
+  const snapshot = draft.snapshot();
+  ids = snapshot.历史.map(item => item.事件ID);
+  assert.ok(ids.includes('互斥M1'));
+  assert.ok(!ids.includes('互斥M2'), '显式选中互斥M1后互斥M2应隐藏');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true);
+});
+
+test('YG-OPEN-03-A3-5：切世界线保留同年先决覆盖并清理门槛与角色组失效覆盖', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  assert.equal(draft.setHistory('线年先', '立').ok, true);
+  assert.equal(draft.setHistory('线年后', '成').ok, true);
+  assert.equal(draft.setHistory('线棠枝', '双人').ok, true);
+  assert.equal(draft.setHistory('线棠核', '独行').ok, true);
+
+  const switched = draft.setWorldline('异闻');
+  assert.equal(switched.ok, true);
+  let snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.线年先, '立', '新世界线下同年先决合法覆盖不得误删');
+  assert.equal(snapshot.预览.开局.历史选择.线年后, '成', '新世界线下同年下游合法覆盖不得误删');
+  assert.equal(snapshot.预览.开局.历史选择.线棠枝, undefined, '新世界线关闭白棠后分支门槛失效的覆盖应清理');
+  assert.equal(snapshot.预览.开局.历史选择.线棠核, undefined, '新世界线关闭白棠后核心参与者失效的覆盖应清理');
+  let ids = snapshot.历史.map(item => item.事件ID);
+  assert.ok(!ids.includes('线棠核'), '核心参与者停用的事件应隐藏');
+  const branch = snapshot.历史.find(item => item.事件ID === '线棠枝');
+  assert.ok(branch && !branch.分支.some(item => item.id === '双人'), '分支门槛失效的选项应隐藏');
+  assert.equal(snapshot.错误, null);
+
+  assert.equal(draft.setHistory('线异门', '显').ok, true);
+  assert.equal(draft.snapshot().历史.some(item => item.事件ID === '线异门'), true);
+
+  const back = draft.setWorldline('正史');
+  assert.equal(back.ok, true);
+  snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.线年先, '立');
+  assert.equal(snapshot.预览.开局.历史选择.线年后, '成');
+  assert.equal(snapshot.预览.开局.历史选择.线异门, undefined, '新世界线门槛失效的覆盖应清理');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true);
+});
+
+test('YG-OPEN-03-R2-1：同年 3 节点链先选下游再改选上游，逆序残留覆盖自动清净', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  // 逆 codepoint 选择顺序：先 C 再 B，最后改选上游 A，使覆盖键序为 C→B→A。
+  assert.equal(draft.setHistory('年链C', '终局').ok, true);
+  assert.equal(draft.setHistory('年链B', '远行').ok, true);
+  const changed = draft.setHistory('年链A', '止步');
+  assert.equal(changed.ok, true, `改选上游 A 后应清净 B/C 并封卷成功：${JSON.stringify(changed.error ?? null)}`);
+
+  const snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.年链A, '止步');
+  assert.equal(snapshot.预览.开局.历史选择.年链B, undefined, '失效的同年下游 B 覆盖应清理');
+  assert.equal(snapshot.预览.开局.历史选择.年链C, undefined, '失效的传递下游 C 覆盖应清理');
+  const ids = snapshot.历史.map(item => item.事件ID);
+  assert.ok(!ids.includes('年链B') && !ids.includes('年链C'), '上游改选后下游控件应隐藏');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true, '清净逆序残留后封卷应成功');
+});
+
+test('YG-OPEN-03-R2-2：清空上游退回默认分支时自动清理不再成立的下游覆盖', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  // 回退A 默认分支为「守旧」，只有显式改选「启程」才能让 回退B 成立。
+  assert.equal(draft.setHistory('回退A', '启程').ok, true);
+  assert.equal(draft.setHistory('回退B', '同行').ok, true);
+
+  const cleared = draft.setHistory('回退A', '');
+  assert.equal(cleared.ok, true, `清空上游退回默认分支后应清净下游并封卷成功：${JSON.stringify(cleared.error ?? null)}`);
+
+  const snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.回退A, undefined);
+  assert.equal(snapshot.预览.开局.历史选择.回退B, undefined, '退回默认分支后失效的下游覆盖应清理');
+  assert.ok(!snapshot.历史.some(item => item.事件ID === '回退B'), '下游控件应隐藏');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true);
+});
+
+test('YG-OPEN-03-R2-3：切世界线时同年下游 codepoint 小于失效上游的级联清理', async t => {
+  const {draft} = await yearGranularityDraft(t);
+  assert.equal(draft.setWorldline('异闻').ok, true);
+  let ids = draft.snapshot().历史.map(item => item.事件ID);
+  assert.ok(ids.includes('线异源') && ids.includes('线异果'), '异闻世界线下上游与下游均应可见');
+  // 上游 线异源 选中仅在异闻成立的「静」分支；灯灭 选中「熄灭」改写剧情标记；下游 线异果 依赖上游确认与雾灯常亮。
+  assert.equal(draft.setHistory('线异源', '静').ok, true);
+  assert.equal(draft.setHistory('灯灭', '熄灭').ok, true);
+  assert.equal(draft.setHistory('线异果', '成').ok, true);
+  assert.equal(draft.prepare().ok, true, '切世界线前异闻世界线应可封卷');
+
+  const back = draft.setWorldline('正史');
+  assert.equal(back.ok, true, `切回正史后应逐轮清净同年逆序覆盖：${JSON.stringify(back.error ?? null)}`);
+  const snapshot = draft.snapshot();
+  assert.equal(snapshot.预览.开局.历史选择.线异源, undefined, '新世界线分支门槛失效的上游覆盖应清理');
+  assert.equal(snapshot.预览.开局.历史选择.线异果, undefined, '依赖失效上游的下游覆盖应级联清理');
+  assert.equal(snapshot.预览.开局.历史选择.灯灭, '熄灭', '新世界线下仍合法的同年覆盖不得误删');
+  ids = snapshot.历史.map(item => item.事件ID);
+  assert.ok(!ids.includes('线异果'), '上游失效后下游控件应隐藏');
+  assert.equal(snapshot.预览.世界.剧情标记.雾灯, '熄灭');
+  assert.equal(snapshot.错误, null);
+  assert.equal(draft.prepare().ok, true);
+});
