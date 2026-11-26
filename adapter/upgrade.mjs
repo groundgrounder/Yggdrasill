@@ -115,6 +115,7 @@ export function assessWorldbookCompat({list, end = list.length, skip = null, ign
       try {
         const opening = candidate.本局.开局;
         const seeded = protocol.seal({
+          ...(opening.世界线 ? {世界线: opening.世界线} : {}),
           开局时间: opening.开局时间, 角色组: opening.角色组, 玩家: opening.玩家,
           历史选择: opening.历史选择, ...(opening.方案 ? {方案: opening.方案} : {}),
         });

@@ -14,7 +14,7 @@ import {createMemFs, memPath} from './memfs.mjs';
 import {createBookkeeper, customApi, parseJson, runKeeperLoop, buildKeepRecord, repairRecord} from './bookkeeper.mjs';
 import {createView} from './view.mjs';
 import {installStyle, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
-import {createOpeningFlow} from './opening.mjs';
+import {createOpeningFlow, isDynamicOpening, dynamicOpeningBase} from './opening.mjs';
 import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, validateManifest, storedManifest, sanitizeText,
   recordOf, createHistoryAudit, emptyTailAssistant} from './records.mjs';
 import {createUpgradeFlow} from './upgrade.mjs';
@@ -62,7 +62,7 @@ const messages = () => getLastMessageId() < 0 ? [] : getChatMessages('0-' + getL
 // 运行状态集中在一个对象里：状态视图与开局流程只读取这里，不再各自持有副本。
 const session = {integrity: null, upgrade: null, compatNotified: false, permission: null, last: null,
   openingPending: false, openingOpen: false, openingPopup: null, repairPopup: null, openingClosingForChat: false,
-  openingSelfEdit: null, keepingFloor: null};
+  openingSelfEdit: null, keepingFloor: null, dynamicOpening0: null};
 let epoch = 0, taskSequence = 0;
 const latestTask = new Map();
 
@@ -170,9 +170,34 @@ async function callKeeper({prompts, schema}, config) {
 
 async function keepWith(base, {input, narration}, config, attempts, task) {
   const loop = await runKeeperLoop({keeper, base, input, narration, config, attempts, call: callKeeper,
-    isCurrent: () => taskCurrent(task)});
+    isCurrent: () => !task || taskCurrent(task)});
   if (loop.stale) return {stale: true};
   return buildKeepRecord({base, loop, config, debugging: debugging()});
+}
+
+async function generateOpening({state, mode, hint}) {
+  const quiet = bookkeeping();
+  const {context} = route(quiet ? quietRouter : router, state, []);
+  const sys = renderContext(context) + '\n\n请根据以上本局设定、当前时间、地点与主角身份，写出一段有画面感、自然留出玩家行动入口的开篇正文。'
+    + (quiet ? '只写正文，不要输出 <命令> 或状态块。' : '如需变更场景或触发事件，在正文末尾按协议附 <命令>。');
+  const usr = mode === '提示扩写' && hint
+    ? `请将以下开场提示自然融入开篇正文：${hint}`
+    : '请直接开始本局的开篇正文。';
+  keeping = true;
+  uninjectPrompts([INJECT_ID]);
+  try {
+    const text = await generateRaw({ordered_prompts: [{role: 'system', content: sys}, {role: 'user', content: usr}], should_stream: false});
+    if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error('叙事模型未返回有效开场白'), {code: '开局.生成失败'});
+    return text.trim();
+  } finally { keeping = false; }
+}
+
+async function bookkeepOpening(baseState, greeting) {
+  const config = keeperSettings(), attempts = Math.min(3, Math.max(1, Math.round(Number(config.尝试次数) || 2)));
+  session.keepingFloor = 0;
+  status.renderFloors();
+  try { return await keepWith(baseState, {input: '', narration: stripCommands(greeting ?? '')}, config, attempts, null); }
+  finally { session.keepingFloor = null; }
 }
 
 async function bookkeep(list, id, base, task) {
@@ -196,10 +221,21 @@ async function replayFrom(from, base, {fresh = false, kind = '重放', shifted =
     if (!task) break;
     let record;
     if (fresh && id === from) {
-      if (id === 0) return status.blocked({code: '开场.重复', 说明: '第 0 楼不会重新执行开场命令', 楼号: id});
-      record = bookkeeping()
-        ? await bookkeep(list, id, state, task)
-        : fromText(protocol, state, message.message ?? '');
+      if (id === 0) {
+        const originRecord = isDynamicOpening(recordOf(message)) ? recordOf(message) : session.dynamicOpening0;
+        if (!originRecord) return status.blocked({code: '开场.重复', 说明: '第 0 楼不会重新执行开场命令', 楼号: id});
+        const {baseState, baseCommands, baseWritten} = dynamicOpeningBase(protocol, originRecord);
+        const keep = bookkeeping() ? await bookkeep(list, 0, baseState, task) : fromText(protocol, baseState, message.message ?? '');
+        if (keep.stale || !taskCurrent(task)) return false;
+        record = keep.命令 === null
+          ? {...keep, 本局: baseState, 命令: null, 已写入: baseWritten, 记账: {...keep.记账, 方式: originRecord.记账.方式}}
+          : {...keep, 命令: [...baseCommands, ...keep.命令], 已写入: [...baseWritten, ...(keep.已写入 ?? [])],
+            记账: {...keep.记账, 方式: originRecord.记账.方式}};
+      } else {
+        record = bookkeeping()
+          ? await bookkeep(list, id, state, task)
+          : fromText(protocol, state, message.message ?? '');
+      }
     } else {
       const stored = recordOf(message);
       const candidate = shifted && stored?.归属 && typeof stored.归属 === 'object'
@@ -259,6 +295,7 @@ function refresh({exclude = null} = {}) {
     session.compatNotified = true;
     toastr.info('世界书内容已更新，当前存档完全兼容；新楼将写入当前版本清单。', '世界树：存档兼容');
   }
+  if (isDynamicOpening(recordOf(all[0]))) session.dynamicOpening0 = structuredClone(recordOf(all[0]));
   try {
     const state = audit.state;
     const texts = list.filter(message => message.role !== 'system').map(message => stripCommands(message.message ?? ''));
@@ -390,10 +427,26 @@ const status = createStatusView({session, injectId: INJECT_ID, messages, chatId,
 upgradeFlow = createUpgradeFlow({manifest, recordKey: KEY, recordFormat: RECORD_FORMAT, validateRecord, ownershipOf,
   sanitizeText, messages, chatId, enqueue, audit: history.audit, clearCache: history.clearCache, refresh, session, status});
 
+function refreshOpening0(originRecord) {
+  if (!checkPermission()) return false;
+  try {
+    const {baseState} = dynamicOpeningBase(protocol, originRecord), quiet = bookkeeping();
+    const {context, audit: routed} = route(quiet ? quietRouter : router, baseState, []);
+    const content = renderContext(context) + reminder(baseState, quiet);
+    injectPrompts([{id: INJECT_ID, position: 'in_chat', depth: 1, role: 'system', content}]);
+    session.last = {content, audit: routed, exclude: 0, state: baseState, 基于: '开局封卷底本'};
+    status.renderFloors();
+    return true;
+  } catch (error) {
+    return status.blocked({code: error instanceof ProtocolError ? error.code : '路由.失败', 说明: error.message, 楼号: 0});
+  }
+}
+
 const openingFlow = createOpeningFlow({protocol, catalog, decl, defaults: bundle.opening, commands: bundle.openingCommands,
   openingSpec: {openingGreeting: bundle.openingGreeting, commands: bundle.openingCommands,
     optionalPresent: bundle.openingOptionalPresent, requiredGroups: bundle.openingRequiredGroups,
     planOpenings: bundle.planOpenings},
+  generateOpening, bookkeepOpening, bookkeeping,
   messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh,
   audit: history.audit, session, status, nodeOf: draft => openingNode(draft), popup});
 
@@ -420,8 +473,8 @@ async function init() {
 registerAdapterEvents({
   INJECT_ID, manifest, bundle, protocol, view, history, session, messages, invalidateTasks, enqueue,
   checkPermission, isGeneratingOrEmptyTail, stopHostGeneration, isKeeping: () => keeping, bookkeeping, debugging,
-  refresh, replayFrom, rekeepFloor, openRepair, init, checkCompatRecord, openingFlow, status, recordOf,
-  emptyTailAssistant, callKeeper, parseJson, showSettings, stringifyYaml, seal, ownershipOf,
+  refresh, refreshOpening0, isDynamicOpening, replayFrom, rekeepFloor, openRepair, init, checkCompatRecord,
+  openingFlow, status, recordOf, emptyTailAssistant, callKeeper, parseJson, showSettings, stringifyYaml, seal, ownershipOf,
 });
 
 installStyle();

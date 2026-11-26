@@ -187,7 +187,7 @@ export async function packCard({
   // 方案干跑采用与开局草稿相同的优先级：方案字段覆盖卡面初值，而不是反过来。
   const planConfig = plan => {
     const config = {...face.开局}, source = isMap(plan.内容) ? plan.内容 : {};
-    for (const key of ['开局时间', '角色组', '玩家', '历史选择'])
+    for (const key of ['世界线', '开局时间', '角色组', '玩家', '历史选择'])
       if (Object.hasOwn(source, key)) config[key] = source[key];
     config.方案 = plan.id;
     return config;

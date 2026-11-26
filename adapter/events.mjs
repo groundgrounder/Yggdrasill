@@ -17,6 +17,8 @@ export function registerAdapterEvents({
   bookkeeping,
   debugging,
   refresh,
+  refreshOpening0,
+  isDynamicOpening,
   replayFrom,
   rekeepFloor,
   openRepair,
@@ -58,6 +60,16 @@ export function registerAdapterEvents({
     invalidateTasks();
     const list = messages(), tail = list.at(-1);
     const replacing = ['swipe', 'regenerate', 'continue'].includes(type) && tail?.role === 'assistant';
+    if (replacing && tail.message_id === 0) {
+      const origin = isDynamicOpening?.(recordOf(tail)) ? recordOf(tail) : session.dynamicOpening0;
+      if (origin) {
+        session.dynamicOpening0 = structuredClone(origin);
+        const ok = refreshOpening0(origin);
+        if (!ok || session.integrity || session.upgrade)
+          await stopHostGeneration(session.upgrade ? '世界书已增补更新，请先确认升级本局存档' : undefined);
+        return;
+      }
+    }
     const ok = refresh({exclude: replacing ? tail.message_id : null});
     if (!ok || session.integrity || session.upgrade)
       await stopHostGeneration(session.upgrade ? '世界书已增补更新，请先确认升级本局存档' : undefined);
@@ -99,6 +111,10 @@ export function registerAdapterEvents({
       const prefix = history.audit(list, {end: number});
       if (!prefix.ok) return status.blocked(prefix);
       const stored = recordOf(message);
+      if (number === 0 && (isDynamicOpening?.(stored) || session.dynamicOpening0)) {
+        await updateAssistant(list, 0, message, null, '开场重生成', false);
+        return;
+      }
       // 酒馆会给新助手楼继承上一楼的变量；归属仍在旧楼时，它只是副本，不能当作本楼旧记录审计。
       await updateAssistant(list, number, message, prefix.state, '新正文', stored !== undefined && stored?.归属?.楼号 === number);
     });
@@ -149,7 +165,8 @@ export function registerAdapterEvents({
       if (!message.message) {
         if (list.slice(number + 1).some(item => item.role === 'assistant'))
           return status.blocked({code: '记录.当前 swipe', 说明: '空 swipe 后面还有助手楼，不能跳过它作答', 楼号: number});
-        refresh({exclude: number});
+        if (number === 0 && session.dynamicOpening0) refreshOpening0(session.dynamicOpening0);
+        else refresh({exclude: number});
         return;
       }
       const checked = checkCompatRecord(recordOf(message), message);
@@ -196,7 +213,7 @@ export function registerAdapterEvents({
       }
       session.integrity = null; session.upgrade = null; session.compatNotified = false; session.permission = null;
       session.last = null; session.keepingFloor = null; session.openingPending = false; session.openingOpen = false;
-      session.openingSelfEdit = null;
+      session.openingSelfEdit = null; session.dynamicOpening0 = null;
       await init();
     });
   });

@@ -83,7 +83,8 @@ export function createView({protocol, catalog, decl, keeper}) {
       行: [chain.内容?.概述].filter(Boolean), 项: [['已经历', lived(chain).length ? lived(chain) : '无']]}));
     const ended = chains.filter(item => item.status === '已结束').map(({chain}) => chain.id);
     const now = {标题: '此刻', 展开: true,
-      项: [['时间', current.世界?.当前时间 ?? '未写'], ['地点', placeOf(current)], ['在场', present.length ? present.map(id => nameOf(current, id)) : '无'],
+      项: [...(current.开局?.世界线 ? [['世界线', current.开局.世界线]] : []),
+        ['时间', current.世界?.当前时间 ?? '未写'], ['地点', placeOf(current)], ['在场', present.length ? present.map(id => nameOf(current, id)) : '无'],
         ...(ended.length ? [['已经结束', ended]] : [])],
       子段: ongoing};
     const others = [...present.map(id => card(view, id)),

@@ -59,6 +59,12 @@ const CSS = `
 .ygg-opening .ygg-opening-greeting { white-space: pre-wrap; margin: 4px 0; }
 .ygg-opening .ygg-opening-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .ygg-opening .ygg-opening-status .menu_button { width: auto; margin: 0; }
+.ygg-opening .ygg-opening-warn { margin: 6px 0; padding: 6px 9px; border-radius: 5px; border-left: 4px solid var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 14%, transparent); }
+.ygg-opening .ygg-opening-warn .menu_button { width: auto; margin: 4px 0 0; padding: 2px 10px; }
+.ygg-opening .ygg-opening-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 6px 10px; }
+.ygg-opening .ygg-subhead { font-weight: bold; margin: 8px 0 4px; color: var(--SmartThemeEmColor); font-size: 0.92em; }
+.ygg-opening .ygg-tag-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 5px; }
+.ygg-opening .ygg-chip-del { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0 2px; font-weight: bold; }
 `;
 
 export function installStyle() {
@@ -87,101 +93,7 @@ export function sectionNode(item) {
 export const panelNode = (title, sections) => $('<div>').addClass('ygg-panel').append($('<h3>').text(title), sections.map(sectionNode));
 export const textNode = (title, text) => $('<div>').addClass('ygg-panel').append($('<h3>').text(title), $('<pre>').addClass('ygg-pre').text(text));
 
-// 开局前端：所有改变立即交给 opening.mjs 重新预演；失败只在顶部显示错误，上一份有效预览仍留在下方。
-// draft 为 createOpeningDraft 的返回值。DOM 与事件止于此，封卷、命令和写入仍由 runtime 完成。
-export function openingNode(draft) {
-  const root = $('<div>').addClass('ygg-panel ygg-form ygg-opening');
-  const hint = text => $('<div>').addClass('ygg-hint').text(text);
-  const field = (label, control, note) => $('<div>').addClass('ygg-field').append($('<label>').text(label), control, ...(note ? [hint(note)] : []));
-  const select = options => $('<select>').addClass('text_pole').append(options.map(([value, label]) => $('<option>').val(value).text(label)));
-  const section = (title, ...children) => $('<details>').addClass('ygg-sec').prop('open', true)
-    .append($('<summary>').text(title), $('<div>').addClass('ygg-body').append(children));
-
-  function render() {
-    const snapshot = draft.snapshot(), preview = snapshot.预览;
-    root.empty().append($('<h3>').text('世界树：选择开局'));
-    root.append(hint('改动即预演；预演不写聊天变量、不执行开场命令，也不调用叙事或记账模型。取消后可从“世界树：开局”重新打开。'));
-    if (snapshot.错误) root.append($('<div>').addClass('ygg-opening-error')
-      .text(`尚未开局：${snapshot.错误.code}\n${snapshot.错误.说明}`));
-
-    const plans = select([['', '不使用方案'], ...snapshot.计划.map(plan => [plan.id, `${plan.id}${plan.概述 ? `：${plan.概述}` : ''}`])])
-      .val(snapshot.方案 ?? '').on('change', event => { draft.setPlan(event.target.value); render(); });
-    const time = $('<input>').addClass('text_pole').attr('type', 'text').val(snapshot.时间)
-      .on('change', event => { draft.setTime(event.target.value); render(); });
-    const chosenPlan = snapshot.计划.find(plan => plan.id === snapshot.方案);
-    root.append(section('开局方案与时间',
-      field('开局方案', plans, chosenPlan?.概述 || '不选方案时使用卡面初值与协议默认值。'),
-      field('开局时间', time, `卡纪年格式：${snapshot.时间格式}`)));
-
-    const greeting = snapshot.开场白 ?? '';
-    root.append(section('开场白预览',
-      $('<div>').addClass('ygg-line ygg-opening-greeting').text(greeting || '（当前方案没有开场白）'),
-      ...(greeting && greeting !== (snapshot.主开场白 ?? '')
-        ? [hint('确认开局后将同步第 0 楼开场白；写入失败会恢复原正文。')]
-        : [hint('确认开局后使用这段正文作为第 0 楼开场白。')])));
-
-    const groups = snapshot.角色组.map(group => {
-      const version = select(group.版本.map(id => {
-        const declared = group.版本内容.find(item => item.版本ID === id) ?? {};
-        return [id, `${declared.显示名 ?? id}${declared.简介 ? `：${declared.简介}` : ''}`];
-      })).val(group.版本ID)
-        .on('change', event => { draft.setGroup(group.id, {版本ID: event.target.value}); render(); });
-      const enabled = $('<input>').attr('type', 'checkbox').prop('checked', group.启用 === true)
-        .on('change', event => { draft.setGroup(group.id, {启用: event.target.checked}); render(); });
-      const tags = $('<span>').addClass('ygg-group-tags').append(
-        $('<span>').addClass('ygg-tag').text(group.启用 ? '启用' : '停用'),
-        ...(group.必选 ? [$('<span>').addClass('ygg-tag ygg-required').text('必选')] : []));
-      return $('<div>').addClass('ygg-group-row').append(
-        $('<label>').addClass('ygg-check').append(enabled, $('<span>').text(`${group.显示名}${group.分类 ? `（${group.分类}）` : ''}`)),
-        version, tags,
-        ...(group.必选 && group.依赖原因?.length
-          ? [$('<div>').addClass('ygg-required-reason').text('依赖：' + group.依赖原因.join('；'))] : []));
-    });
-    root.append(section('角色组', ...(groups.length ? groups : [hint('这张卡没有声明角色组。')])));
-
-    const player = snapshot.玩家, mode = select([['自建', '自建玩家'], ['扮演', '扮演角色组']])
-      .val(player.模式).on('change', event => { draft.setPlayerMode(event.target.value); render(); });
-    const enabledGroups = snapshot.角色组.filter(group => group.启用).map(group => [group.id, group.显示名]);
-    const roleGroup = select(enabledGroups).val(player.扮演角色组 ?? '')
-      .on('change', event => { draft.setPlayerGroup(event.target.value); render(); });
-    const profile = $('<textarea>').addClass('text_pole').attr('rows', 8).val(snapshot.档案文本)
-      .on('change', event => { draft.setProfileText(event.target.value); render(); });
-    root.append(section('玩家', field('玩家模式', mode),
-      ...(player.模式 === '扮演' ? [field('扮演角色组', roleGroup, '只列出当前有效预览中已启用的角色组；改停该组后预演会明确失败。')]
-        : [field('自建档案（YAML 映射）', profile, '字段与取值由协议校验；可留空为 {}。')])));
-
-    if (snapshot.历史.length) {
-      const rows = snapshot.历史.map(item => {
-        if (!snapshot.自由组合) return $('<div>').addClass('ygg-line')
-          .text(`${item.问题}：${item.值 || '由方案与历史求解决定'}`);
-        const choices = select([['', '按方案/默认'], ...item.分支.map(branch => [branch.id, `${branch.id}：${branch.label}`])]).val(item.值)
-          .on('change', event => { draft.setHistory(item.事件ID, event.target.value); render(); });
-        return field(item.问题, choices);
-      });
-      root.append(section('历史选择', hint(snapshot.自由组合
-        ? '自由组合已开启：只列出已声明的分支与“未发生”，留空时仍取方案或协议历史求解。'
-        : '自由组合已关闭：不提供自由历史编辑，历史选择只从所选方案派生。'), ...rows));
-    }
-
-    const previewNode = $('<div>').addClass('ygg-opening-preview');
-    if (!preview) previewNode.append(hint('当前没有可用的封卷预览。'));
-    else {
-      const opening = preview.开局, enabled = Object.entries(opening.角色组 ?? {}).filter(([, value]) => value.启用);
-      const groupText = enabled.length ? enabled.map(([id, value]) =>
-        `${snapshot.角色组.find(group => group.id === id)?.显示名 ?? id}(${value.版本ID})`).join('、') : '无';
-      previewNode.append($('<div>').addClass('ygg-line').text(`有效预览：${opening.开局时间}${opening.方案 ? ` · 方案 ${opening.方案}` : ''}`),
-        $('<div>').addClass('ygg-line').text('角色组：' + groupText),
-        $('<div>').addClass('ygg-line').text('玩家：' + (opening.玩家?.模式 === '扮演'
-          ? `扮演 ${opening.玩家.扮演角色组}` : `自建 ${opening.玩家?.档案?.姓名 ?? '未命名'}`)),
-        $('<div>').addClass('ygg-line').text('历史选择：' + (Object.keys(opening.历史选择 ?? {}).length
-          ? Object.entries(opening.历史选择).map(([event, branch]) => `${event}=${branch}`).join('、') : '无')));
-    }
-    root.append(previewNode);
-    return root;
-  }
-
-  return render();
-}
+export {openingNode} from './opening-ui.mjs';
 
 export function openingStatusNode({open, reason = '尚未开局'}) {
   const body = $('<div>').addClass('ygg-body').append(

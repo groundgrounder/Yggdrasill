@@ -71,7 +71,7 @@ assert.equal(digest(manifest.世界书文件), manifest.世界书哈希);
 
 const programPaths = manifest.程序文件.map(item => item.路径);
 assert.deepEqual(programPaths, [...programPaths].sort(compare));
-for (const name of ['runtime', 'events', 'memfs', 'bookkeeper', 'records', 'opening', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
+for (const name of ['runtime', 'events', 'memfs', 'bookkeeper', 'records', 'opening', 'opening-ui', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
   assert.ok(programPaths.includes(`adapter/${name}.mjs`), name);
 for (const name of ['变量更新规则', '角色通用约束', '扮演准则']) assert.ok(programPaths.includes(`templates/${name}.txt`));
 assert.ok(programPaths.every(file => !/^(?:adapter\/(?:build|smoke|bundle\.generated)|adapter\/dist\/|证据\/|test\/|日志|截图)/.test(file)));
@@ -2544,3 +2544,72 @@ assert.equal(longAudit.cacheStats().cachedFloors, 4);
 assert.equal(longAudit.audit(longChat).ok, true);
 assert.equal(longAudit.cacheStats().cachedFloors, 12);
 console.log(`42 YG-ROUTE-01：12 楼长聊首次重放 ${firstReplay} 层，重复审计新增 0 层，追加仅重放新增尾楼；篡改历史本局报 ${noCache.code} 与无缓存一致；clearCache/invalidateFrom 精确失效通过`);
+
+// ---------- 43. YG-OPEN-02：第 0 楼封面 + 动态开场白（自动生成/提示扩写/手写）+ 重刷/swipe/编辑 ----------
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+holdPopup = true;
+const open43Before = popupNodes.length, cover43 = '【封面占位】请点击世界树：开局。';
+chat.splice(0, chat.length);
+push(cover43, false);
+await emit('chat_id_changed');
+await waitUntil(() => popupNodes.length > open43Before, '段43 打开开局界面');
+let form43 = popupNodes.at(-1);
+// 切换为 提示扩写 并填写一句提示
+let mode43 = find(form43, item => item.tag === '<select>' && item.children.some(o => o.field === '提示扩写'));
+mode43.handlers.change({target: {value: '提示扩写'}});
+form43 = popupNodes.at(-1);
+const hintField43 = find(form43, item => item.classes.includes('ygg-field') && item.text().includes('开场提示'));
+const hintInput43 = find(hintField43, item => item.tag === '<input>');
+hintInput43.handlers.change({target: {value: '黄昏时分在码头边眺望雾海'}});
+// 先模拟生成失败：封面与变量均不动
+keeperThrowOnce = true;
+assert.equal(await closePopup(1), false, '动态开场白生成失败时应保留封面供重试');
+assert.equal(chat[0].mes, cover43, '生成失败不得覆写第 0 楼封面');
+assert.equal(record(0), undefined, '生成失败不得写入第 0 楼记录');
+// 重试：第一次 generateRaw 为叙事生成开场白，第二次 generateRaw 为记账 JSON
+const genOpening43 = '黄昏的潮气扑上码头，秦守提着铜灯站在栈桥边。';
+keeperReplies.push(
+  genOpening43,
+  JSON.stringify({时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [], 新情况: []}),
+);
+const callsBefore43 = keeperCalls.length;
+assert.equal(await closePopup(1), true, '重试后提示扩写开场白应提交成功');
+holdPopup = false;
+assert.equal(keeperCalls.length, callsBefore43 + 2, '动态开场应依次调用叙事生成与记账');
+assert.match(keeperCalls[callsBefore43].ordered_prompts[1].content, /黄昏时分在码头边眺望雾海/);
+assert.equal(chat[0].mes, genOpening43);
+assert.equal(record(0).记账.方式, '开场生成');
+assert.equal(record(0).本局.角色.秦守.在场, true);
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-0')).ok, true, '动态第 0 楼必须通过严格重放');
+
+// 在动态第 0 楼后推一轮普通对话，再编辑第 0 楼正文并验证重记 + 下游重放
+keeperReplies.push(JSON.stringify({时间: {方式: '写日期', 日期: '潮历071年04月02日', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [], 新情况: []}));
+await send('我走近秦守打招呼。', '秦守点点头，把灯挂在柱上。');
+assert.equal(record(2).本局.世界.当前时间, '潮历071年04月02日');
+
+const editedOpening43 = '夜色初降，白棠提着鱼篓从码头走过。';
+chat[0].mes = chat[0].swipes[0] = editedOpening43;
+keeperReplies.push(JSON.stringify({时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['白棠'], 发生的事件: [], 新情况: []}));
+await emit('message_edited', 0);
+assert.equal(record(0).记账.方式, '开场生成');
+assert.equal(record(0).本局.角色.白棠.在场, true);
+assert.equal(record(2).本局.角色.白棠.在场, true, '编辑动态第 0 楼后下游楼层应同步重放');
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-2')).ok, true, '编辑动态第 0 楼后整聊通过严格审计');
+
+// 删去后续楼层，对动态第 0 楼执行新建空 swipe + regenerate + 收到新正文
+chat.splice(1);
+await emit('message_deleted', 1);
+chat[0].swipes.push(''); chat[0].swipe_id = 1; chat[0].mes = '';
+await emit('message_swiped', 0);
+const stopBeforeSwipe0 = stopCalls;
+await emit('GENERATION_AFTER_COMMANDS', 'swipe', generationOptions, false);
+assert.equal(stopCalls, stopBeforeSwipe0, '动态第 0 楼刷 swipe 生成前不得被阻断');
+assert.ok(content().length > 0, '动态第 0 楼刷 swipe 应注入开局封卷底本上下文');
+chat[0].mes = chat[0].swipes[1] = '清晨海雾未散，灯塔门前静悄悄的。';
+keeperReplies.push(JSON.stringify({时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: [], 发生的事件: [], 新情况: []}));
+await emit('message_received', 0, 'swipe');
+assert.equal(record(0).记账.方式, '开场生成');
+assert.equal(record(0).归属.swipe, 1);
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-0')).ok, true, '动态第 0 楼新 swipe 应通过严格审计');
+console.log('43 YG-OPEN-02：第 0 楼封面 + 提示扩写失败保留封面 + 重试生成记账落盘 + 动态第 0 楼编辑重放与 swipe 重刷均通过严格审计');
