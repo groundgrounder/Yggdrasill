@@ -1,6 +1,6 @@
 {
   "name": "yggdrasill",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "角色组、版本、时期档案与统一事件树的世界书规范与工具链",
   "type": "module",
   "private": true,
