@@ -322,7 +322,10 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
   const freeCombination = optionSource?.自由组合 === true;
   const options = Array.isArray(optionSource?.选项) ? optionSource.选项 : [];
   const abilityMeta = buildAbilityMeta(decl, catalog);
-  const equipMeta = (catalog.entries?.装备 ?? []).map(entry => ({id: entry.id, 名称: entry.内容?.名称 ?? entry.id}));
+  const skillMeta = (catalog.entries?.技能 ?? []).map(entry => ({id: entry.id, 名称: entry.内容?.名称 ?? entry.id}));
+  const equipBase = (catalog.entries?.装备 ?? []).map(entry => ({
+    id: entry.id, 名称: entry.内容?.名称 ?? entry.id, 唯一: entry.内容?.唯一 === true,
+  }));
   const equipStates = resolveDomain('词表.装备状态', decl);
 
   let planId = has(defaults, '方案') && planMap.has(defaults.方案) ? defaults.方案 : null;
@@ -337,6 +340,8 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
   let overrides = {}, failure = null, preview = null;
   // 玩家选择与档案草稿是同一份状态：结构化表单、YAML 文本框、预览与提交都读这里。
   let playerMode = '自建', roleGroup = null, profileDraft = {}, initialAbility = {}, initialEquipment = [], profileText = '{}';
+  let customEquipments = [], customSkills = [], extraSkills = [], removedSkills = [];
+  let rpAbilityOverrides = {}, rpRemovedAbilities = [], rpExtraEquipments = [], rpRemovedEquipments = [];
   let playerTouched = false, profileFailure = null;
   let locationOverride = null, locationTouched = false;
   let greetingModeTouched = false, greetingHint = '', customGreeting = '';
@@ -351,8 +356,52 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     const source = planContent(), base = has(source, '玩家') ? source.玩家 : defaults.玩家;
     return isMap(base) ? base : {模式: '自建', 档案: {}};
   };
+  function cleanRpAbilityOverrides(raw) {
+    const dims = decl.ability?.维度 ?? {};
+    const out = {};
+    for (const [name, value] of Object.entries(raw ?? {})) {
+      const dim = dims[name];
+      if (!dim) continue;
+      if (dim.类型 === '等级映射') {
+        if (!isMap(value)) continue;
+        const entries = Object.entries(value).filter(([, v]) => typeof v === 'string' && v.trim());
+        if (entries.length) out[name] = Object.fromEntries(entries);
+      } else if (dim.类型 === '单值等级') {
+        if (typeof value === 'string' && value.trim()) out[name] = value.trim();
+      } else if (dim.类型 === '集合') {
+        out[name] = [...new Set(cleanListInput(value))];
+      }
+    }
+    return out;
+  }
+  function clearRoleplayIncremental() {
+    rpAbilityOverrides = {};
+    rpRemovedAbilities = [];
+    rpExtraEquipments = [];
+    rpRemovedEquipments = [];
+    extraSkills = [];
+    removedSkills = [];
+  }
   function playerNow() {
-    if (playerMode === '扮演') return {模式: '扮演', ...(roleGroup ? {扮演角色组: roleGroup} : {})};
+    const common = {
+      ...(customEquipments.length ? {自定义装备: clone(customEquipments)} : {}),
+      ...(customSkills.length ? {自定义技能: clone(customSkills)} : {}),
+      ...(extraSkills.length ? {额外技能: [...extraSkills]} : {}),
+      ...(removedSkills.length ? {移除技能: [...removedSkills]} : {}),
+    };
+    if (playerMode === '扮演') {
+      const cleanedOverrides = cleanRpAbilityOverrides(rpAbilityOverrides);
+      const cleanedExtraEquip = rpExtraEquipments.filter(item => isMap(item) && item.装备ID);
+      return {
+        模式: '扮演',
+        ...(roleGroup ? {扮演角色组: roleGroup} : {}),
+        ...(Object.keys(cleanedOverrides).length ? {能力覆写: cleanedOverrides} : {}),
+        ...(rpRemovedAbilities.length ? {移除能力: [...rpRemovedAbilities]} : {}),
+        ...(cleanedExtraEquip.length ? {额外装备: clone(cleanedExtraEquip)} : {}),
+        ...(rpRemovedEquipments.length ? {移除装备: [...rpRemovedEquipments]} : {}),
+        ...common,
+      };
+    }
     const cleanedAbility = cleanAbilityMap(initialAbility, decl.ability?.维度);
     const cleanedEquipment = initialEquipment.filter(item => isMap(item) && item.装备ID);
     return {
@@ -360,6 +409,7 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
       档案: clone(profileDraft),
       ...(Object.keys(cleanedAbility).length ? {初始能力: cleanedAbility} : {}),
       ...(cleanedEquipment.length ? {初始装备: clone(cleanedEquipment)} : {}),
+      ...common,
     };
   }
   // 未编辑玩家选择时，方案或卡面初值提供模式、扮演角色组与档案草稿；编辑过就保留用户的选择。
@@ -370,8 +420,71 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     profileDraft = isMap(source.档案) ? clone(source.档案) : {};
     initialAbility = isMap(source.初始能力) ? clone(source.初始能力) : {};
     initialEquipment = Array.isArray(source.初始装备) ? clone(source.初始装备) : [];
+    customEquipments = Array.isArray(source.自定义装备) ? clone(source.自定义装备) : [];
+    customSkills = Array.isArray(source.自定义技能) ? clone(source.自定义技能) : [];
+    extraSkills = Array.isArray(source.额外技能) ? [...source.额外技能] : [];
+    removedSkills = Array.isArray(source.移除技能) ? [...source.移除技能] : [];
+    rpAbilityOverrides = isMap(source.能力覆写) ? clone(source.能力覆写) : {};
+    rpRemovedAbilities = Array.isArray(source.移除能力) ? [...source.移除能力] : [];
+    rpExtraEquipments = Array.isArray(source.额外装备) ? clone(source.额外装备) : [];
+    rpRemovedEquipments = Array.isArray(source.移除装备) ? [...source.移除装备] : [];
     profileText = stringifyYaml(profileDraft);
     profileFailure = null;
+  }
+
+  function sealClean(cleanPlayer) {
+    const input = composeOpeningInput({
+      defaults,
+      plan: planId ? planMap.get(planId) : null,
+      overrides: {
+        ...overrides,
+        方案: planId,
+        玩家: cleanPlayer,
+        ...(worldlines.length && worldlineId ? {世界线: worldlineId} : {}),
+      },
+    });
+    try { return protocol.seal(input); } catch { return null; }
+  }
+
+  function roleplayBaselineNow() {
+    if (playerMode !== '扮演' || !roleGroup || !groupMap.has(roleGroup)) return null;
+    const choices = resolvedGroupChoices();
+    if (choices[roleGroup]?.启用 !== true) return null;
+    const cleanState = sealClean({模式: '扮演', 扮演角色组: roleGroup});
+    if (!cleanState) return null;
+    try { return protocol.roleplayBaseline(cleanState, roleGroup); } catch { return null; }
+  }
+
+  function equipMetaNow(cleanState = null) {
+    const baseState = cleanState ?? sealClean({模式: '自建', 档案: {}});
+    const enabledGroups = baseState ? enabledNow(baseState)
+      : Object.fromEntries(Object.entries(resolvedGroupChoices()).map(([id, choice]) => [id, choice.启用 === true]));
+    const displayOf = id => groupNow(id)?.显示名 ?? groupMap.get(id)?.内容?.显示名 ?? id;
+    return equipBase.map(entry => {
+      const holders = [];
+      if (baseState?.角色) {
+        for (const [id, run] of Object.entries(baseState.角色)) {
+          if (groupMap.has(id) && has(run?.装备, entry.id)) holders.push(id);
+        }
+      }
+      let ownerIds = [...new Set(holders)];
+      if (!ownerIds.length) {
+        for (const group of catalog.groups ?? []) {
+          if (enabledGroups[group.id] !== true) continue;
+          const declared = (group.内容?.档案 ?? group.档案 ?? []).some(profile =>
+            Array.isArray(profile.初始装备) && profile.初始装备.some(item => item?.装备ID === entry.id));
+          if (declared) ownerIds.push(group.id);
+        }
+        ownerIds = [...new Set(ownerIds)];
+      }
+      ownerIds.sort(codepointCompare);
+      return {
+        id: entry.id,
+        名称: entry.名称,
+        唯一: entry.唯一,
+        原主: ownerIds.map(id => ({id, 显示名: displayOf(id)})),
+      };
+    });
   }
 
   const inputNow = () => composeOpeningInput({
@@ -822,9 +935,11 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
       failure = {code: '开局.玩家', 说明: `扮演角色组不存在：${id}`};
       return {ok: false, error: clone(failure)};
     }
+    const nextGroup = id || null;
+    if (nextGroup !== roleGroup) clearRoleplayIncremental();
     playerTouched = true;
     playerMode = '扮演';
-    roleGroup = id || null;
+    roleGroup = nextGroup;
     return afterChange();
   }
 
@@ -901,6 +1016,176 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     profileFailure = null;
     initialEquipment = clone(list);
     profileText = stringifyYaml(profileDraft);
+    return afterChange();
+  }
+
+  function setCustomEquipment(list) {
+    if (!Array.isArray(list)) {
+      failure = {code: '开局.玩家', 说明: '自定义装备须为列表'};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    customEquipments = clone(list);
+    return afterChange();
+  }
+
+  function setCustomSkills(list) {
+    if (!Array.isArray(list)) {
+      failure = {code: '开局.玩家', 说明: '自定义技能须为列表'};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    customSkills = clone(list);
+    return afterChange();
+  }
+
+  function currentBaseSkills() {
+    const state = stateNow();
+    if (playerMode === '扮演') {
+      if (state && roleGroup && state.角色?.[roleGroup]?.已初始化 === true) {
+        try {
+          const all = protocol.availableSkills(state, roleGroup);
+          const extra = new Set(extraSkills);
+          return all.filter(id => !extra.has(id));
+        } catch {}
+      }
+      return roleplayBaselineNow()?.可用技能 ?? [];
+    }
+    if (state) {
+      try {
+        const all = protocol.availableSkills(state, '玩家');
+        const extra = new Set(extraSkills);
+        return all.filter(id => !extra.has(id));
+      } catch {}
+    }
+    return [];
+  }
+
+  function addSkill(skillID) {
+    const id = typeof skillID === 'string' ? skillID.trim() : '';
+    if (!id) {
+      failure = {code: '开局.玩家', 说明: '技能ID不能为空'};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    if (removedSkills.includes(id)) {
+      removedSkills = removedSkills.filter(item => item !== id);
+    } else if (!currentBaseSkills().includes(id) && !extraSkills.includes(id)) {
+      extraSkills = [...extraSkills, id];
+    }
+    return afterChange();
+  }
+
+  function removeSkill(skillID) {
+    const id = typeof skillID === 'string' ? skillID.trim() : '';
+    if (!id) {
+      failure = {code: '开局.玩家', 说明: '技能ID不能为空'};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    if (extraSkills.includes(id)) {
+      extraSkills = extraSkills.filter(item => item !== id);
+    } else if (!removedSkills.includes(id)) {
+      removedSkills = [...removedSkills, id];
+    }
+    return afterChange();
+  }
+
+  function setRoleplayAbility(dimension, value) {
+    const dim = decl.ability?.维度?.[dimension];
+    if (!dim) {
+      failure = {code: '开局.玩家', 说明: `未知能力维度：${dimension}`};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    const base = roleplayBaselineNow()?.能力?.[dimension];
+    const nextOverrides = clone(rpAbilityOverrides);
+    let nextRemoved = [...rpRemovedAbilities];
+    const clearRemoved = field => { nextRemoved = nextRemoved.filter(item => item !== field); };
+    const addRemoved = field => { if (!nextRemoved.includes(field)) nextRemoved.push(field); };
+
+    if (dim.类型 === '单值等级') {
+      const text = value === null || value === undefined ? '' : String(value).trim();
+      const baseVal = typeof base === 'string' && base.trim() ? base.trim() : '';
+      if (!text) {
+        delete nextOverrides[dimension];
+        if (baseVal) addRemoved(dimension);
+        else clearRemoved(dimension);
+      } else {
+        clearRemoved(dimension);
+        if (text === baseVal) delete nextOverrides[dimension];
+        else nextOverrides[dimension] = text;
+      }
+    } else if (dim.类型 === '等级映射') {
+      if (value !== null && value !== undefined && !isMap(value)) {
+        failure = {code: '开局.玩家', 说明: `能力维度「${dimension}」须为映射`};
+        return {ok: false, error: clone(failure)};
+      }
+      const target = {};
+      for (const [k, v] of Object.entries(value ?? {})) {
+        if (typeof v === 'string' && v.trim()) target[k] = v.trim();
+      }
+      const baseMap = isMap(base) ? base : {};
+      nextRemoved = nextRemoved.filter(item => !item.startsWith(`${dimension}.`));
+      const overrideMap = {};
+      for (const k of new Set([...Object.keys(baseMap), ...Object.keys(target)])) {
+        const bv = baseMap[k], tv = target[k];
+        if (tv === undefined) {
+          if (bv !== undefined) addRemoved(`${dimension}.${k}`);
+        } else if (tv !== bv) {
+          overrideMap[k] = tv;
+        }
+      }
+      if (Object.keys(overrideMap).length) nextOverrides[dimension] = overrideMap;
+      else delete nextOverrides[dimension];
+    } else if (dim.类型 === '集合') {
+      const target = [...new Set(cleanListInput(value))];
+      const baseList = Array.isArray(base) ? base : [];
+      const sameSet = target.length === baseList.length && target.every(item => baseList.includes(item));
+      clearRemoved(dimension);
+      if (sameSet) delete nextOverrides[dimension];
+      else nextOverrides[dimension] = target;
+    }
+
+    rpAbilityOverrides = nextOverrides;
+    rpRemovedAbilities = nextRemoved;
+    return afterChange();
+  }
+
+  function setRoleplayEquipment(equipID, itemOrNull) {
+    const id = typeof equipID === 'string' ? equipID.trim() : '';
+    if (!id) {
+      failure = {code: '开局.玩家', 说明: '装备ID不能为空'};
+      return {ok: false, error: clone(failure)};
+    }
+    playerTouched = true;
+    const baseEquip = roleplayBaselineNow()?.装备?.[id];
+    if (itemOrNull === null || itemOrNull === undefined) {
+      rpExtraEquipments = rpExtraEquipments.filter(item => item.装备ID !== id);
+      if (baseEquip && !rpRemovedEquipments.includes(id)) rpRemovedEquipments = [...rpRemovedEquipments, id];
+    } else {
+      if (!isMap(itemOrNull)) {
+        failure = {code: '开局.玩家', 说明: '装备项须为映射'};
+        return {ok: false, error: clone(failure)};
+      }
+      const stateVal = String(itemOrNull.状态 ?? '').trim();
+      const posVal = String(itemOrNull.位置 ?? '').trim();
+      rpRemovedEquipments = rpRemovedEquipments.filter(item => item !== id);
+      const rest = rpExtraEquipments.filter(item => item.装备ID !== id);
+      if (baseEquip && baseEquip.状态 === stateVal && baseEquip.位置 === posVal) {
+        rpExtraEquipments = rest;
+      } else {
+        rpExtraEquipments = [...rest, {装备ID: id, 状态: stateVal, 位置: posVal}];
+      }
+    }
+    return afterChange();
+  }
+
+  function resetRoleplayCustomization() {
+    playerTouched = true;
+    clearRoleplayIncremental();
+    customEquipments = [];
+    customSkills = [];
     return afterChange();
   }
 
@@ -1008,6 +1293,8 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     previewNow,
     setWorldline, setPlan, setTime, setLocation, setGroup,
     setPlayerMode, setPlayerGroup, setProfileField, setInitialAbility, setInitialEquipment, setProfileText,
+    setCustomEquipment, setCustomSkills, addSkill, removeSkill,
+    setRoleplayAbility, setRoleplayEquipment, resetRoleplayCustomization,
     setHistory, setGreetingMode, setGreetingHint, setCustomGreeting, fail,
     input: inputNow,
     prepare: () => {
@@ -1034,10 +1321,67 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
       const active = activeNow(), state = stateNow(), required = requiredNow(state);
       const visiblePlans = worldlines.length ? plans.filter(plan => plan.内容?.世界线 === worldlineId) : plans;
       const nowTime = currentEffectiveTime();
+      const choices = resolvedGroupChoices();
+      let cleanState = null, baseline = null;
+      if (playerMode === '扮演' && roleGroup && groupMap.has(roleGroup) && choices[roleGroup]?.启用 === true) {
+        cleanState = sealClean({模式: '扮演', 扮演角色组: roleGroup});
+        if (cleanState) {
+          try { baseline = protocol.roleplayBaseline(cleanState, roleGroup); } catch { baseline = null; }
+        }
+      }
+      if (!cleanState) cleanState = sealClean({模式: '自建', 档案: {}});
+      const currentEquipMeta = equipMetaNow(cleanState);
+
       let playerSkills = [];
       if (playerMode === '自建' && state) {
         try { playerSkills = protocol.availableSkills(state, '玩家'); } catch {}
       }
+
+      let roleplayForm = null;
+      if (playerMode === '扮演') {
+        const initialized = Boolean(state && roleGroup && state.角色?.[roleGroup]?.已初始化 === true);
+        let effAbility = baseline?.能力 ? clone(baseline.能力) : null;
+        if (initialized) {
+          try { effAbility = protocol.currentAbility(state, roleGroup) ?? effAbility; } catch {}
+        }
+        let effSkills = [];
+        if (initialized) {
+          try { effSkills = protocol.availableSkills(state, roleGroup); } catch { effSkills = baseline?.可用技能 ? [...baseline.可用技能] : []; }
+        } else if (baseline?.结果 === '成立') {
+          const baseSet = new Set(baseline.可用技能 ?? []);
+          const remSet = new Set(removedSkills);
+          const addSet = new Set(extraSkills);
+          effSkills = skillMeta.map(s => s.id).filter(id => (baseSet.has(id) && !remSet.has(id)) || addSet.has(id));
+        }
+        const effEquip = initialized
+          ? clone(state.角色[roleGroup].装备 ?? {})
+          : clone(baseline?.装备 ?? {});
+        const cleanedOverrides = cleanRpAbilityOverrides(rpAbilityOverrides);
+        const abilityOverrideCount = Object.values(cleanedOverrides).reduce((sum, val) =>
+          sum + (isMap(val) ? Object.keys(val).length : 1), 0);
+        const cleanedExtraEquip = rpExtraEquipments.filter(item => isMap(item) && item.装备ID);
+        const customCount = abilityOverrideCount + rpRemovedAbilities.length
+          + cleanedExtraEquip.length + rpRemovedEquipments.length
+          + extraSkills.length + removedSkills.length
+          + customEquipments.length + customSkills.length;
+        roleplayForm = {
+          扮演角色组: roleGroup,
+          基线: baseline ? clone(baseline) : null,
+          有效能力: effAbility ? clone(effAbility) : null,
+          有效可用技能: [...effSkills],
+          有效装备: effEquip,
+          自定义装备: clone(customEquipments),
+          自定义技能: clone(customSkills),
+          额外技能: [...extraSkills],
+          移除技能: [...removedSkills],
+          已自定义项数: customCount,
+          能力维度: clone(abilityMeta),
+          技能库: clone(skillMeta),
+          装备库: clone(currentEquipMeta),
+          装备状态: [...equipStates],
+        };
+      }
+
       return {
         世界线列表: worldlines.map(wl => ({id: wl.id, 概述: wl.内容?.概述 ?? '', 默认: wl.内容?.默认 === true})),
         世界线: worldlineId,
@@ -1074,9 +1418,15 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
           可用技能: playerSkills,
           纪年: {前缀: decl.calendar.前缀, 年位数: decl.calendar.年位数, 格式: calendar.pattern, 当前年: calendar.year(nowTime)},
           能力维度: clone(abilityMeta),
-          装备库: clone(equipMeta),
+          技能库: clone(skillMeta),
+          装备库: clone(currentEquipMeta),
           装备状态: [...equipStates],
+          自定义装备: clone(customEquipments),
+          自定义技能: clone(customSkills),
+          额外技能: [...extraSkills],
+          移除技能: [...removedSkills],
         },
+        扮演表单: roleplayForm,
         历史: historyControls(),
         预览: state ? clone(state) : null,
         上次预览: preview ? clone(preview.state) : null,

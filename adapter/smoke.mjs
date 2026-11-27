@@ -2626,3 +2626,48 @@ assert.equal(record(0).记账.方式, '开场生成');
 assert.equal(record(0).归属.swipe, 1);
 assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-0')).ok, true, '动态第 0 楼新 swipe 应通过严格审计');
 console.log('43 YG-OPEN-02：第 0 楼封面 + 提示扩写失败保留封面 + 重试生成记账落盘 + 动态第 0 楼编辑重放与 swipe 重刷均通过严格审计');
+
+// ---------- 44. YG-CUST-02：扮演增量定制、唯一装备原主反查与自定义装备记账 ----------
+const customCatalog = clone(router.catalog);
+const wrenchEntry = customCatalog.entries.装备.find(item => item.id === '工具·铜扳手');
+wrenchEntry.内容.唯一 = true;
+const customProto = createProtocol({catalog: customCatalog, decl: router.decl});
+const customKeeper = createBookkeeper({protocol: customProto, catalog: customCatalog, decl: router.decl});
+const custDraft = createOpeningDraft({protocol: customProto, catalog: customCatalog, decl: router.decl, defaults: face.开局, commands: face.开场命令});
+custDraft.setPlayerMode('扮演');
+custDraft.setPlayerGroup('灯塔学徒');
+custDraft.setTime('潮历074年');
+const custSnap0 = custDraft.snapshot();
+assert.equal(custSnap0.扮演表单.基线.档案ID, '林澜·守塔期');
+const wrenchMeta44 = custSnap0.扮演表单.装备库.find(item => item.id === '工具·铜扳手');
+assert.equal(wrenchMeta44.唯一, true);
+assert.deepEqual(wrenchMeta44.原主.map(o => o.id), ['秦守']);
+assert.equal(custDraft.setRoleplayAbility('名望', '名匠').ok, true);
+assert.equal(custDraft.setRoleplayEquipment('工具·铜扳手', {状态: '完好', 位置: '腰间'}).ok, true);
+assert.equal(custDraft.setCustomEquipment([{名称: '旧银哨', 说明: '遇雾可鸣哨定位。', 状态: '完好', 位置: '随身'}]).ok, true);
+assert.equal(custDraft.setCustomSkills([{名称: '听潮辨雾', 说明: '借浪声辨认近岸暗礁。'}]).ok, true);
+const custPrep = custDraft.prepare();
+assert.equal(custPrep.ok, true);
+const custState44 = custPrep.record.本局;
+assert.equal(custState44.角色.灯塔学徒.已初始化, true);
+assert.deepEqual(custState44.角色.灯塔学徒.装备['工具·铜扳手'], {状态: '完好', 位置: '腰间'});
+assert.equal(Object.hasOwn(custState44.角色.秦守?.装备 ?? {}, '工具·铜扳手'), false, '唯一装备应归玩家、原主不再持有');
+const req44 = customKeeper.request(custState44, {input: '我把旧银哨塞进木盒。', narration: '旧银哨磕碰受损，收进木盒。'});
+assert.match(req44.prompts[0].content, /旧银哨/);
+assert.match(req44.prompts[0].content, /角色\.<角色组ID>\.装备\.<自定义装备名称>/);
+const run44 = customKeeper.run(custState44, {
+  时间: {方式: '不变', 日期: '', 事件ID: ''},
+  地点: {地标: '', 场景: ''},
+  在场: ['秦守'],
+  发生的事件: [],
+  新情况: [{
+    事件ID: '银哨受损',
+    摘要: '旧银哨磕碰受损并收进木盒。',
+    实际参与者: ['灯塔学徒'],
+    结束事件串: '',
+    变化: [{路径: '角色.灯塔学徒.装备.旧银哨', 操作: '设定', 值: '破损/木盒'}],
+  }],
+});
+assert.deepEqual(run44.失败, []);
+assert.deepEqual(run44.state.角色.灯塔学徒.装备['旧银哨'], {状态: '破损', 位置: '木盒'});
+console.log('44 YG-CUST-02：扮演现状基线与增量定制 + 唯一装备原主反查与强制归属 + 自定义装备记账追踪均通过');

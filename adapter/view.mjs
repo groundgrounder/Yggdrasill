@@ -56,6 +56,12 @@ export function createView({protocol, catalog, decl, keeper}) {
     for (const [key, value] of Object.entries(attempt(() => view.currentAbility(id)) ?? {})) if (!empty(value)) items.push([key, chips(state, value, key)]);
     const skills = attempt(() => view.availableSkills(id), []);
     if (skills.length) items.push(['可用技能', skills]);
+    const customSkills = self && Array.isArray(state.开局?.玩家?.自定义技能) ? state.开局.玩家.自定义技能 : [];
+    if (customSkills.length) {
+      items.push(['自定义技能', customSkills.map(item => item.限制
+        ? `${item.名称}（${item.说明}；限制：${item.限制}）`
+        : `${item.名称}（${item.说明}）`)]);
+    }
     for (const [key, value] of Object.entries(run)) {
       if (HIDDEN.has(key) || dimensions.includes(key) || empty(value)) continue;
       if (Array.isArray(value) && value.length > FOLD) children.push({标题: key, 标记: [`${value.length} 条`], 行: value.map(String)});

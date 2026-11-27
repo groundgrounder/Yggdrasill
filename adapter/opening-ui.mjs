@@ -10,7 +10,10 @@ export function openingNode(draft) {
     advancedOpen: false,
     yamlOpen: false,
     abilityPick: {},
+    skillPick: '',
+    customSkillDraft: {名称: '', 说明: '', 限制: ''},
     equipPick: {装备ID: '', 状态: '', 位置: '随身'},
+    customEquipDraft: {名称: '', 说明: '', 状态: '', 位置: '随身'},
   };
 
   const hint = text => $('<div>').addClass('ygg-hint').text(text);
@@ -18,6 +21,228 @@ export function openingNode(draft) {
   const select = options => $('<select>').addClass('text_pole').append(options.map(([value, label]) => $('<option>').val(value).text(label)));
   const section = (title, open, ...children) => $('<details>').addClass('ygg-sec').prop('open', open)
     .append($('<summary>').text(title), $('<div>').addClass('ygg-body').append(children));
+
+  function renderAbilityBlock({title, dims, currentAbility, onChange}) {
+    if (!dims?.length) return [];
+    const abilityNodes = [$('<div>').addClass('ygg-subhead').text(title)];
+    const ability = currentAbility ?? {};
+    for (const dim of dims) {
+      if (dim.类型 === '单值等级') {
+        const picked = select([['', '（未设定）'], ...dim.等级序列.map(rank => [rank, rank])])
+          .val(ability[dim.名称] ?? '')
+          .on('change', event => { onChange(dim.名称, event.target.value); render(); });
+        abilityNodes.push(field(dim.名称, picked));
+      } else if (dim.类型 === '等级映射') {
+        const currentMap = ability[dim.名称] ?? {};
+        const tags = $('<div>').addClass('ygg-tag-list').append(
+          Object.entries(currentMap).map(([key, rank]) => $('<span>').addClass('ygg-chip').append(
+            $('<span>').text(`${key}：${rank} `),
+            $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+              const next = {...currentMap};
+              delete next[key];
+              onChange(dim.名称, next);
+              render();
+            }),
+          )),
+        );
+        const pickState = ui.abilityPick[dim.名称] ?? (ui.abilityPick[dim.名称] = {
+          键: dim.键列表[0] ?? '', 等级: dim.等级序列[0] ?? '',
+        });
+        const keySelect = select(dim.键列表.map(k => [k, k])).val(pickState.键)
+          .on('change', event => { pickState.键 = event.target.value; });
+        const rankSelect = select(dim.等级序列.map(r => [r, r])).val(pickState.等级)
+          .on('change', event => { pickState.等级 = event.target.value; });
+        const addBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
+          if (!pickState.键 || !pickState.等级) return;
+          onChange(dim.名称, {...currentMap, [pickState.键]: pickState.等级});
+          render();
+        });
+        abilityNodes.push(field(dim.名称, $('<div>').append(
+          ...(Object.keys(currentMap).length ? [tags] : []),
+          $('<div>').addClass('ygg-row').append(keySelect, rankSelect, addBtn),
+        )));
+      } else if (dim.类型 === '集合') {
+        const currentList = Array.isArray(ability[dim.名称]) ? ability[dim.名称] : [];
+        const tags = $('<div>').addClass('ygg-tag-list').append(
+          currentList.map(item => $('<span>').addClass('ygg-chip').append(
+            $('<span>').text(`${item} `),
+            $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+              onChange(dim.名称, currentList.filter(v => v !== item));
+              render();
+            }),
+          )),
+        );
+        const pickState = ui.abilityPick[dim.名称] ?? (ui.abilityPick[dim.名称] = {
+          成员: dim.成员选项?.[0]?.id ?? '',
+        });
+        const picker = dim.成员选项?.length
+          ? select(dim.成员选项.map(item => [item.id, item.名称 === item.id ? item.id : `${item.名称}（${item.id}）`]))
+            .val(pickState.成员).on('change', event => { pickState.成员 = event.target.value; })
+          : $('<input>').addClass('text_pole').attr({type: 'text', placeholder: `输入${dim.名称}`})
+            .val(pickState.成员).on('change', event => { pickState.成员 = event.target.value; });
+        const addBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
+          const val = String(pickState.成员 ?? '').trim();
+          if (!val) return;
+          onChange(dim.名称, [...currentList, val]);
+          if (!dim.成员选项?.length) pickState.成员 = '';
+          render();
+        });
+        abilityNodes.push(field(dim.名称, $('<div>').append(
+          ...(currentList.length ? [tags] : []),
+          $('<div>').addClass('ygg-row').append(picker, addBtn),
+        )));
+      }
+    }
+    return abilityNodes;
+  }
+
+  function renderSkillBlock({skills = [], skillLib = [], customSkills = []}) {
+    const nodes = [$('<div>').addClass('ygg-subhead').text('技能')];
+    if (skillLib.length) {
+      if (!ui.skillPick || !skillLib.some(s => s.id === ui.skillPick)) ui.skillPick = skillLib[0].id;
+      const skillTags = $('<div>').addClass('ygg-tag-list').append(
+        skills.map(id => $('<span>').addClass('ygg-chip').append(
+          $('<span>').text(`${id} `),
+          $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+            draft.removeSkill(id);
+            render();
+          }),
+        )),
+      );
+      const skillSelect = select(skillLib.map(s => [s.id, s.名称 === s.id ? s.id : `${s.名称}（${s.id}）`]))
+        .val(ui.skillPick).on('change', event => { ui.skillPick = event.target.value; });
+      const addSkillBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加技能').on('click', () => {
+        if (!ui.skillPick) return;
+        draft.addSkill(ui.skillPick);
+        render();
+      });
+      nodes.push(field('可用世界书技能', $('<div>').append(
+        ...(skills.length ? [skillTags] : [hint('当前无可用世界书技能')]),
+        $('<div>').addClass('ygg-row').append(skillSelect, addSkillBtn),
+      )));
+    }
+    const customTags = $('<div>').addClass('ygg-tag-list').append(
+      customSkills.map((item, idx) => $('<span>').addClass('ygg-chip').append(
+        $('<span>').text(`${item.名称}：${item.说明}${item.限制 ? `（限制：${item.限制}）` : ''} `),
+        $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+          draft.setCustomSkills(customSkills.filter((_, i) => i !== idx));
+          render();
+        }),
+      )),
+    );
+    const nameIn = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '自定义技能名称'})
+      .val(ui.customSkillDraft.名称).on('change', event => { ui.customSkillDraft.名称 = event.target.value; });
+    const descIn = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '说明（必填）'})
+      .val(ui.customSkillDraft.说明).on('change', event => { ui.customSkillDraft.说明 = event.target.value; });
+    const limitIn = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '限制（可选）'})
+      .val(ui.customSkillDraft.限制).on('change', event => { ui.customSkillDraft.限制 = event.target.value; });
+    const addCustomSkillBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加自定义技能').on('click', () => {
+      const name = String(ui.customSkillDraft.名称 ?? '').trim();
+      const desc = String(ui.customSkillDraft.说明 ?? '').trim();
+      const limit = String(ui.customSkillDraft.限制 ?? '').trim();
+      if (!name || !desc) return;
+      const nextItem = {名称: name, 说明: desc, ...(limit ? {限制: limit} : {})};
+      draft.setCustomSkills([...customSkills, nextItem]);
+      ui.customSkillDraft = {名称: '', 说明: '', 限制: ''};
+      render();
+    });
+    nodes.push(field('自定义技能', $('<div>').append(
+      ...(customSkills.length ? [customTags] : []),
+      $('<div>').addClass('ygg-row').append(nameIn, descIn, limitIn, addCustomSkillBtn),
+    )));
+    return nodes;
+  }
+
+  function formatEquipOption(entry, mode, roleGroup) {
+    if (!entry.唯一) return entry.名称 === entry.id ? entry.id : `${entry.名称}（${entry.id}）`;
+    const otherOwners = (entry.原主 ?? []).filter(o => mode !== '扮演' || o.id !== roleGroup);
+    if (!otherOwners.length) return `${entry.名称}（唯一）`;
+    return `${entry.名称}（唯一 · 原主：${otherOwners.map(o => o.显示名).join('、')}）`;
+  }
+
+  function renderEquipmentBlock({title, mode, roleGroup, equipItems = [], equipLib = [], equipStates = [],
+    customEquipments = [], onAddWorldEquip, onRemoveWorldEquip}) {
+    const nodes = [$('<div>').addClass('ygg-subhead').text(title)];
+    const states = equipStates.length ? equipStates : ['完好'];
+    const equipById = new Map(equipLib.map(e => [e.id, e]));
+    if (equipLib.length) {
+      if (!ui.equipPick.装备ID || !equipById.has(ui.equipPick.装备ID)) ui.equipPick.装备ID = equipLib[0].id;
+      if (!ui.equipPick.状态 || !states.includes(ui.equipPick.状态)) ui.equipPick.状态 = states[0];
+      const tags = $('<div>').addClass('ygg-tag-list').append(
+        equipItems.map(item => {
+          const meta = equipById.get(item.装备ID);
+          const uniqueTag = meta?.唯一 ? ' · 唯一' : '';
+          return $('<span>').addClass('ygg-chip').append(
+            $('<span>').text(`${item.装备ID}（${item.状态}，${item.位置}${uniqueTag}） `),
+            $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+              onRemoveWorldEquip(item.装备ID);
+              render();
+            }),
+          );
+        }),
+      );
+      const idSelect = select(equipLib.map(e => [e.id, formatEquipOption(e, mode, roleGroup)]))
+        .val(ui.equipPick.装备ID).on('change', event => { ui.equipPick.装备ID = event.target.value; render(); });
+      const stateSelect = select(states.map(s => [s, s]))
+        .val(ui.equipPick.状态).on('change', event => { ui.equipPick.状态 = event.target.value; });
+      const posInput = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '位置（如：随身）'})
+        .val(ui.equipPick.位置).on('change', event => { ui.equipPick.位置 = event.target.value; });
+      const addEquipBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
+        if (!ui.equipPick.装备ID || !ui.equipPick.状态 || !String(ui.equipPick.位置 ?? '').trim()) return;
+        onAddWorldEquip({
+          装备ID: ui.equipPick.装备ID,
+          状态: ui.equipPick.状态,
+          位置: String(ui.equipPick.位置).trim(),
+        });
+        render();
+      });
+      const pickedMeta = equipById.get(ui.equipPick.装备ID);
+      const pickedOtherOwners = pickedMeta?.唯一
+        ? (pickedMeta.原主 ?? []).filter(o => mode !== '扮演' || o.id !== roleGroup)
+        : [];
+      nodes.push(field('装备列表', $('<div>').append(
+        ...(equipItems.length ? [tags] : []),
+        $('<div>').addClass('ygg-row').append(idSelect, stateSelect, posInput, addEquipBtn),
+        ...(pickedOtherOwners.length
+          ? [$('<div>').addClass('ygg-unique-hint').text('唯一装备：开局后将由你持有，原主不再持有')]
+          : []),
+      )));
+    }
+
+    if (!ui.customEquipDraft.状态 || !states.includes(ui.customEquipDraft.状态)) ui.customEquipDraft.状态 = states[0];
+    const customTags = $('<div>').addClass('ygg-tag-list').append(
+      customEquipments.map((item, idx) => $('<span>').addClass('ygg-chip').append(
+        $('<span>').text(`${item.名称}（${item.状态}，${item.位置}）：${item.说明} `),
+        $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
+          draft.setCustomEquipment(customEquipments.filter((_, i) => i !== idx));
+          render();
+        }),
+      )),
+    );
+    const ceName = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '自定义装备名称'})
+      .val(ui.customEquipDraft.名称).on('change', event => { ui.customEquipDraft.名称 = event.target.value; });
+    const ceDesc = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '说明（必填）'})
+      .val(ui.customEquipDraft.说明).on('change', event => { ui.customEquipDraft.说明 = event.target.value; });
+    const ceState = select(states.map(s => [s, s])).val(ui.customEquipDraft.状态)
+      .on('change', event => { ui.customEquipDraft.状态 = event.target.value; });
+    const cePos = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '位置（如：随身）'})
+      .val(ui.customEquipDraft.位置).on('change', event => { ui.customEquipDraft.位置 = event.target.value; });
+    const addCustomEquipBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加自定义装备').on('click', () => {
+      const name = String(ui.customEquipDraft.名称 ?? '').trim();
+      const desc = String(ui.customEquipDraft.说明 ?? '').trim();
+      const pos = String(ui.customEquipDraft.位置 ?? '').trim();
+      const st = ui.customEquipDraft.状态 || states[0];
+      if (!name || !desc || !pos) return;
+      draft.setCustomEquipment([...customEquipments, {名称: name, 说明: desc, 状态: st, 位置: pos}]);
+      ui.customEquipDraft = {名称: '', 说明: '', 状态: states[0], 位置: '随身'};
+      render();
+    });
+    nodes.push(field('自定义装备', $('<div>').append(
+      ...(customEquipments.length ? [customTags] : []),
+      $('<div>').addClass('ygg-row').append(ceName, ceDesc, ceState, cePos, addCustomEquipBtn),
+    )));
+    return nodes;
+  }
 
   function renderSelfBuiltForm(snapshot) {
     const form = snapshot.自建表单 ?? {};
@@ -66,132 +291,41 @@ export function openingNode(draft) {
     );
     const clothing = field('穿着习惯', textInput((profile.穿着习惯 ?? []).join('、'), '多个用顿号分隔', v => draft.setProfileField('穿着习惯', v)));
 
+    const equipList = Array.isArray(form.初始装备) ? form.初始装备 : [];
     const children = [
       $('<div>').addClass('ygg-subhead').text('基本信息'),
       basicGrid,
       $('<div>').addClass('ygg-subhead').text('稳定体貌与穿着'),
       appearanceGrid,
       clothing,
+      ...renderAbilityBlock({
+        title: '初始能力',
+        dims: form.能力维度 ?? [],
+        currentAbility: form.初始能力 ?? {},
+        onChange: (dimName, val) => draft.setInitialAbility(dimName, val),
+      }),
+      ...renderSkillBlock({
+        skills: form.可用技能 ?? [],
+        skillLib: form.技能库 ?? [],
+        customSkills: form.自定义技能 ?? [],
+      }),
+      ...renderEquipmentBlock({
+        title: '初始装备',
+        mode: '自建',
+        roleGroup: null,
+        equipItems: equipList,
+        equipLib: form.装备库 ?? [],
+        equipStates: form.装备状态 ?? [],
+        customEquipments: form.自定义装备 ?? [],
+        onAddWorldEquip: item => {
+          const rest = equipList.filter(e => e.装备ID !== item.装备ID);
+          draft.setInitialEquipment([...rest, item]);
+        },
+        onRemoveWorldEquip: id => {
+          draft.setInitialEquipment(equipList.filter(e => e.装备ID !== id));
+        },
+      }),
     ];
-
-    // 初始能力（按卡声明维度自动生成）
-    const dims = form.能力维度 ?? [];
-    if (dims.length) {
-      const abilityNodes = [$('<div>').addClass('ygg-subhead').text('初始能力')];
-      const currentAbility = form.初始能力 ?? {};
-      for (const dim of dims) {
-        if (dim.类型 === '单值等级') {
-          const picked = select([['', '（未设定）'], ...dim.等级序列.map(rank => [rank, rank])])
-            .val(currentAbility[dim.名称] ?? '')
-            .on('change', event => { draft.setInitialAbility(dim.名称, event.target.value); render(); });
-          abilityNodes.push(field(dim.名称, picked));
-        } else if (dim.类型 === '等级映射') {
-          const currentMap = currentAbility[dim.名称] ?? {};
-          const tags = $('<div>').addClass('ygg-tag-list').append(
-            Object.entries(currentMap).map(([key, rank]) => $('<span>').addClass('ygg-chip').append(
-              $('<span>').text(`${key}：${rank} `),
-              $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
-                const next = {...currentMap};
-                delete next[key];
-                draft.setInitialAbility(dim.名称, next);
-                render();
-              }),
-            )),
-          );
-          const pickState = ui.abilityPick[dim.名称] ?? (ui.abilityPick[dim.名称] = {
-            键: dim.键列表[0] ?? '', 等级: dim.等级序列[0] ?? '',
-          });
-          const keySelect = select(dim.键列表.map(k => [k, k])).val(pickState.键)
-            .on('change', event => { pickState.键 = event.target.value; });
-          const rankSelect = select(dim.等级序列.map(r => [r, r])).val(pickState.等级)
-            .on('change', event => { pickState.等级 = event.target.value; });
-          const addBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
-            if (!pickState.键 || !pickState.等级) return;
-            draft.setInitialAbility(dim.名称, {...currentMap, [pickState.键]: pickState.等级});
-            render();
-          });
-          abilityNodes.push(field(dim.名称, $('<div>').append(
-            ...(Object.keys(currentMap).length ? [tags] : []),
-            $('<div>').addClass('ygg-row').append(keySelect, rankSelect, addBtn),
-          )));
-        } else if (dim.类型 === '集合') {
-          const currentList = Array.isArray(currentAbility[dim.名称]) ? currentAbility[dim.名称] : [];
-          const tags = $('<div>').addClass('ygg-tag-list').append(
-            currentList.map(item => $('<span>').addClass('ygg-chip').append(
-              $('<span>').text(`${item} `),
-              $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
-                draft.setInitialAbility(dim.名称, currentList.filter(v => v !== item));
-                render();
-              }),
-            )),
-          );
-          const pickState = ui.abilityPick[dim.名称] ?? (ui.abilityPick[dim.名称] = {
-            成员: dim.成员选项?.[0]?.id ?? '',
-          });
-          const picker = dim.成员选项?.length
-            ? select(dim.成员选项.map(item => [item.id, item.名称 === item.id ? item.id : `${item.名称}（${item.id}）`]))
-              .val(pickState.成员).on('change', event => { pickState.成员 = event.target.value; })
-            : $('<input>').addClass('text_pole').attr({type: 'text', placeholder: `输入${dim.名称}`})
-              .val(pickState.成员).on('change', event => { pickState.成员 = event.target.value; });
-          const addBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
-            const val = String(pickState.成员 ?? '').trim();
-            if (!val) return;
-            draft.setInitialAbility(dim.名称, [...currentList, val]);
-            if (!dim.成员选项?.length) pickState.成员 = '';
-            render();
-          });
-          abilityNodes.push(field(dim.名称, $('<div>').append(
-            ...(currentList.length ? [tags] : []),
-            $('<div>').addClass('ygg-row').append(picker, addBtn),
-          )));
-        }
-      }
-      const skills = form.可用技能 ?? [];
-      abilityNodes.push($('<div>').addClass('ygg-hint')
-        .text('当前可用技能预览：' + (skills.length ? skills.join('、') : '无')));
-      children.push(...abilityNodes);
-    }
-
-    // 初始装备（有装备库时显示）
-    const equipLib = form.装备库 ?? [];
-    if (equipLib.length) {
-      const equipList = Array.isArray(form.初始装备) ? form.初始装备 : [];
-      const states = form.装备状态?.length ? form.装备状态 : ['完好'];
-      if (!ui.equipPick.装备ID) ui.equipPick.装备ID = equipLib[0].id;
-      if (!ui.equipPick.状态) ui.equipPick.状态 = states[0];
-      const tags = $('<div>').addClass('ygg-tag-list').append(
-        equipList.map(item => $('<span>').addClass('ygg-chip').append(
-          $('<span>').text(`${item.装备ID}（${item.状态}，${item.位置}） `),
-          $('<button>').attr('type', 'button').addClass('ygg-chip-del').text('×').on('click', () => {
-            draft.setInitialEquipment(equipList.filter(e => e.装备ID !== item.装备ID));
-            render();
-          }),
-        )),
-      );
-      const idSelect = select(equipLib.map(e => [e.id, e.名称 === e.id ? e.id : `${e.名称}（${e.id}）`]))
-        .val(ui.equipPick.装备ID).on('change', event => { ui.equipPick.装备ID = event.target.value; });
-      const stateSelect = select(states.map(s => [s, s]))
-        .val(ui.equipPick.状态).on('change', event => { ui.equipPick.状态 = event.target.value; });
-      const posInput = $('<input>').addClass('text_pole').attr({type: 'text', placeholder: '位置（如：随身）'})
-        .val(ui.equipPick.位置).on('change', event => { ui.equipPick.位置 = event.target.value; });
-      const addEquipBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('添加').on('click', () => {
-        if (!ui.equipPick.装备ID || !ui.equipPick.状态 || !String(ui.equipPick.位置 ?? '').trim()) return;
-        const rest = equipList.filter(e => e.装备ID !== ui.equipPick.装备ID);
-        draft.setInitialEquipment([...rest, {
-          装备ID: ui.equipPick.装备ID,
-          状态: ui.equipPick.状态,
-          位置: String(ui.equipPick.位置).trim(),
-        }]);
-        render();
-      });
-      children.push(
-        $('<div>').addClass('ygg-subhead').text('初始装备'),
-        field('装备列表', $('<div>').append(
-          ...(equipList.length ? [tags] : []),
-          $('<div>').addClass('ygg-row').append(idSelect, stateSelect, posInput, addEquipBtn),
-        )),
-      );
-    }
 
     // 折叠区：高级 YAML 源码（保留 textarea 供高阶编辑与兼容既有测试）
     const profileTextarea = $('<textarea>').addClass('text_pole').attr('rows', 6).val(snapshot.档案文本)
@@ -206,6 +340,62 @@ export function openingNode(draft) {
       );
     children.push(yamlSec);
     return children;
+  }
+
+  function renderRoleplayForm(snapshot) {
+    const form = snapshot.扮演表单;
+    if (!form) return [];
+    const nodes = [];
+    const baseline = form.基线;
+    const bar = $('<div>').addClass('ygg-rp-bar');
+    if (baseline?.结果 === '成立') {
+      bar.append(
+        $('<span>').text(`当前时期档案：${baseline.档案ID}`),
+        $('<span>').text(`默认所在：${baseline.所在 || '无'}`),
+      );
+    } else if (baseline?.结果) {
+      bar.append($('<span>').text(`当前时期现状：${baseline.结果}`));
+    }
+    if (form.已自定义项数 > 0) {
+      const resetBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('恢复当前时期默认').on('click', () => {
+        draft.resetRoleplayCustomization();
+        render();
+      });
+      bar.append($('<span>').addClass('ygg-tag').text(`已自定义 ${form.已自定义项数} 项`), resetBtn);
+    }
+    if (bar.children.length) nodes.push(bar);
+
+    const equipLib = form.装备库 ?? [];
+    const equipLibIds = new Set(equipLib.map(e => e.id));
+    const worldEquipItems = Object.entries(form.有效装备 ?? {})
+      .filter(([id]) => equipLibIds.has(id))
+      .map(([id, item]) => ({装备ID: id, 状态: item?.状态 ?? '', 位置: item?.位置 ?? ''}));
+
+    nodes.push(
+      ...renderAbilityBlock({
+        title: '当前能力（可直接调整）',
+        dims: form.能力维度 ?? [],
+        currentAbility: form.有效能力 ?? {},
+        onChange: (dimName, val) => draft.setRoleplayAbility(dimName, val),
+      }),
+      ...renderSkillBlock({
+        skills: form.有效可用技能 ?? [],
+        skillLib: form.技能库 ?? [],
+        customSkills: form.自定义技能 ?? [],
+      }),
+      ...renderEquipmentBlock({
+        title: '当前装备（可直接增删）',
+        mode: '扮演',
+        roleGroup: form.扮演角色组,
+        equipItems: worldEquipItems,
+        equipLib,
+        equipStates: form.装备状态 ?? [],
+        customEquipments: form.自定义装备 ?? [],
+        onAddWorldEquip: item => { draft.setRoleplayEquipment(item.装备ID, {状态: item.状态, 位置: item.位置}); },
+        onRemoveWorldEquip: id => { draft.setRoleplayEquipment(id, null); },
+      }),
+    );
+    return nodes;
   }
 
   function render() {
@@ -259,7 +449,7 @@ export function openingNode(draft) {
     root.append(section('玩家', true,
       field('玩家模式', modeSelect),
       ...(player.模式 === '扮演'
-        ? [field('扮演角色组', roleGroupSelect, '只列出当前已启用的角色组；切换角色会联动推算默认开局地点。')]
+        ? [field('扮演角色组', roleGroupSelect, '只列出当前已启用的角色组；切换角色会联动推算默认开局地点。'), ...renderRoleplayForm(snapshot)]
         : renderSelfBuiltForm(snapshot))));
 
     // 5. 开场白（四模式）
@@ -372,13 +562,20 @@ export function openingNode(draft) {
       const opening = preview.开局, enabled = Object.entries(opening.角色组 ?? {}).filter(([, value]) => value.启用);
       const groupText = enabled.length ? enabled.map(([id, value]) =>
         `${snapshot.角色组.find(group => group.id === id)?.显示名 ?? id}(${value.版本ID})`).join('、') : '无';
+      const rpCustomCount = opening.玩家?.模式 === '扮演' ? (snapshot.扮演表单?.已自定义项数 ?? 0) : 0;
+      const selfCustomCount = opening.玩家?.模式 === '自建'
+        ? (opening.玩家?.自定义装备?.length ?? 0) + (opening.玩家?.自定义技能?.length ?? 0)
+          + (opening.玩家?.额外技能?.length ?? 0) + (opening.玩家?.移除技能?.length ?? 0)
+        : 0;
+      const playerSummary = opening.玩家?.模式 === '扮演'
+        ? `扮演 ${opening.玩家.扮演角色组}${rpCustomCount > 0 ? `（已自定义 ${rpCustomCount} 项）` : ''}`
+        : `自建 ${opening.玩家?.档案?.姓名 ?? '未命名'}${selfCustomCount > 0 ? `（已自定义 ${selfCustomCount} 项）` : ''}`;
       previewNode.append(
         $('<div>').addClass('ygg-line').text(`有效预览：${opening.开局时间}${opening.方案 ? ` · 方案 ${opening.方案}` : ''}`),
         ...(opening.世界线 ? [$('<div>').addClass('ygg-line').text(`世界线：${opening.世界线}`)] : []),
         ...(snapshot.地点 ? [$('<div>').addClass('ygg-line').text(`开局地点：${snapshot.地点}`)] : []),
         $('<div>').addClass('ygg-line').text(`角色组（已启用 ${enabled.length} / ${snapshot.角色组.length}）：${groupText}`),
-        $('<div>').addClass('ygg-line').text('玩家：' + (opening.玩家?.模式 === '扮演'
-          ? `扮演 ${opening.玩家.扮演角色组}` : `自建 ${opening.玩家?.档案?.姓名 ?? '未命名'}`)),
+        $('<div>').addClass('ygg-line').text('玩家：' + playerSummary),
         $('<div>').addClass('ygg-line').text('历史选择：' + (Object.keys(opening.历史选择 ?? {}).length
           ? Object.entries(opening.历史选择).map(([event, branch]) => `${event}=${branch}`).join('、') : '无')),
       );
