@@ -146,6 +146,7 @@ export function validateDeclarations(input) {
     if (!isMap(value)) { add('设定.字段声明', file, `${label}须为字段映射`); return; }
     for (const [name, schema] of pairs(value)) {
       if (!isText(name) || name === '名称' || name === 'ID' || name === `${label}ID`) add('设定.字段声明', file, `${label}不能声明空字段名、自身ID或名称`);
+      if (file === '条目库' && label === '装备' && name === '唯一') add('设定.字段声明', file, '装备不能重复声明内建字段“唯一”');
       field(schema, file, `${label}.${name}`, variables, types);
     }
   }

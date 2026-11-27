@@ -17,10 +17,12 @@ export function checkEntries(catalog, decl) {
       else if (has(value, idKey)) declaredIds.set(value[idKey], file);
       if (ids[library].has(entry.id)) add('条目.重复ID', file, `ID“${entry.id}”重复，首次出现于${ids[library].get(entry.id)}`);
       else ids[library].set(entry.id, file);
-      for (const key of Object.keys(value)) if (![idKey, '名称', ...Object.keys(fields)].includes(key)) add('条目.未声明字段', file, `字段“${key}”未声明`);
+      const allowedKeys = library === '装备' ? [idKey, '名称', '唯一', ...Object.keys(fields)] : [idKey, '名称', ...Object.keys(fields)];
+      for (const key of Object.keys(value)) if (!allowedKeys.includes(key)) add('条目.未声明字段', file, `字段“${key}”未声明`);
       if (!has(value, idKey)) add('条目.缺必填', file, `缺少必填字段“${idKey}”`);
       else if (value[idKey] !== entry.id) add('命名.文件名不符', file, `${idKey}必须等于文件名“${entry.id}”`);
       if (has(value, '名称') && !isText(value.名称)) add('条目.形态', file, '名称须为非空文本');
+      if (library === '装备' && has(value, '唯一') && typeof value.唯一 !== 'boolean') add('条目.形态', file, '唯一须为布尔');
       const type = value.类型;
       for (const [field, fieldSchema] of pairs(fields)) {
         if (!has(value, field)) {

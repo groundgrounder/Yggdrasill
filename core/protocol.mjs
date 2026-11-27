@@ -129,7 +129,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
     if (groupID === '玩家' ? state?.开局?.玩家?.模式 !== '自建' : !isEnabled(groupID, state)) return [];
     const ability = currentAbilityOn(state, groupID) ?? {};
     const rules = list(decl.ability?.技能可用);
-    return skills.filter(skill => {
+    const base = new Set(skills.filter(skill => {
       const applicable = rules.filter(rule => Object.entries(rule.适用 ?? {})
         .every(([key, value]) => skill.内容?.[key] === value));
       if (applicable.length !== 1) return false;
@@ -140,7 +140,13 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
       const learned = getOwn(value, key);
       const ladder = resolveDomain(`等级.${dimensions[rule.维度]?.等级}`, decl);
       return ladder.includes(learned) && ladder.includes(rank) && ladder.indexOf(learned) >= ladder.indexOf(rank);
-    }).map(skill => skill.id);
+    }).map(skill => skill.id));
+    const isPlayerControlled = (state?.开局?.玩家?.模式 === '自建' && groupID === '玩家')
+      || (state?.开局?.玩家?.模式 === '扮演' && groupID === state?.开局?.玩家?.扮演角色组);
+    if (!isPlayerControlled) return skills.filter(skill => base.has(skill.id)).map(skill => skill.id);
+    const removed = new Set(list(state?.开局?.玩家?.移除技能));
+    const added = new Set(list(state?.开局?.玩家?.额外技能));
+    return skills.filter(skill => (base.has(skill.id) && !removed.has(skill.id)) || added.has(skill.id)).map(skill => skill.id);
   }
 
   function applyPending(state, writeIDs) {
@@ -322,7 +328,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
     checkState(state, true);
     if (!isMap(params) || Object.keys(params).some(key => !['操作', '字段路径', '候选值', '事件ID', '说明'].includes(key))
       || !['新增', '移除'].includes(params.操作) || !isText(params.字段路径)) fail('协议.参数', '待定项参数不合法');
-    if (checkPendingPath(params.字段路径, {catalog, decl}).length)
+    if (checkPendingPath(params.字段路径, {catalog, decl, customEquipments: changeTools.customEquipmentNames(state)}).length)
       fail('协议.参数', '待定项字段路径须指向已声明的可写字段格，且不能是在场或所在');
     if (params.操作 === '新增' && (!Array.isArray(params.候选值) || !params.候选值.length
       || !isText(params.事件ID) || !isText(params.说明))) fail('协议.参数', '新增待定项须含非空候选值列表、事件ID与说明');
@@ -396,6 +402,32 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
     return availableSkillsOn(effective, groupID);
   }
 
+  function roleplayBaseline(state, groupID) {
+    checkState(state, true);
+    if (!isText(groupID) || !groups.has(groupID)) fail('协议.参数', `角色组不存在：${groupID}`);
+    const effective = history.effectiveState(state);
+    if (!isEnabled(groupID, effective)) return {结果: '未启用'};
+    const profile = resolveProfileOn(effective, groupID);
+    if (profile.结果 !== '成立') return {结果: profile.结果, ...(profile.档案 ? {档案: profile.档案} : {})};
+    const merged = clone(effective);
+    if (getOwn(merged.角色, groupID)?.已初始化 !== true) {
+      const seed = history.profileSeed(merged, groupID, profile.档案ID);
+      if (seed) {
+        const run = getOwn(merged.角色, groupID) ?? {};
+        if (!own(merged.角色, groupID)) setOwn(merged.角色, groupID, run);
+        history.mergeProfileSeed(run, seed);
+      }
+    }
+    return {
+      结果: '成立',
+      档案ID: profile.档案ID,
+      能力: currentAbilityOn(merged, groupID),
+      可用技能: availableSkillsOn(merged, groupID),
+      装备: clone(getOwn(merged.角色, groupID)?.装备 ?? {}),
+      所在: history.readLocation(effective, groupID),
+    };
+  }
+
   // 每轮只求解一次待登记；其余读取共享同一份有效本局与缓存。
   function createReadView(state) {
     const settled = history.settleState(state, {allowUnknownLocation: true}), effective = freeze(clone(settled.state));
@@ -433,6 +465,7 @@ export function createProtocol({catalog: sourceCatalog, decl: sourceDecl, onChec
   const protocol = {
     evaluate, pendingEvents, eventStatus, chainStatus, resolveProfile, currentAbility,
     availableSkills, initializationPreview: (state, id) => previewInitialization(state, id),
+    roleplayBaseline,
     seal: config => history.seal(config), confirmEvent, confirmPending, confirmDynamicEvent, confirmInitialization,
     writeScene, writePendingItem, createReadView,
   };
@@ -447,6 +480,7 @@ export const resolveProfile = (protocol, state, groupID, options) => protocol.re
 export const currentAbility = (protocol, state, groupID) => protocol.currentAbility(state, groupID);
 export const availableSkills = (protocol, state, groupID) => protocol.availableSkills(state, groupID);
 export const initializationPreview = (protocol, state, groupID) => protocol.initializationPreview(state, groupID);
+export const roleplayBaseline = (protocol, state, groupID) => protocol.roleplayBaseline(state, groupID);
 export const seal = (protocol, choices) => protocol.seal(choices);
 export const confirmEvent = (protocol, state, params) => protocol.confirmEvent(state, params);
 export const confirmPending = (protocol, state) => protocol.confirmPending(state);

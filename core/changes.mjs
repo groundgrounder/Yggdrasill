@@ -69,7 +69,10 @@ export function checkChange(change, context = {}) {
     return issues;
   }
   if (fieldName === '装备') {
-    checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText);
+    const customEquipments = !context.preset && context.customEquipments
+      ? (context.customEquipments instanceof Set ? context.customEquipments : new Set(list(context.customEquipments)))
+      : null;
+    checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText, customEquipments);
     return issues;
   }
   const dimension = decl.ability?.维度?.[fieldName];
@@ -92,9 +95,9 @@ export function checkPendingPath(path, context = {}) {
   return issues;
 }
 
-function checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText) {
+function checkEquipment(parts, change, decl, catalog, add, validateOperation, requireValue, forbidValue, validateText, customEquipments) {
   if (parts.length !== 4) { add('变化.路径', '装备路径必须写到装备ID'); return; }
-  if (!referenceExists(parts[3], '装备', catalog, REFERENCE)) add('变化.映射键', `装备“${parts[3]}”不存在`);
+  if (!referenceExists(parts[3], '装备', catalog, REFERENCE) && !customEquipments?.has(parts[3])) add('变化.映射键', `装备“${parts[3]}”不存在`);
   if (!['设定', '新增', '移除'].includes(change.操作)) add('变化.操作', '装备只允许设定、新增、移除');
   if (change.操作 === '移除') { forbidValue(); return; }
   requireValue();

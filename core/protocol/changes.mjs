@@ -1,7 +1,7 @@
 import {checkChange, changeRoleReferences} from '../changes.mjs';
 import {resolveDomain} from '../fields.mjs';
 import {sameValue, valueProblem, valueText} from '../values.mjs';
-import {has, isMap, list} from '../utils.mjs';
+import {has, isMap, list, pairs} from '../utils.mjs';
 
 export const clone = value => structuredClone(value);
 export const own = (value, key) => value != null && Object.hasOwn(value, key);
@@ -12,6 +12,30 @@ export const setOwn = (value, key, item) => {
 
 export function createChangeTools({catalog, decl, fail, isEnabled}) {
   const dimensions = decl.ability?.维度 ?? {};
+  const uniqueEquipments = new Set(list(catalog.entries?.装备).filter(entry => entry?.内容?.唯一 === true).map(entry => entry.id));
+
+  function isUniqueEquipment(equipID) {
+    return uniqueEquipments.has(equipID);
+  }
+
+  function equipmentHolders(state, equipID) {
+    const holders = [];
+    for (const [roleID, run] of pairs(state?.角色)) {
+      if (own(run?.装备, equipID)) holders.push(roleID);
+    }
+    return holders;
+  }
+
+  function stripUniqueFromOthers(state, equipID, keepRoleID) {
+    for (const [roleID, run] of pairs(state?.角色)) {
+      if (roleID === keepRoleID) continue;
+      if (own(run?.装备, equipID)) delete run.装备[equipID];
+    }
+  }
+
+  function customEquipmentNames(state) {
+    return new Set(list(state?.开局?.玩家?.自定义装备).map(item => item?.名称).filter(Boolean));
+  }
 
   function resolveVariableSlot(parts) {
     const root = parts[0] === '世界' ? decl.variables?.世界 : decl.variables?.角色;
@@ -26,8 +50,9 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
     return {schema, isMappingSlot};
   }
 
-  function schemaChange(change, state) {
-    const issues = checkChange(change, {decl, catalog});
+  function schemaChange(change, state, {preset = false} = {}) {
+    const customEquipments = preset ? undefined : customEquipmentNames(state);
+    const issues = checkChange(change, {decl, catalog, preset, customEquipments});
     if (issues.length) fail('协议.变化', issues.map(item => `${item.规则}：${item.说明}`).join('；'));
     if (isMap(change) && has(change, '值') && change.值 !== undefined) {
       const problem = valueProblem(change.值);
@@ -38,10 +63,10 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
     return parts;
   }
 
-  function validateChanges(changes, state) {
+  function validateChanges(changes, state, options = {}) {
     for (const change of changes) {
       if (!isMap(change)) fail('协议.变化', '变化项须为映射');
-      schemaChange(change, state);
+      schemaChange(change, state, options);
     }
   }
 
@@ -68,11 +93,13 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
     if (!run.能力移除记录.length) delete run.能力移除记录;
   }
 
-  function applyChangesToState(state, changes) {
+  function applyChangesToState(state, changes, {preset = false} = {}) {
     for (const change of changes) {
       if (!isMap(change)) fail('协议.变化', '变化项须为映射');
-      const parts = schemaChange(change, state);
+      const parts = schemaChange(change, state, {preset});
       const op = change.操作, value = change.值;
+      if (parts[0] === '角色' && parts[2] === '装备' && op === '新增' && preset
+        && isUniqueEquipment(parts[3]) && equipmentHolders(state, parts[3]).length) continue;
       let parent = state;
       for (const part of parts.slice(0, -1)) {
         if (!isMap(getOwn(parent, part))) setOwn(parent, part, {});
@@ -102,7 +129,17 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
       const {schema, isMappingSlot} = resolveVariableSlot(parts);
       if (parts[0] === '角色' && parts[2] === '装备') {
         if (op === '移除') { if (own(parent, key)) delete parent[key]; }
-        else if (op === '新增') { if (!own(parent, key)) setOwn(parent, key, clone(value)); }
+        else if (isUniqueEquipment(key)) {
+          if (op === '新增') {
+            if (!own(parent, key)) {
+              stripUniqueFromOthers(state, key, parts[1]);
+              setOwn(parent, key, clone(value));
+            }
+          } else {
+            stripUniqueFromOthers(state, key, parts[1]);
+            setOwn(parent, key, clone(value));
+          }
+        } else if (op === '新增') { if (!own(parent, key)) setOwn(parent, key, clone(value)); }
         else setOwn(parent, key, clone(value));
       } else if (schema?.数值) {
         const [minimum, maximum] = schema.数值;
@@ -127,7 +164,7 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
   }
 
   function applyEventChanges(state, event, changes) {
-    try { applyChangesToState(state, changes); }
+    try { applyChangesToState(state, changes, {preset: true}); }
     catch (error) {
       if (error?.name === 'ProtocolError' && error.code === '协议.变化')
         fail('协议.变化', `事件“${event.id}”：${error.message}`);
@@ -139,5 +176,6 @@ export function createChangeTools({catalog, decl, fail, isEnabled}) {
     applyEventChanges(state, event, list(branch.变化));
   }
 
-  return {validateChanges, applyChangesToState, applyEventChanges, applyBranch, checkRoleTargets};
+  return {validateChanges, applyChangesToState, applyEventChanges, applyBranch, checkRoleTargets,
+    isUniqueEquipment, equipmentHolders, stripUniqueFromOthers, customEquipmentNames};
 }

@@ -201,7 +201,7 @@ function entrySpec(library, schema) {
   const names = Object.keys(fields);
   const children = Object.create(null);
   for (const name of names) children[name] = fieldSpec(fields[name]);
-  return mapSpec([`${library}ID`, '名称', ...names], children);
+  return mapSpec(library === '装备' ? ['装备ID', '名称', '唯一', ...names] : [`${library}ID`, '名称', ...names], children);
 }
 
 function fieldSpec(schema) {

@@ -96,6 +96,8 @@ function locationChain(router, state, anomalies) {
 
 function presentCharacters(router, view, present, anomalies, mentions) {
   const state = view.state, entries = [], initialization = [];
+  const customEquipMap = new Map(list(state?.开局?.玩家?.自定义装备).map(item => [item.名称, item.说明]));
+  const playerCustomSkills = list(state?.开局?.玩家?.自定义技能);
   for (const id of present) {
     const group = id === '玩家' ? null : router.groups.find(item => item.id === id);
     const identity = id === '玩家' ? {角色组ID: id, 显示名: state.开局.玩家.档案.姓名 ?? id}
@@ -123,9 +125,16 @@ function presentCharacters(router, view, present, anomalies, mentions) {
     const birth = id === '玩家' ? profile.出生年 : profile.基本信息.出生年;
     const currentYear = router.calendar.year(state?.世界?.当前时间), birthYear = router.calendar.year(birth);
     const run = pick(state?.角色?.[id], [...Object.keys(router.decl.variables.角色), '装备']);
+    const heldCustom = Object.keys(state?.角色?.[id]?.装备 ?? {}).filter(key => customEquipMap.has(key))
+      .map(名称 => ({名称, 说明: customEquipMap.get(名称)}));
+    const isPlayerControlled = (state?.开局?.玩家?.模式 === '自建' && id === '玩家')
+      || (state?.开局?.玩家?.模式 === '扮演' && id === state?.开局?.玩家?.扮演角色组);
     const full = {...identity, ...(currentYear !== null && birthYear !== null ? {年龄: currentYear - birthYear} : {}),
       ...(state.开局.玩家.模式 === '扮演' && state.开局.玩家.扮演角色组 === id ? {玩家扮演: true} : {}),
-      档案: profile, 当前能力: view.currentAbility(id), 可用技能: view.availableSkills(id), ...(nonempty(run) ? {本局状态: run} : {})};
+      档案: profile, 当前能力: view.currentAbility(id), 可用技能: view.availableSkills(id),
+      ...(isPlayerControlled && playerCustomSkills.length ? {自定义技能: clone(playerCustomSkills)} : {}),
+      ...(nonempty(run) ? {本局状态: run} : {}),
+      ...(heldCustom.length ? {自定义装备: heldCustom} : {})};
     entries.push({id, full});
   }
 
@@ -170,7 +179,10 @@ function compactCharacter({id, full}) {
   return {角色组ID: full.角色组ID, 显示名: full.显示名, ...(has(full, '年龄') ? {年龄: full.年龄} : {}),
     ...(has(full, '玩家扮演') ? {玩家扮演: full.玩家扮演} : {}),
     ...(id === '玩家' && !nonempty(compact) ? {} : {档案: compact}),
-    当前能力: full.当前能力, 可用技能: full.可用技能, ...(has(full, '本局状态') ? {本局状态: full.本局状态} : {})};
+    当前能力: full.当前能力, 可用技能: full.可用技能,
+    ...(has(full, '自定义技能') ? {自定义技能: full.自定义技能} : {}),
+    ...(has(full, '本局状态') ? {本局状态: full.本局状态} : {}),
+    ...(has(full, '自定义装备') ? {自定义装备: full.自定义装备} : {})};
 }
 
 function minimalCharacter({full}) {
@@ -213,12 +225,13 @@ function entryContext(router, view, present, places, mentions, audit) {
       references(key, schema.映射.键); references(item, schema.映射.值);
     }
   }
+  const customEquipNames = new Set(list(view.state?.开局?.玩家?.自定义装备).map(item => item.名称));
   for (const id of present) {
     const run = view.state?.角色?.[id];
     for (const [name, schema] of pairs(router.decl.variables.角色)) references(run?.[name], schema);
     for (const [name, dimension] of pairs(router.decl.ability.维度)) if (dimension.类型 === '集合' && dimension.成员?.条目库)
       for (const value of list(run?.[name])) request(dimension.成员.条目库, value, '本局状态');
-    for (const key of Object.keys(run?.装备 ?? {})) request('装备', key, '本局状态');
+    for (const key of Object.keys(run?.装备 ?? {})) if (!customEquipNames.has(key)) request('装备', key, '本局状态');
   }
   for (const id of places) request('地点', id, '地点链');
   for (const item of mentions.条目) request(item.库名, item.条目ID, '提及');

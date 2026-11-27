@@ -334,9 +334,34 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
       } else if (!removed.has(name) && !own(run, name)) ability[name] = clone(initial);
     }
     const equipment = [];
-    for (const item of list(profile.初始装备)) if (!own(run.装备, item.装备ID))
+    for (const item of list(profile.初始装备)) {
+      if (own(run.装备, item.装备ID)) continue;
+      if (changeTools.isUniqueEquipment(item.装备ID)
+        && changeTools.equipmentHolders(state, item.装备ID).some(holder => holder !== groupID)) continue;
       equipment.push({装备ID: item.装备ID, 状态: item.状态, 位置: item.位置});
+    }
     return {档案ID: profileID, 能力: ability, 装备: equipment};
+  }
+
+  function mergeProfileSeed(run, seed) {
+    for (const [name, fields] of pairs(seed.能力)) {
+      if (isMap(fields)) {
+        const target = isMap(getOwn(run, name)) ? getOwn(run, name) : {};
+        if (!own(run, name)) setOwn(run, name, target);
+        for (const [key, value] of pairs(fields)) if (!own(target, key)) setOwn(target, key, value);
+      } else if (!own(run, name)) setOwn(run, name, clone(fields));
+    }
+    for (const item of seed.装备) {
+      const target = isMap(getOwn(run, '装备')) ? getOwn(run, '装备') : {};
+      if (!own(run, '装备')) setOwn(run, '装备', target);
+      if (!own(target, item.装备ID)) setOwn(target, item.装备ID, {状态: item.状态, 位置: item.位置});
+    }
+  }
+
+  function clearRemoval(run, field) {
+    if (!Array.isArray(run.能力移除记录)) return;
+    run.能力移除记录 = run.能力移除记录.filter(item => item !== field);
+    if (!run.能力移除记录.length) delete run.能力移除记录;
   }
 
   function initialize(state, groupID, writeIDs) {
@@ -350,16 +375,7 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
     const seed = profileSeed(state, groupID, profile.档案ID);
     if (!seed) fail('协议.初始化', `当前档案不存在：${groupID}`);
     writeRecord(state, eventID, '初始化', state.世界.当前时间, [groupID]);
-    for (const [name, fields] of pairs(seed.能力)) {
-      if (isMap(fields)) {
-        const target = run[name] ??= {};
-        for (const [key, value] of pairs(fields)) if (!own(target, key)) target[key] = value;
-      } else if (!own(run, name)) run[name] = clone(fields);
-    }
-    for (const item of seed.装备) {
-      const target = run.装备 ??= {};
-      if (!own(target, item.装备ID)) target[item.装备ID] = {状态: item.状态, 位置: item.位置};
-    }
+    mergeProfileSeed(run, seed);
     run.已初始化 = true;
     writeIDs.push(eventID);
     return true;
@@ -431,27 +447,34 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
       setOwn(selectedGroups, id, {启用: enabled, 版本ID: version});
     }
     const player = has(choices, '玩家') ? choices.玩家 : {模式: '自建', 档案: {}};
+    const commonPlayerKeys = ['自定义装备', '自定义技能', '额外技能', '移除技能'];
+    const roleplayPlayerKeys = ['模式', '扮演角色组', ...commonPlayerKeys, '能力覆写', '移除能力', '额外装备', '移除装备'];
+    const customPlayerKeys = ['模式', '档案', '初始能力', '初始装备', ...commonPlayerKeys];
     if (!isMap(player) || !['自建', '扮演'].includes(player.模式)) fail('封卷.参数', '玩家模式不合法');
     if (player.模式 === '扮演') {
-      if (Object.keys(player).some(key => !['模式', '扮演角色组'].includes(key))) fail('封卷.参数', '扮演模式参数不合法');
+      if (Object.keys(player).some(key => !roleplayPlayerKeys.includes(key))) fail('封卷.参数', '扮演模式参数不合法');
       if (!isText(player.扮演角色组) || getOwn(selectedGroups, player.扮演角色组)?.启用 !== true)
         fail('封卷.参数', '扮演角色组不存在或未启用');
     } else {
       if (has(player, '扮演角色组')) fail('封卷.参数', '自建模式不能指定扮演角色组');
-      if (Object.keys(player).some(key => !['模式', '档案', '初始能力', '初始装备'].includes(key)))
+      if (Object.keys(player).some(key => !customPlayerKeys.includes(key)))
         fail('封卷.参数', '玩家参数含未知字段');
       if (player.档案 !== undefined && !isMap(player.档案)) fail('封卷.参数', '玩家档案须为映射');
     }
     for (const id of Object.keys(choices.历史选择)) if (!isText(id) || !isText(getOwn(choices.历史选择, id))) fail('封卷.历史选择', '历史选择参数不合法');
 
+    const optionalFields = keys => Object.fromEntries(keys.filter(key => has(player, key)).map(key => [key, player[key]]));
     const normalizedPlayer = player.模式 === '自建'
       ? {
         模式: '自建',
         档案: player.档案 ?? {},
-        ...(has(player, '初始能力') ? {初始能力: player.初始能力} : {}),
-        ...(has(player, '初始装备') ? {初始装备: player.初始装备} : {}),
+        ...optionalFields(['初始能力', '初始装备', ...commonPlayerKeys]),
       }
-      : player;
+      : {
+        模式: '扮演',
+        扮演角色组: player.扮演角色组,
+        ...optionalFields([...commonPlayerKeys, '能力覆写', '移除能力', '额外装备', '移除装备']),
+      };
     const provisional = {开局: {角色组: selectedGroups, 玩家: normalizedPlayer}};
     validation.serializable(normalizedPlayer, '封卷.参数');
     validation.player(normalizedPlayer, provisional, '封卷.参数');
@@ -463,15 +486,6 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
       },
       角色: {}, 事件: {}, 待定项: []};
     if (has(choices, '方案')) state.开局.方案 = choices.方案;
-    if (normalizedPlayer.模式 === '自建' && (has(normalizedPlayer, '初始能力') || has(normalizedPlayer, '初始装备'))) {
-      const playerRun = {已初始化: true};
-      for (const [name, initial] of pairs(normalizedPlayer.初始能力)) setOwn(playerRun, name, clone(initial));
-      if (has(normalizedPlayer, '初始装备')) {
-        playerRun.装备 = {};
-        for (const item of normalizedPlayer.初始装备) setOwn(playerRun.装备, item.装备ID, {状态: item.状态, 位置: item.位置});
-      }
-      setOwn(state.角色, '玩家', playerRun);
-    }
     for (const [id, values] of pairs(marks)) if (list(values).length) setOwn(state.世界.剧情标记, id, values[0]);
     const past = [...events.values()].filter(event => event.内容?.确认策略 !== '仅作候选'
       && eventRange(event).latest[1] <= openingInterval[0]);
@@ -496,10 +510,74 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
         fail('封卷.配置冲突', error.message);
       throw error;
     }
+    if (normalizedPlayer.模式 === '自建'
+      && (has(normalizedPlayer, '初始能力') || has(normalizedPlayer, '初始装备') || has(normalizedPlayer, '自定义装备'))) {
+      const playerRun = {已初始化: true};
+      for (const [name, initial] of pairs(normalizedPlayer.初始能力)) setOwn(playerRun, name, clone(initial));
+      if (has(normalizedPlayer, '初始装备') || has(normalizedPlayer, '自定义装备')) {
+        playerRun.装备 = {};
+        for (const item of list(normalizedPlayer.初始装备)) setOwn(playerRun.装备, item.装备ID, {状态: item.状态, 位置: item.位置});
+        for (const item of list(normalizedPlayer.自定义装备)) setOwn(playerRun.装备, item.名称, {状态: item.状态, 位置: item.位置});
+      }
+      setOwn(state.角色, '玩家', playerRun);
+    } else if (normalizedPlayer.模式 === '扮演'
+      && ['能力覆写', '移除能力', '额外装备', '移除装备', '自定义装备'].some(key => has(normalizedPlayer, key))) {
+      const roleplay = normalizedPlayer.扮演角色组;
+      const profile = resolveProfile(state, roleplay);
+      if (profile.结果 !== '成立') fail('封卷.参数', `扮演角色组当前档案不成立：${roleplay}`);
+      const run = getOwn(state.角色, roleplay) ?? {};
+      if (!own(state.角色, roleplay)) setOwn(state.角色, roleplay, run);
+      const seed = profileSeed(state, roleplay, profile.档案ID);
+      if (seed) mergeProfileSeed(run, seed);
+      for (const field of list(normalizedPlayer.移除能力)) {
+        const [name, key] = field.split('.');
+        const dimension = dimensions[name];
+        if (dimension.类型 === '等级映射') {
+          if (isMap(run[name]) && own(run[name], key)) delete run[name][key];
+        } else if (dimension.类型 === '集合') {
+          setOwn(run, name, []);
+        } else if (own(run, name)) {
+          delete run[name];
+        }
+        run.能力移除记录 = [...new Set([...list(run.能力移除记录), field])];
+      }
+      for (const [name, value] of pairs(normalizedPlayer.能力覆写)) {
+        const dimension = dimensions[name];
+        if (dimension.类型 === '等级映射') {
+          const target = isMap(getOwn(run, name)) ? getOwn(run, name) : {};
+          if (!own(run, name)) setOwn(run, name, target);
+          for (const [key, rank] of pairs(value)) {
+            setOwn(target, key, rank);
+            clearRemoval(run, `${name}.${key}`);
+          }
+        } else {
+          setOwn(run, name, clone(value));
+          clearRemoval(run, name);
+        }
+      }
+      for (const equipID of list(normalizedPlayer.移除装备)) {
+        if (own(run.装备, equipID)) delete run.装备[equipID];
+      }
+      for (const item of list(normalizedPlayer.额外装备)) {
+        const target = isMap(getOwn(run, '装备')) ? getOwn(run, '装备') : {};
+        if (!own(run, '装备')) setOwn(run, '装备', target);
+        setOwn(target, item.装备ID, {状态: item.状态, 位置: item.位置});
+      }
+      for (const item of list(normalizedPlayer.自定义装备)) {
+        const target = isMap(getOwn(run, '装备')) ? getOwn(run, '装备') : {};
+        if (!own(run, '装备')) setOwn(run, '装备', target);
+        setOwn(target, item.名称, {状态: item.状态, 位置: item.位置});
+      }
+      run.已初始化 = true;
+    }
+    const playerRoleID = normalizedPlayer.模式 === '扮演' ? normalizedPlayer.扮演角色组 : '玩家';
+    for (const equipID of Object.keys(getOwn(state.角色, playerRoleID)?.装备 ?? {})) {
+      if (changeTools.isUniqueEquipment(equipID)) changeTools.stripUniqueFromOthers(state, equipID, playerRoleID);
+    }
     return state;
   }
 
-  return {presentIDs, conditionLeaf, evaluateOn, writeRecord, solveHistory, settleState,
+  return {presentIDs, readLocation, conditionLeaf, evaluateOn, writeRecord, solveHistory, settleState,
     findPending, effectiveState, chainStatusFromState, branchCondition, statusOn, validateParticipants,
-    exclusionCheck, profileSeed, initialize, automaticInitialize, seal};
+    exclusionCheck, profileSeed, mergeProfileSeed, initialize, automaticInitialize, seal};
 }
