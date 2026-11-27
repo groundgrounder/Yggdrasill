@@ -51,7 +51,7 @@ const RULES = `你是本局的记账员，不是叙述者。读最新的一段�
 - 地点：地标从地点列表中选，场景是一个短语；没有换场，地标留空。
 - 在场：正文结束时在场的全部角色组，扮演角色组不填。
 - 发生的事件：只填候选、待登记与将到的事件中，正文写明确实发生了的，并选所走的分支。待登记事件只能填协议给出的分支；只被提到、计划要做、还没发生的不填。
-- 新情况：只记候选与将到的事件之外、会留下长期结果的事：受伤、得失物品、关系转变、得知会影响以后行为的事实。将到的事件已经安排的成长与结果不要另记。路径与操作只用可写字段中的；ID 只用已有的，世界书里没有的东西不记。装备的值写作“状态/位置”，例如“完好/随身”。新情况每项的“事件ID”与“摘要”必填且非空，事件ID须为新拟短语，不得与任何预设事件ID重名。
+- 新情况：宁缺毋滥，日常寒暄、普通赶路、无后果闲聊一律不记；只记候选与将到事件之外、会留下长期结果、重要约定、冲突、受伤、得失物品、关系转变或影响后续行为的独立事件（每轮通常 0 条）。新情况每项的“事件ID”与“摘要”必填且非空，事件ID须为新拟简短词组，不得与任何预设事件ID重名。“实际参与者”填实际参与该事件的已启用角色组（自建模式含自己时填“玩家”，扮演模式填扮演角色组ID）；“结束事件串”仅在正文使某个“进行中事件串”提前中止或收尾时填其事件串ID，否则填空字符串。“变化”可为空列表（仅在确有长期叙事意义但无对应可写字段时留空）；路径与操作只用可写字段中的，ID 只用已有的、世界书里没有的不瞎编，装备的值写作“状态/位置”（例如“完好/随身”）；若正文已实质改变了某项已声明的剧情标记、角色关系、所在、能力或装备，按正文事实据实填写；将到事件已安排好的成长与结果不要提前另记。
 - 没有的项填空列表或空字符串。`;
 
 export function createBookkeeper({protocol, catalog, decl}) {
@@ -67,6 +67,10 @@ export function createBookkeeper({protocol, catalog, decl}) {
   const now = state => calendar.time(state.世界.当前时间)?.[0] ?? 0;
   const roleplayOf = state => state.开局?.玩家?.模式 === '扮演' ? state.开局.玩家.扮演角色组 : null;
   const enabled = state => [...groups.keys()].filter(id => state.开局?.角色组?.[id]?.启用 === true);
+  const chainStatusOf = (state, id) => { try { return protocol.chainStatus(state, id); } catch { return null; } };
+  const ongoingChains = state => [...(catalog.chains ?? [])]
+    .sort((a, b) => codepointCompare(a.id, b.id))
+    .filter(chain => chainStatusOf(state, chain.id) === '进行中');
   const statusOf = (state, id) => { try { return eventStatus(protocol, state, id); } catch { return {状态: '异常'}; } };
 
   // 候选全收；未到与不适用按最早的起点取最近的若干个。
@@ -100,6 +104,8 @@ export function createBookkeeper({protocol, catalog, decl}) {
     const branches = [...new Set([...pending.map(item => item.分支ID),
       ...[...candidates, ...later].flatMap(item => itemOf(item).分支.map(branch => branch.分支ID))])].filter(Boolean);
     const roleplay = roleplayOf(state), present = enabled(state).filter(id => id !== roleplay);
+    const participants = roleplay ? enabled(state) : [...enabled(state), '玩家'];
+    const ongoingChainIDs = ongoingChains(state).map(chain => chain.id);
     const places = catalog.entries?.地点?.map(entry => entry.id) ?? [];
     const text = {type: 'string'}, list = items => ({type: 'array', items});
     const object = properties => ({type: 'object', properties, required: Object.keys(properties), additionalProperties: false});
@@ -108,7 +114,13 @@ export function createBookkeeper({protocol, catalog, decl}) {
       地点: object({地标: {type: 'string', enum: ['', ...places]}, 场景: text}),
       在场: list({type: 'string', enum: present.length ? present : ['']}),
       发生的事件: list(object({事件ID: {type: 'string', enum: ids.length ? ids : ['']}, 分支ID: {type: 'string', enum: branches.length ? branches : ['']}})),
-      新情况: list(object({事件ID: text, 摘要: text, 变化: list(object({路径: text, 操作: {type: 'string', enum: ['设定', '新增', '移除', '提升', '增加', '减少']}, 值: text}))})),
+      新情况: list(object({
+        事件ID: text,
+        摘要: text,
+        实际参与者: list({type: 'string', enum: participants.length ? participants : ['']}),
+        结束事件串: {type: 'string', enum: ['', ...ongoingChainIDs]},
+        变化: list(object({路径: text, 操作: {type: 'string', enum: ['设定', '新增', '移除', '提升', '增加', '减少']}, 值: text})),
+      })),
     });
   }
 
@@ -118,7 +130,9 @@ export function createBookkeeper({protocol, catalog, decl}) {
     const facts = {
       当前时间: state.世界.当前时间, 当前地点: state.世界.当前地点 ?? '未写',
       在场: enabled(state).filter(id => id !== roleplay && state.角色?.[id]?.在场 === true), 扮演角色组: roleplay ?? '无（自建玩家）',
-      纪年: formatCalendar(decl.calendar), 候选事件: scope.candidates.map(itemOf), 待登记事件: pending.map(pendingItemOf),
+      纪年: formatCalendar(decl.calendar),
+      进行中事件串: ongoingChains(state).map(chain => ({事件串ID: chain.id, 概述: chain.内容?.概述 ?? ''})),
+      候选事件: scope.candidates.map(itemOf), 待登记事件: pending.map(pendingItemOf),
       将到的事件: scope.later.map(itemOf),
     };
     const system = `${RULES}\n\n## 本局\n${stringifyYaml(facts)}\n## 地点列表\n${locationList(catalog)}\n\n## 可写字段\n${writableFields(decl)}`;
@@ -227,6 +241,8 @@ export function createBookkeeper({protocol, catalog, decl}) {
       const schema = schemaOf(path);
       return isMap(schema) && Array.isArray(schema.数值) && /^-?\d+$/.test(String(text)) ? Number(text) : text;
     };
+    const enabledSet = new Set(enabled(state));
+    const ongoingChainSet = new Set(ongoingChains(state).map(chain => chain.id));
     for (const item of result?.新情况 ?? []) {
       const id = typeof item?.事件ID === 'string' ? item.事件ID.trim() : '';
       const summary = typeof item?.摘要 === 'string' ? item.摘要.trim() : '';
@@ -242,10 +258,40 @@ export function createBookkeeper({protocol, catalog, decl}) {
         errors.push(`新情况缺少非空的摘要（事件ID：${id || '空'}）`);
         valid = false;
       }
+      const rawParticipants = item?.实际参与者;
+      const participants = [];
+      if (rawParticipants !== undefined && !Array.isArray(rawParticipants)) {
+        errors.push(`新情况的实际参与者须为列表（事件ID：${id || '空'}）`);
+        valid = false;
+      } else {
+        const seenParticipants = new Set();
+        for (const entry of rawParticipants ?? []) {
+          const who = typeof entry === 'string' ? entry.trim() : '';
+          if (!who || seenParticipants.has(who)) continue;
+          const allowed = roleplay ? enabledSet.has(who) : (who === '玩家' || enabledSet.has(who));
+          if (!allowed) {
+            errors.push(who === '玩家' && roleplay
+              ? `新情况的实际参与者在扮演模式下不能填“玩家”（事件ID：${id || '空'}）`
+              : `新情况的实际参与者不是已启用角色组：${who}（事件ID：${id || '空'}）`);
+            valid = false;
+            continue;
+          }
+          seenParticipants.add(who);
+          participants.push(who);
+        }
+      }
+      const endChain = typeof item?.结束事件串 === 'string' ? item.结束事件串.trim() : '';
+      if (endChain && !ongoingChainSet.has(endChain)) {
+        errors.push(`新情况的结束事件串不在进行中：${endChain}（事件ID：${id || '空'}）`);
+        valid = false;
+      }
       if (!valid) continue;
       const changes = (item?.变化 ?? []).map(change => ({路径: change.路径, 操作: change.操作,
         ...(change.操作 === '移除' && !change.值 ? {} : {值: value(change.路径, change.值)})}));
-      if (changes.length) commands.push({动态事件: {事件ID: id, 摘要: summary, 变化: changes}});
+      const command = {事件ID: id, 摘要: summary, 变化: changes};
+      if (participants.length) command.实际参与者 = participants;
+      if (endChain) command.结束事件串 = endChain;
+      commands.push({动态事件: command});
     }
     return {commands, errors};
   }

@@ -1141,8 +1141,8 @@ rejectsJson({...directFull(direct10), 时间: {方式: '倒退', 日期: '', 事
 rejectsJson({...directFull(direct10), 地点: {地标: '不存在', 场景: ''}}, /不在允许值内：地点\.地标/);
 rejectsJson({...directFull(direct10), 在场: ['不存在']}, /不在允许值内：在场\[0\]/);
 rejectsJson({...directFull(direct10), 发生的事件: ['拜师']}, /须为映射：发生的事件\[0\]/);
-rejectsJson({...directFull(direct10), 新情况: [{事件ID: '测试', 摘要: 'x', 变化: '坏'}]}, /须为列表：新情况\[0\]\.变化/);
-rejectsJson({...directFull(direct10), 新情况: [{事件ID: '测试', 摘要: 'x', 变化: [{路径: '角色.灯塔学徒.身份', 操作: '乱写', 值: 'x'}]}]},
+rejectsJson({...directFull(direct10), 新情况: [{事件ID: '测试', 摘要: 'x', 实际参与者: [], 结束事件串: '', 变化: '坏'}]}, /须为列表：新情况\[0\]\.变化/);
+rejectsJson({...directFull(direct10), 新情况: [{事件ID: '测试', 摘要: 'x', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.身份', 操作: '乱写', 值: 'x'}]}]},
   /不在允许值内：新情况\[0\]\.变化\[0\]\.操作/);
 let converted = directKeeper.run(direct10, {...directFull(direct10), 发生的事件: [{事件ID: '不存在的事件', 分支ID: '发生'}]});
 assert.deepEqual(converted.commands, []);
@@ -1185,7 +1185,7 @@ assert.ok(pendingRun.已写入.includes(pendingItem.事件ID), '合法待登记�
 // 时间倒退与合法地点/在场/新情况并存：只拒绝时间，其余仍执行；本局时间不回退。
 const mixed = directKeeper.run(direct10, withDate(direct10, '潮历071年04月01日', {
   地点: {地标: '码头区', 场景: '栈桥'}, 在场: ['灯塔学徒', '秦守'],
-  新情况: [{事件ID: '开窗', 摘要: '学徒推开窗。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '窗外起雾'}]}]}));
+  新情况: [{事件ID: '开窗', 摘要: '学徒推开窗。', 实际参与者: ['灯塔学徒'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '窗外起雾'}]}]}));
 assert.equal(mixed.state.世界.当前时间, '潮历071年04月10日', '时间倒退不得写入');
 assert.equal(mixed.state.世界.当前地点.地标, '码头区', '合法地点仍应执行');
 assert.equal(mixed.state.角色.秦守.在场, true, '合法在场仍应执行');
@@ -1347,8 +1347,8 @@ console.log('22 写场景拆分：时间/地点/在场各一条，离场者所�
 const protocolFailInput = withDate(direct10, '潮历071年04月12日', {
   地点: {地标: '码头区', 场景: '栈桥'}, 在场: ['灯塔学徒'],
   新情况: [
-    {事件ID: '坏命令', 摘要: '写不存在的角色字段。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
-    {事件ID: '好命令', 摘要: '记下窗外起雾。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '窗外起雾'}]},
+    {事件ID: '坏命令', 摘要: '写不存在的角色字段。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+    {事件ID: '好命令', 摘要: '记下窗外起雾。', 实际参与者: ['灯塔学徒'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '窗外起雾'}]},
   ]});
 const protocolFail = directKeeper.run(direct10, protocolFailInput);
 assert.equal(protocolFail.失败.length, 1, '只应报告一条协议失败');
@@ -1367,7 +1367,20 @@ assert.ok(!('坏命令' in protocolFail.state.事件));
 // 既有分类：转换错误没有序号，协议执行错误有序号。
 assert.equal(Object.hasOwn(converted.失败[0], '序号'), false, '转换错误不带协议序号');
 assert.ok(Object.hasOwn(protocolFail.失败[0], '序号'), '协议执行错误带协议序号');
-console.log('22b keeper.run：协议失败命令按原序号剔除且不进入命令列表；同批合法时间/地点/在场/新情况仍执行；转换错误无序号、协议执行错误有序号的分类保持');
+// YG-DYN-01：动态事件支持 实际参与者、结束事件串 与空变化 变化: []，并凭共同经历进入路由。
+assert.equal(protocol.chainStatus(direct10, '学徒修习'), '进行中');
+const dynSmokeReq = directKeeper.request(direct10, {input: '', narration: '学徒与我约定告别灯塔。'});
+assert.match(dynSmokeReq.prompts[0].content, /进行中事件串[\s\S]*学徒修习/);
+assert.ok(dynSmokeReq.schema.value.properties.新情况.items.properties.实际参与者.items.enum.includes('玩家'));
+assert.ok(dynSmokeReq.schema.value.properties.新情况.items.properties.结束事件串.enum.includes('学徒修习'));
+const dynSmoke = directKeeper.run(direct10, {...directFull(direct10),
+  新情况: [{事件ID: '码头告别', 摘要: '学徒与玩家约定提前告别灯塔修习。', 实际参与者: ['玩家', '灯塔学徒'], 结束事件串: '学徒修习', 变化: []}]});
+assert.deepEqual(dynSmoke.失败, []);
+assert.ok(dynSmoke.已写入.includes('码头告别'));
+assert.equal(protocol.chainStatus(dynSmoke.state, '学徒修习'), '已结束');
+const dynRoute = route(router, dynSmoke.state, ['今天海风不大。']);
+assert.ok(dynRoute.context.事件.已确认经历.some(item => item.事件ID === '码头告别' && item.摘要 === '学徒与玩家约定提前告别灯塔修习。'));
+console.log('22b keeper.run：协议失败命令按原序号剔除且不进入命令列表；同批合法时间/地点/在场/新情况仍执行；转换错误无序号、协议执行错误有序号的分类保持；动态事件 实际参与者/结束事件串/空变化 与路由召回通过');
 
 // ---------- 22c. 新地标空场景不继承旧场景 ----------
 const sceneOf = (state, landmark, scene) => {
@@ -1700,15 +1713,15 @@ keeperReplies.push(
   keepWithChanges(floor6Base, {
     地点: {地标: '码头区', 场景: '栈桥'},
     新情况: [
-      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
-      {事件ID: '错误字段', 摘要: '写不存在字段。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+      {事件ID: '错误字段', 摘要: '写不存在字段。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
     ],
   }),
   keepWithChanges(floor6Base, {
     地点: {地标: '码头区', 场景: '栈桥'},
     新情况: [
-      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
-      {事件ID: '栈桥记事', 摘要: '补记秦守提醒。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮位上涨'}]},
+      {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+      {事件ID: '栈桥记事', 摘要: '补记秦守提醒。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮位上涨'}]},
     ],
   }),
 );
@@ -1728,8 +1741,8 @@ assert.equal(record(8).本局.世界.当前地点.地标, '码头区');
 const partialAttempt1 = keepWithChanges(floor6Base, {
   地点: {地标: '码头区', 场景: '栈桥'},
   新情况: [
-    {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
-    {事件ID: '坏项', 摘要: '触发协议失败。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+    {事件ID: '栈桥初晤', 摘要: '学徒到栈桥。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起潮'}]},
+    {事件ID: '坏项', 摘要: '触发协议失败。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
   ],
 });
 for (const [label, setupSecond] of [
@@ -1737,7 +1750,7 @@ for (const [label, setupSecond] of [
   ['坏JSON', () => { keeperReplies.push(partialAttempt1, '非JSON文本'); }],
   ['结果倒退', () => {
     keeperReplies.push(partialAttempt1, keepWithChanges(floor6Base, {
-      新情况: [{事件ID: '只剩坏项', 摘要: '把好结果丢了。', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+      新情况: [{事件ID: '只剩坏项', 摘要: '把好结果丢了。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
     }));
   }],
 ]) {
@@ -1799,7 +1812,7 @@ assert.ok(!('原始结果' in record(8).记账), '非调试模式没有原始结
 const open8Inc = find(floors.get(8), item => item.tag === '<button>' && item.value === '修补').handlers.click();
 await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼修补弹窗');
 keeperReplies.push(keepWithChanges(record(8).本局, {
-  新情况: [{事件ID: '潮水记录', 摘要: '补记潮水上涌。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮水漫过栈桥'}]}],
+  新情况: [{事件ID: '潮水记录', 摘要: '补记潮水上涌。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '潮水漫过栈桥'}]}],
 }));
 assert.equal(await closePopup(1), true, '留空增量修补应成功并关闭弹窗');
 await open8Inc;
@@ -1820,7 +1833,7 @@ const open8Full = find(floors.get(8), item => item.tag === '<button>' && item.va
 await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'), '打开第 8 楼全量修补弹窗');
 keeperReplies.push(keepWithChanges(floor6Base, {
   地点: {地标: '码头区', 场景: '栈桥'},
-  新情况: [{事件ID: '栈桥重记', 摘要: '全量修补后记入。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]}],
+  新情况: [{事件ID: '栈桥重记', 摘要: '全量修补后记入。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]}],
 }));
 assert.equal(await closePopup(1), true, '命令为 null 时留空应走全量修补成功');
 await open8Full;
@@ -1836,8 +1849,8 @@ find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({targ
 keeperReplies.push(keepWithChanges(floor6Base, {
   地点: {地标: '码头区', 场景: '栈桥'},
   新情况: [
-    {事件ID: '栈桥重记', 摘要: '全量修补后记入。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]},
-    {事件ID: '秦守赏识', 摘要: '补记好感。', 变化: [{路径: '角色.秦守.好感度.灯塔学徒', 操作: '增加', 值: '5'}]},
+    {事件ID: '栈桥重记', 摘要: '全量修补后记入。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥夜雾'}]},
+    {事件ID: '秦守赏识', 摘要: '补记好感。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.好感度.灯塔学徒', 操作: '增加', 值: '5'}]},
   ],
 }));
 assert.equal(await closePopup(1), true);
@@ -1881,7 +1894,7 @@ for (const [label, reply] of [
   ['非JSON', '不是 JSON'],
   ['Schema失败', '{}'],
   ['残留局部失败', keepWithChanges(floor6Base, {
-    新情况: [{事件ID: '仍坏', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+    新情况: [{事件ID: '仍坏', 摘要: '坏', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
   })],
 ]) {
   keeperReplies.push(reply);
@@ -1906,7 +1919,7 @@ await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 8 楼记账'
 find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '过期测试说明'}});
 holdNextKeeper = true;
 keeperReplies.push(keepWithChanges(floor6Base, {
-  新情况: [{事件ID: '不该写入', 摘要: '过期任务', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '脏数据'}]}],
+  新情况: [{事件ID: '不该写入', 摘要: '过期任务', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '脏数据'}]}],
 }));
 const closingStale = closePopup(1);
 await waitUntil(() => typeof releaseKeeper === 'function', '等待手动修补请求挂起');
@@ -1987,7 +2000,7 @@ const openRepair10 = find(floors.get(10), item => item.tag === '<button>' && ite
 await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 10 楼记账'), '混合哈希打开第 10 楼修补');
 find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '补记一条知识'}});
 keeperReplies.push(keepWithChanges(record(8).本局, {
-  新情况: [{事件ID: '灯室微光', 摘要: '补记微光线索。', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '灯室留有余火'}]}],
+  新情况: [{事件ID: '灯室微光', 摘要: '补记微光线索。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '灯室留有余火'}]}],
 }));
 assert.equal(await closePopup(1), true);
 await openRepair10;
@@ -2328,7 +2341,7 @@ const isoBase = clone(record(6).本局);
 keeperReplies.push(keepWithChanges(isoBase, {
   地点: {地标: '码头区', 场景: '栈桥'},
   发生的事件: [{事件ID: '隐秘将来事件_隔离测试', 分支ID: '发生'}],
-  新情况: [{事件ID: '坏字段', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+  新情况: [{事件ID: '坏字段', 摘要: '坏', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
 }));
 await find(floors.get(8), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
 assert.equal(record(8).记账.状态, '部分失败');
@@ -2373,9 +2386,9 @@ const fixBase = seal(protocol, {开局时间: '潮历071年04月01日'});
 const fixFull = (patch = {}) => ({时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''},
   在场: [], 发生的事件: [], 新情况: [], ...patch});
 const fixLocation = {地标: '码头区', 场景: '栈桥'};
-const fixGood = {事件ID: '好发现', 摘要: '好', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起风'}]};
-const fixBad = {事件ID: '坏路径', 摘要: '坏', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]};
-const fixFixed = {事件ID: '坏路径', 摘要: '修正后记入知识', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '秦守在栈桥'}]};
+const fixGood = {事件ID: '好发现', 摘要: '好', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '栈桥起风'}]};
+const fixBad = {事件ID: '坏路径', 摘要: '坏', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]};
+const fixFixed = {事件ID: '坏路径', 摘要: '修正后记入知识', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '秦守在栈桥'}]};
 const excludedState = seal(protocol, {开局时间: '潮历071年04月31日', 历史选择: {港务署问责: '未发生'}});
 const rejectedRun = keeper.run(excludedState, fixFull({地点: fixLocation,
   发生的事件: [{事件ID: '港务署问责', 分支ID: '问责秦守'}], 新情况: [fixGood]}));
