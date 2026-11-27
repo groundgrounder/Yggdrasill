@@ -1,11 +1,12 @@
 # 世界树作者 skill
 
-九个 model-invoked 作者 skill：一个统筹诊断，七个分层建卡阶段，一个日常修订；另有仓库内共享参考页两份。职责表只在本页维护。
+十个 model-invoked 作者 skill：一个统筹诊断，两个第 0 层前置入口（原作通读与原卡迁移），六个分层建卡阶段，一个日常修订；另有仓库内共享参考页两份。职责表只在本页维护。
 
 ## 分层流程
 
 ```text
 第 0 层 通读   两遍读法·第一遍：分批 Map 抽坐标，Reduce 消歧归并出全局总账（不动 世界书/）
+第 0 层 迁移   原卡迁入：拆包现有酒馆角色卡/世界书，盘点映射并产出同构全局总账（不动 世界书/）
    ↓
 第 1 层 地基   设定声明 + 世界概况 + 扮演准则
    ↓
@@ -29,6 +30,7 @@
 |---|---|---|
 | 世界树·统筹 | 只读诊断项目分层与缺口，引导或自动编排推进 | [`ygg-guide/SKILL.md`](ygg-guide/SKILL.md) |
 | 世界树·通读 | 第 0 层：两遍读法建分卷坐标账本与全局总账 | [`ygg-read/SKILL.md`](ygg-read/SKILL.md) |
+| 世界树·迁移 | 第 0 层：拆包现有酒馆角色卡/世界书并映射到同构全局总账 | [`ygg-migrate/SKILL.md`](ygg-migrate/SKILL.md) |
 | 世界树·地基 | 第 1 层：第二层声明与全局文风 | [`ygg-foundation/SKILL.md`](ygg-foundation/SKILL.md) |
 | 世界树·条目 | 第 2 层：公共条目库 | [`ygg-entries/SKILL.md`](ygg-entries/SKILL.md) |
 | 世界树·骨架 | 第 3 层：角色组与事件树的逻辑骨架 | [`ygg-skeleton/SKILL.md`](ygg-skeleton/SKILL.md) |
@@ -52,7 +54,7 @@
   ```
 
   每个 `ygg-*` skill 目录均可单独安装或复制使用，无跨目录相对路径断链。
-- **仓库内自动发现**：克隆本仓库后，根目录的 `.agents/skills` 符号链接（指向 `../skills`）供兼容工作区级发现的编程代理自动加载全部九个作者 skill。
+- **仓库内自动发现**：克隆本仓库后，根目录的 `.agents/skills` 符号链接（指向 `../skills`）供兼容工作区级发现的编程代理自动加载全部十个作者 skill。
 - **命令行配合**：在克隆的 Yggdrasill 仓库执行 `npm ci && npm link`，即可在任意外部项目目录直接调用 `ygg`；未链接时，可按 `node <世界树仓库>/cli/ygg.mjs <命令>` 调用。
 
-规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的九个 skill。
+规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的十个 skill。

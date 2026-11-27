@@ -59,7 +59,7 @@ function extractHeadings(markdown) {
   return anchors;
 }
 
-test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 9 个 ygg-* skill 独立复制到 /tmp 仍零断链', async t => {
+test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 10 个 ygg-* skill 独立复制到 /tmp 仍零断链', async t => {
   await assert.rejects(fs.lstat(path.join(project, '.omp')), {code: 'ENOENT'});
 
   const agentsSkills = path.join(project, '.agents', 'skills');
@@ -69,7 +69,7 @@ test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 9 个 yg
 
   const listed = (await fs.readdir(agentsSkills)).sort();
   const expectedSkills = [
-    'ygg-edit', 'ygg-entries', 'ygg-foundation', 'ygg-guide',
+    'ygg-edit', 'ygg-entries', 'ygg-foundation', 'ygg-guide', 'ygg-migrate',
     'ygg-pack', 'ygg-profile', 'ygg-read', 'ygg-scenes', 'ygg-skeleton',
   ];
   for (const name of ['README.md', 'shared', ...expectedSkills]) {
@@ -104,6 +104,13 @@ test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 9 个 yg
           assert.ok(headings.has(decodeURIComponent(anchor)), `${skillName} 失效锚点：${rawTarget}`);
         }
       }
+    }
+
+    if (skillName === 'ygg-migrate') {
+      const isolatedScript = path.join(isolatedSkillDir, 'scripts', 'unpack-card.mjs');
+      const helpRun = await spawnNode(isolatedScript, ['--help'], isolatedRoot);
+      assert.equal(helpRun.code, 0, `独立复制的 ygg-migrate 脚本 --help 失败：${helpRun.stderr}`);
+      assert.match(helpRun.stdout, /用法：node unpack-card\.mjs/u);
     }
   }
 
