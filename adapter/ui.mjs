@@ -68,6 +68,7 @@ const CSS = `
 .ygg-opening .ygg-rp-bar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 4px 0 8px; padding: 5px 8px; border-radius: 5px; border: 1px solid var(--SmartThemeBorderColor); background: var(--black30a); font-size: 0.9em; }
 .ygg-opening .ygg-rp-bar .menu_button { width: auto; margin: 0 0 0 auto; padding: 2px 8px; }
 .ygg-opening .ygg-unique-hint { margin: 4px 0; padding: 4px 8px; border-radius: 4px; border-left: 3px solid var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 12%, transparent); font-size: 0.88em; }
+.ygg-opening .ygg-req { color: #d98080; margin-left: 2px; font-weight: bold; }
 `;
 
 export function installStyle() {

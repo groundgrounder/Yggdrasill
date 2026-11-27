@@ -50,8 +50,9 @@ test('清理-01-A1：日历暴露 yearDays 与 formatDay，正反例与边界一
     assert.equal(calendar.formatDay(day), text, String(day));
     assert.equal(calendar.time(text)?.[0], day, String(day));
   }
-  for (let day = 0; day < 120 * 3; day++) assert.equal(calendar.time(calendar.formatDay(day))?.[0], day, String(day));
-  for (const day of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER, 120 * 10000]) assert.equal(calendar.formatDay(day), null, String(day));
+  for (let day = -120 * 2; day < 120 * 3; day++) assert.equal(calendar.time(calendar.formatDay(day))?.[0], day, String(day));
+  assert.equal(calendar.formatDay(-1), '潮历前0001年04月30日');
+  for (const day of [1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER, 120 * 10000, -120 * 10000]) assert.equal(calendar.formatDay(day), null, String(day));
   const eleven = createCalendar({前缀: '潮历', 年位数: 11, 月数: 1, 每月天数: 1});
   assert.equal(eleven.formatDay(123), '潮历00000000123年01月01日');
   assert.equal(eleven.formatDay(10 ** 11), null);

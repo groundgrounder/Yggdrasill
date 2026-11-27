@@ -1296,6 +1296,8 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     setCustomEquipment, setCustomSkills, addSkill, removeSkill,
     setRoleplayAbility, setRoleplayEquipment, resetRoleplayCustomization,
     setHistory, setGreetingMode, setGreetingHint, setCustomGreeting, fail,
+    formatYear: value => calendar.format(value),
+    parseYear: value => calendar.year(value),
     input: inputNow,
     prepare: () => {
       if (playerMode === '自建' && profileFailure) return {ok: false, 阶段: '封卷', error: clone(profileFailure)};
@@ -1416,7 +1418,7 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
           初始能力: cleanAbilityMap(initialAbility, decl.ability?.维度),
           初始装备: clone(initialEquipment),
           可用技能: playerSkills,
-          纪年: {前缀: decl.calendar.前缀, 年位数: decl.calendar.年位数, 格式: calendar.pattern, 当前年: calendar.year(nowTime)},
+          纪年: {前缀: decl.calendar.前缀, 年位数: decl.calendar.年位数, 格式: calendar.pattern, 当前年: calendar.year(nowTime), 出生年数值: calendar.year(profileDraft.出生年)},
           能力维度: clone(abilityMeta),
           技能库: clone(skillMeta),
           装备库: clone(currentEquipMeta),

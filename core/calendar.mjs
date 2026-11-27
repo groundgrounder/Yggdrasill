@@ -18,14 +18,18 @@ export function createCalendar(declaration) {
   const offsets = [0];
   for (const days of months) offsets.push(offsets.at(-1) + days);
   const yearDays = offsets.at(-1);
-  const expression = new RegExp(`^${escape(prefix)}(\\d{${digits}})年(?:(\\d{2})月(\\d{2})日)?$`);
+  const expression = new RegExp(`^${escape(prefix)}(前)?(\\d{${digits}})年(?:(\\d{2})月(\\d{2})日)?$`);
   function time(value) {
     const match = typeof value === 'string' && expression.exec(value);
     if (!match || match[0] !== value) return null;
-    const month = Number(match[2]), day = Number(match[3]);
-    if (match[2] && (month < 1 || month > monthCount || day < 1 || day > months[month - 1])) return null;
-    const start = Number(match[1]) * yearDays + (match[2] ? offsets[month - 1] + day - 1 : 0);
-    const end = start + (match[2] ? 1 : yearDays);
+    const pre = Boolean(match[1]);
+    const rawYear = Number(match[2]);
+    if (pre && rawYear === 0) return null;
+    const yearNum = pre ? -rawYear : rawYear;
+    const month = Number(match[3]), day = Number(match[4]);
+    if (match[3] && (month < 1 || month > monthCount || day < 1 || day > months[month - 1])) return null;
+    const start = yearNum * yearDays + (match[3] ? offsets[month - 1] + day - 1 : 0);
+    const end = start + (match[3] ? 1 : yearDays);
     return Number.isSafeInteger(start) && Number.isSafeInteger(end) ? [start, end] : null;
   }
   function year(value) {
@@ -33,16 +37,21 @@ export function createCalendar(declaration) {
     return interval ? Math.floor(interval[0] / yearDays) : null;
   }
   function format(value) {
-    if (!Number.isSafeInteger(value) || value < 0 || String(value).length > digits) return null;
-    const result = `${prefix}${String(value).padStart(digits, '0')}年`;
+    if (!Number.isSafeInteger(value)) return null;
+    const abs = Math.abs(value);
+    if (String(abs).length > digits) return null;
+    const result = `${prefix}${value < 0 ? '前' : ''}${String(abs).padStart(digits, '0')}年`;
     return year(result) === value ? result : null;
   }
   function formatDay(value) {
-    if (!Number.isSafeInteger(value) || value < 0 || String(Math.floor(value / yearDays)).length > digits) return null;
-    const offset = value % yearDays;
+    if (!Number.isSafeInteger(value)) return null;
+    const y = Math.floor(value / yearDays);
+    const abs = Math.abs(y);
+    if (String(abs).length > digits) return null;
+    const offset = value - y * yearDays;
     let month = 0;
     while (month < monthCount - 1 && offset >= offsets[month + 1]) month++;
-    const result = `${prefix}${String(Math.floor(value / yearDays)).padStart(digits, '0')}年`
+    const result = `${prefix}${y < 0 ? '前' : ''}${String(abs).padStart(digits, '0')}年`
       + `${String(month + 1).padStart(2, '0')}月${String(offset - offsets[month] + 1).padStart(2, '0')}日`;
     return time(result)?.[0] === value ? result : null;
   }

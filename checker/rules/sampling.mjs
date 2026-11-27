@@ -10,7 +10,11 @@ export function samplingYears(catalog, decl) {
     years.add(year);
     years.add(year + 1);
   }
-  if (years.size) years.add(Math.max(0, Math.min(...years) - 1));
+  if (years.size) {
+    const min = Math.min(...years);
+    if (min >= 0) years.add(Math.max(0, min - 1));
+    else if (calendar.format(min - 1) !== null) years.add(min - 1);
+  }
   return [...years].sort((left, right) => left - right);
 }
 

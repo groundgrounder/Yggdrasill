@@ -12,12 +12,19 @@ export function openingNode(draft) {
     abilityPick: {},
     skillPick: '',
     customSkillDraft: {名称: '', 说明: '', 限制: ''},
+    customSkillHint: '',
     equipPick: {装备ID: '', 状态: '', 位置: '随身'},
     customEquipDraft: {名称: '', 说明: '', 状态: '', 位置: '随身'},
+    customEquipHint: '',
+    ageError: '',
   };
 
   const hint = text => $('<div>').addClass('ygg-hint').text(text);
-  const field = (label, control, note) => $('<div>').addClass('ygg-field').append($('<label>').text(label), control, ...(note ? [hint(note)] : []));
+  const field = (label, control, note, {required = false} = {}) => {
+    const labelNode = $('<label>').text(label);
+    if (required) labelNode.append($('<span>').addClass('ygg-req').attr('aria-hidden', 'true').text('*'));
+    return $('<div>').addClass('ygg-field').append(labelNode, control, ...(note ? [hint(note)] : []));
+  };
   const select = options => $('<select>').addClass('text_pole').append(options.map(([value, label]) => $('<option>').val(value).text(label)));
   const section = (title, open, ...children) => $('<details>').addClass('ygg-sec').prop('open', open)
     .append($('<summary>').text(title), $('<div>').addClass('ygg-body').append(children));
@@ -140,7 +147,15 @@ export function openingNode(draft) {
       const name = String(ui.customSkillDraft.名称 ?? '').trim();
       const desc = String(ui.customSkillDraft.说明 ?? '').trim();
       const limit = String(ui.customSkillDraft.限制 ?? '').trim();
-      if (!name || !desc) return;
+      const missing = [];
+      if (!name) missing.push('技能名称');
+      if (!desc) missing.push('说明');
+      if (missing.length) {
+        ui.customSkillHint = `请填写自定义技能的${missing.join('和')}后再添加（未添加不影响开局提交）。`;
+        render();
+        return;
+      }
+      ui.customSkillHint = '';
       const nextItem = {名称: name, 说明: desc, ...(limit ? {限制: limit} : {})};
       draft.setCustomSkills([...customSkills, nextItem]);
       ui.customSkillDraft = {名称: '', 说明: '', 限制: ''};
@@ -149,6 +164,7 @@ export function openingNode(draft) {
     nodes.push(field('自定义技能', $('<div>').append(
       ...(customSkills.length ? [customTags] : []),
       $('<div>').addClass('ygg-row').append(nameIn, descIn, limitIn, addCustomSkillBtn),
+      ...(ui.customSkillHint ? [hint(ui.customSkillHint)] : []),
     )));
     return nodes;
   }
@@ -232,7 +248,16 @@ export function openingNode(draft) {
       const desc = String(ui.customEquipDraft.说明 ?? '').trim();
       const pos = String(ui.customEquipDraft.位置 ?? '').trim();
       const st = ui.customEquipDraft.状态 || states[0];
-      if (!name || !desc || !pos) return;
+      const missing = [];
+      if (!name) missing.push('装备名称');
+      if (!desc) missing.push('说明');
+      if (!pos) missing.push('位置');
+      if (missing.length) {
+        ui.customEquipHint = `请填写自定义装备的${missing.join('、')}后再添加（未添加不影响开局提交）。`;
+        render();
+        return;
+      }
+      ui.customEquipHint = '';
       draft.setCustomEquipment([...customEquipments, {名称: name, 说明: desc, 状态: st, 位置: pos}]);
       ui.customEquipDraft = {名称: '', 说明: '', 状态: states[0], 位置: '随身'};
       render();
@@ -240,6 +265,7 @@ export function openingNode(draft) {
     nodes.push(field('自定义装备', $('<div>').append(
       ...(customEquipments.length ? [customTags] : []),
       $('<div>').addClass('ygg-row').append(ceName, ceDesc, ceState, cePos, addCustomEquipBtn),
+      ...(ui.customEquipHint ? [hint(ui.customEquipHint)] : []),
     )));
     return nodes;
   }
@@ -252,24 +278,69 @@ export function openingNode(draft) {
     const textInput = (value, placeholder, onChange) => $('<input>').addClass('text_pole').attr({type: 'text', placeholder})
       .val(value ?? '').on('change', event => { onChange(event.target.value); render(); });
 
-    // 开局年龄与出生年双向换算提示
-    const birthMatch = typeof profile.出生年 === 'string' && cal.前缀
-      ? profile.出生年.match(new RegExp(`^${cal.前缀.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)年`)) : null;
-    const birthYear = birthMatch ? Number(birthMatch[1]) : null;
+    // 开局年龄与出生年双向换算提示（支持纪元前年份）
+    const digits = Number(cal.年位数) || 3;
+    const formatYear = value => {
+      if (typeof draft.formatYear === 'function') return draft.formatYear(value);
+      if (!Number.isSafeInteger(value) || !cal.前缀) return null;
+      const abs = Math.abs(value);
+      if (String(abs).length > digits) return null;
+      return `${cal.前缀}${value < 0 ? '前' : ''}${String(abs).padStart(digits, '0')}年`;
+    };
+    let birthYear = Number.isSafeInteger(cal.出生年数值) ? cal.出生年数值 : null;
+    if (birthYear === null && typeof profile.出生年 === 'string' && profile.出生年) {
+      if (typeof draft.parseYear === 'function') birthYear = draft.parseYear(profile.出生年);
+      else if (cal.前缀) {
+        const match = profile.出生年.match(new RegExp(`^${cal.前缀.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(前)?(\\d{${digits}})年`));
+        if (match) {
+          const rawY = Number(match[2]);
+          if (!(match[1] && rawY === 0)) birthYear = match[1] ? -rawY : rawY;
+        }
+      }
+    }
     const currentYear = Number.isSafeInteger(cal.当前年) ? cal.当前年 : null;
     const ageNow = currentYear !== null && birthYear !== null ? currentYear - birthYear : null;
     const ageInput = $('<input>').addClass('text_pole').attr({type: 'number', min: 0, placeholder: '按年龄换算'})
       .val(ageNow !== null && ageNow >= 0 ? String(ageNow) : '')
       .on('change', event => {
         const raw = String(event.target.value ?? '').trim();
-        if (!raw || currentYear === null) return;
+        if (!raw) {
+          ui.ageError = '';
+          draft.setProfileField('出生年', '');
+          render();
+          return;
+        }
+        if (currentYear === null) {
+          ui.ageError = '当前开局时间无效，无法按年龄换算出生年。';
+          render();
+          return;
+        }
+        if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+          ui.ageError = '年龄须为非负整数（如 0、18、20），未修改当前出生年。';
+          render();
+          return;
+        }
         const years = Number(raw);
-        if (!Number.isSafeInteger(years) || years < 0 || currentYear - years < 0) return;
-        const digits = Number(cal.年位数) || 3;
-        const formatted = `${cal.前缀}${String(currentYear - years).padStart(digits, '0')}年`;
+        const targetYear = currentYear - years;
+        const formatted = formatYear(targetYear);
+        if (!formatted) {
+          const maxAbs = 10 ** digits - 1;
+          const maxAge = currentYear + maxAbs;
+          ui.ageError = `换算结果超出 ${digits} 位纪年上限（最早仅支持 ${cal.前缀}前${String(maxAbs).padStart(digits, '0')}年，当前最大可换算年龄为 ${maxAge} 岁），未修改当前出生年。`;
+          render();
+          return;
+        }
+        ui.ageError = '';
         draft.setProfileField('出生年', formatted);
         render();
       });
+    const birthNote = ui.ageError
+      ? ui.ageError
+      : ageNow !== null
+        ? (ageNow >= 0
+          ? `当前约 ${ageNow} 岁；可填出生年或直接输年龄自动换算。`
+          : `出生年晚于当前开局时间（相差 ${-ageNow} 年），年龄框已留空；可调整出生年或开局时间。`)
+        : `格式：${cal.格式 || snapshot.时间格式}`;
 
     const basicGrid = $('<div>').addClass('ygg-opening-grid').append(
       field('姓名', textInput(profile.姓名, '主角姓名', v => draft.setProfileField('姓名', v))),
@@ -277,9 +348,9 @@ export function openingNode(draft) {
       field('种族', textInput(profile.种族, '如：人族', v => draft.setProfileField('种族', v))),
       field('出身', textInput(profile.出身, '简述出身背景', v => draft.setProfileField('出身', v))),
       field('出生年', $('<div>').addClass('ygg-row').append(
-        textInput(profile.出生年, cal.格式 || '纪年', v => draft.setProfileField('出生年', v)),
+        textInput(profile.出生年, cal.格式 || '纪年', v => { ui.ageError = ''; draft.setProfileField('出生年', v); }),
         ...(currentYear !== null ? [ageInput] : []),
-      ), ageNow !== null ? `当前约 ${ageNow} 岁；可填出生年或直接输年龄自动换算。` : `格式：${cal.格式 || snapshot.时间格式}`),
+      ), birthNote),
       field('称号', textInput((profile.称号 ?? []).join('、'), '多个用顿号分隔', v => draft.setProfileField('称号', v))),
     );
 
@@ -293,6 +364,7 @@ export function openingNode(draft) {
 
     const equipList = Array.isArray(form.初始装备) ? form.初始装备 : [];
     const children = [
+      hint('以下角色信息、能力、技能与装备均为选填，可按需填写或全部留空直接开局。'),
       $('<div>').addClass('ygg-subhead').text('基本信息'),
       basicGrid,
       $('<div>').addClass('ygg-subhead').text('稳定体貌与穿着'),
@@ -401,7 +473,7 @@ export function openingNode(draft) {
   function render() {
     const snapshot = draft.snapshot(), preview = snapshot.预览;
     root.empty().append($('<h3>').text('世界树：选择开局'));
-    root.append(hint('改动即预演；预演不写聊天变量、不执行开场命令，也不调用叙事或记账模型。取消后可从“世界树：开局”重新打开。'));
+    root.append(hint('带 * 为必填项，其余均为选填；改动即预演，预演不写聊天变量、不执行开场命令，也不调用叙事或记账模型。取消后可从“世界树：开局”重新打开。'));
     if (snapshot.错误) root.append($('<div>').addClass('ygg-opening-error')
       .text(`尚未开局：${snapshot.错误.code}\n${snapshot.错误.说明}`));
 
@@ -410,24 +482,24 @@ export function openingNode(draft) {
       const currentWl = snapshot.世界线列表.find(item => item.id === snapshot.世界线);
       const wlSelect = select(snapshot.世界线列表.map(item => [item.id, `${item.id}${item.默认 ? '（默认）' : ''}`]))
         .val(snapshot.世界线 ?? '')
-        .on('change', event => { draft.setWorldline(event.target.value); render(); });
+        .on('change', event => { ui.ageError = ''; draft.setWorldline(event.target.value); render(); });
       root.append(section('世界线', true,
-        field('选择世界线', wlSelect, currentWl?.概述 || '切换世界线将联动筛选预设开局与历史节点。')));
+        field('选择世界线', wlSelect, currentWl?.概述 || '切换世界线将联动筛选预设开局与历史节点。', {required: true})));
     }
 
     // 2. 预设开局
     const plans = select([
       ['', '无预设（自由开局）'],
       ...snapshot.计划.map(plan => [plan.id, `${plan.id}${plan.概述 ? `：${plan.概述}` : ''}`]),
-    ]).val(snapshot.方案 ?? '').on('change', event => { draft.setPlan(event.target.value); render(); });
+    ]).val(snapshot.方案 ?? '').on('change', event => { ui.ageError = ''; draft.setPlan(event.target.value); render(); });
     const chosenPlan = snapshot.计划.find(plan => plan.id === snapshot.方案);
     root.append(section('预设开局', true,
       field('开局方案', plans, chosenPlan?.概述 || '无预设时按当前世界线、时间、地点与主角自由开局。')));
 
     // 3. 开局时间与地点
     const timeInput = $('<input>').addClass('text_pole').attr('type', 'text').val(snapshot.时间)
-      .on('change', event => { draft.setTime(event.target.value); render(); });
-    const timeLocChildren = [field('开局时间', timeInput, `卡纪年格式：${snapshot.时间格式}`)];
+      .on('change', event => { ui.ageError = ''; draft.setTime(event.target.value); render(); });
+    const timeLocChildren = [field('开局时间', timeInput, `卡纪年格式：${snapshot.时间格式}`, {required: true})];
     if (snapshot.地点列表?.length) {
       const locSelect = select(snapshot.地点列表.map(item => [item.id, item.标签]))
         .val(snapshot.地点 ?? '')
@@ -435,7 +507,7 @@ export function openingNode(draft) {
       const locHint = snapshot.玩家?.模式 === '扮演'
         ? `默认按角色当前所在推算（${snapshot.默认地点 || '无'}），可改选。`
         : '选择初始地点。';
-      timeLocChildren.push(field('开局地点', locSelect, locHint));
+      timeLocChildren.push(field('开局地点', locSelect, locHint, {required: true}));
     }
     root.append(section('开局时间与地点', true, ...timeLocChildren));
 
@@ -449,7 +521,7 @@ export function openingNode(draft) {
     root.append(section('玩家', true,
       field('玩家模式', modeSelect),
       ...(player.模式 === '扮演'
-        ? [field('扮演角色组', roleGroupSelect, '只列出当前已启用的角色组；切换角色会联动推算默认开局地点。'), ...renderRoleplayForm(snapshot)]
+        ? [field('扮演角色组', roleGroupSelect, '只列出当前已启用的角色组；切换角色会联动推算默认开局地点。', {required: true}), ...renderRoleplayForm(snapshot)]
         : renderSelfBuiltForm(snapshot))));
 
     // 5. 开场白（四模式）
@@ -485,13 +557,13 @@ export function openingNode(draft) {
         type: 'text',
         placeholder: '输入一句开场提示（例如：暴雨夜独自守塔，忽闻远方钟声）',
       }).val(snapshot.开场提示 ?? '').on('change', event => { draft.setGreetingHint(event.target.value); render(); });
-      greetingChildren.push(field('开场提示', hintInput, '确认开局后由叙事模型结合当前上下文扩写并记账。'));
+      greetingChildren.push(field('开场提示', hintInput, '确认开局后由叙事模型结合当前上下文扩写并记账。', {required: true}));
     } else if (snapshot.开场白模式 === '手写') {
       const customArea = $('<textarea>').addClass('text_pole').attr({
         rows: 5,
         placeholder: '直接填写第 0 楼开场白正文…',
       }).val(snapshot.手写开场白 ?? '').on('change', event => { draft.setCustomGreeting(event.target.value); render(); });
-      greetingChildren.push(field('手写开场白正文', customArea, '确认开局后写入第 0 楼并执行一次记账落盘。'));
+      greetingChildren.push(field('手写开场白正文', customArea, '确认开局后写入第 0 楼并执行一次记账落盘。', {required: true}));
     }
     root.append(section('开场白', true, ...greetingChildren));
 
