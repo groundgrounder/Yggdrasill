@@ -1,9 +1,11 @@
 // 记账设置与宿主权限自检：设置存在酒馆的全局变量里，不随卡导出；权限只检查宿主实际暴露的状态。
 // 本模块不缓存本局状态；卡内脚本、局部正则与当前模式由调用方以 {permissionIds, bookkeeping} 显式传入。
-import {isMap} from '../core/utils.mjs';
+import {codepointCompare, isMap} from '../core/utils.mjs';
 import {popup, settingsNode} from './ui.mjs';
 
 export const SETTINGS_KEY = '世界树·记账';
+export const OPENING_PRESETS_KEY = '世界树·开局预设';
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 // 应答格式取代旧的“结构化输出”开关；没有保存设置时默认走任意 OpenAI 兼容端点都可用的提示词 JSON。
 // 调试关着时，玩家看不到候选、将到与已排除的事件，失败提示也不写细节（细节里可能有将到事件的ID）。
 export const DEFAULTS = {方式: '同一模型', 应答格式: '提示词', 代理预设: '', 地址: '', 密钥: '', 模型: '', 来源: 'openai',
@@ -60,6 +62,117 @@ export async function flushSettings() {
   if (settingsWriteError) throw settingsWriteError;
   const globals = getVariables({type: 'global'}) ?? {};
   await waitForSettings(globals[SETTINGS_KEY] ?? {});
+}
+
+// 与 saveSettings 共用同一条 settingsWrite 串行队列，避免并发读写互相覆盖全局变量中的其它键。
+function enqueueGlobalWrite(task) {
+  const write = settingsWrite.then(task);
+  settingsWrite = write.catch(() => {});
+  return write;
+}
+
+const cloneData = value => value === undefined ? undefined : structuredClone(value);
+
+export function createOpeningStorage(cardId) {
+  const validCard = typeof cardId === 'string' && cardId.trim() && !RESERVED_KEYS.has(cardId.trim()) ? cardId.trim() : null;
+
+  function readBucket() {
+    if (!validCard || typeof globalThis.getVariables !== 'function') return {草稿: null, 预设: {}};
+    try {
+      const globals = globalThis.getVariables({type: 'global'});
+      const all = isMap(globals) ? globals[OPENING_PRESETS_KEY] : null;
+      const bucket = isMap(all) && Object.hasOwn(all, validCard) && isMap(all[validCard]) ? all[validCard] : null;
+      return {
+        草稿: isMap(bucket?.草稿) ? bucket.草稿 : null,
+        预设: isMap(bucket?.预设) ? bucket.预设 : {},
+      };
+    } catch {
+      return {草稿: null, 预设: {}};
+    }
+  }
+
+  function mutateBucket(updater) {
+    if (!validCard) return Promise.resolve({ok: false, error: '无效的卡ID'});
+    if (typeof globalThis.getVariables !== 'function' || typeof globalThis.replaceVariables !== 'function') {
+      return Promise.resolve({ok: false, error: '当前宿主不支持全局变量存储'});
+    }
+    return enqueueGlobalWrite(async () => {
+      try {
+        const rawGlobals = globalThis.getVariables({type: 'global'});
+        const globals = isMap(rawGlobals) ? {...rawGlobals} : {};
+        const rawAll = globals[OPENING_PRESETS_KEY];
+        const all = isMap(rawAll) ? {...rawAll} : {};
+        const rawBucket = Object.hasOwn(all, validCard) && isMap(all[validCard]) ? all[validCard] : {};
+        const bucket = {
+          草稿: isMap(rawBucket.草稿) ? cloneData(rawBucket.草稿) : null,
+          预设: isMap(rawBucket.预设) ? cloneData(rawBucket.预设) : {},
+        };
+        const result = updater(bucket);
+        if (result?.abort) return result.response;
+        all[validCard] = bucket;
+        await globalThis.replaceVariables({...globals, [OPENING_PRESETS_KEY]: all}, {type: 'global'});
+        return result?.response ?? {ok: true};
+      } catch (error) {
+        return {ok: false, error: String(error?.message ?? error ?? '写入开局预设失败')};
+      }
+    });
+  }
+
+  return {
+    listPresets() {
+      const bucket = readBucket();
+      const rows = [];
+      for (const [name, entry] of Object.entries(bucket.预设)) {
+        if (!name || RESERVED_KEYS.has(name) || !isMap(entry) || !isMap(entry.数据)) continue;
+        rows.push({
+          名称: name,
+          更新时间: typeof entry.更新时间 === 'string' ? entry.更新时间 : '',
+          数据: cloneData(entry.数据),
+        });
+      }
+      rows.sort((left, right) => codepointCompare(right.更新时间, left.更新时间) || codepointCompare(left.名称, right.名称));
+      return rows;
+    },
+    savePreset(name, data) {
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+      if (!trimmed) return Promise.resolve({ok: false, error: '预设名称不能为空'});
+      if (RESERVED_KEYS.has(trimmed)) return Promise.resolve({ok: false, error: '预设名称不能使用保留字'});
+      if (!isMap(data)) return Promise.resolve({ok: false, error: '预设数据须为映射'});
+      return mutateBucket(bucket => {
+        const overwritten = Object.hasOwn(bucket.预设, trimmed);
+        const updatedAt = new Date().toISOString();
+        bucket.预设[trimmed] = {更新时间: updatedAt, 数据: cloneData(data)};
+        return {response: {ok: true, 名称: trimmed, 更新时间: updatedAt, 覆盖: overwritten}};
+      });
+    },
+    deletePreset(name) {
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+      if (!trimmed || RESERVED_KEYS.has(trimmed)) return Promise.resolve({ok: false, error: '预设名称不合法'});
+      return mutateBucket(bucket => {
+        if (!Object.hasOwn(bucket.预设, trimmed)) {
+          return {abort: true, response: {ok: false, error: `预设不存在：${trimmed}`}};
+        }
+        delete bucket.预设[trimmed];
+        return {response: {ok: true, 名称: trimmed}};
+      });
+    },
+    loadDraft() {
+      const bucket = readBucket();
+      return isMap(bucket.草稿?.数据) ? cloneData(bucket.草稿.数据) : null;
+    },
+    saveDraft(data) {
+      if (data !== null && !isMap(data)) return Promise.resolve({ok: false, error: '草稿数据须为映射或 null'});
+      return mutateBucket(bucket => {
+        if (data === null) {
+          if (bucket.草稿 === null) return {abort: true, response: {ok: true, unchanged: true}};
+          bucket.草稿 = null;
+          return {response: {ok: true}};
+        }
+        bucket.草稿 = {更新时间: new Date().toISOString(), 数据: cloneData(data)};
+        return {response: {ok: true}};
+      });
+    },
+  };
 }
 
 // 权限只检查宿主实际暴露的状态：脚本若根本没执行，代码无从自检，只能靠导入说明与宿主拒绝提示。

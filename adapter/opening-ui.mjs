@@ -2,7 +2,7 @@
 // 所有改动立即交给 opening.mjs 重新预演；失败只在顶部显示错误，上一份有效预览仍留在下方。
 // DOM 与事件止于此，封卷、命令和写入仍由 runtime 完成。
 
-export function openingNode(draft) {
+export function openingNode(draft, {storage = null, initialNotice = ''} = {}) {
   const root = $('<div>').addClass('ygg-panel ygg-form ygg-opening');
   const ui = {
     groupSearch: '',
@@ -17,6 +17,9 @@ export function openingNode(draft) {
     customEquipDraft: {名称: '', 说明: '', 状态: '', 位置: '随身'},
     customEquipHint: '',
     ageError: '',
+    selectedPreset: '',
+    presetName: '',
+    presetNotice: initialNotice || '',
   };
 
   const hint = text => $('<div>').addClass('ygg-hint').text(text);
@@ -475,12 +478,112 @@ export function openingNode(draft) {
     return nodes;
   }
 
+  function suggestPresetName(snapshot) {
+    if (snapshot.玩家?.模式 === '自建') {
+      const name = String(snapshot.自建表单?.档案?.姓名 ?? '').trim();
+      if (name) return name;
+    } else if (snapshot.玩家?.模式 === '扮演' && snapshot.玩家?.扮演角色组) {
+      const group = snapshot.角色组?.find(item => item.id === snapshot.玩家.扮演角色组);
+      if (group?.显示名) return group.显示名;
+    }
+    if (snapshot.方案) return snapshot.方案;
+    return '开局设定';
+  }
+
+  function renderPresetToolbar(snapshot) {
+    const bar = $('<div>').addClass('ygg-preset-bar');
+    const resetBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('恢复默认').on('click', async () => {
+      draft.resetDefaults?.();
+      if (storage?.saveDraft) await storage.saveDraft(null);
+      ui.ageError = '';
+      ui.presetNotice = '已恢复初始默认设定。';
+      render();
+    });
+
+    if (storage) {
+      const presets = storage.listPresets?.() ?? [];
+      if (presets.length) {
+        if (!ui.selectedPreset || !presets.some(item => item.名称 === ui.selectedPreset)) {
+          ui.selectedPreset = presets[0].名称;
+        }
+      } else {
+        ui.selectedPreset = '';
+      }
+      const presetSelect = select(presets.length
+        ? presets.map(item => [item.名称, item.名称])
+        : [['', '（暂无已保存设定）']],
+      ).val(ui.selectedPreset).on('change', event => { ui.selectedPreset = event.target.value; });
+      const loadBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('载入').on('click', () => {
+        const picked = presets.find(item => item.名称 === ui.selectedPreset);
+        if (!picked) {
+          ui.presetNotice = '请先选择一条已保存的开局设定。';
+          render();
+          return;
+        }
+        const res = draft.importPreset?.(picked.数据);
+        ui.ageError = '';
+        if (!res?.ok) {
+          ui.presetNotice = `载入失败：${res?.error?.说明 ?? '预设格式不合法'}`;
+        } else if (res.ignored?.length) {
+          ui.presetNotice = `已载入设定「${picked.名称}」（已忽略 ${res.ignored.length} 项失效配置：${res.ignored.join('；')}）`;
+        } else {
+          ui.presetNotice = `已载入设定「${picked.名称}」。`;
+        }
+        render();
+      });
+      const deleteBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('删除').on('click', async () => {
+        if (!ui.selectedPreset) {
+          ui.presetNotice = '请先选择要删除的开局设定。';
+          render();
+          return;
+        }
+        const res = await storage.deletePreset(ui.selectedPreset);
+        if (res?.ok) {
+          ui.presetNotice = `已删除设定「${res.名称}」。`;
+          ui.selectedPreset = '';
+        } else {
+          ui.presetNotice = `删除失败：${res?.error ?? '未知错误'}`;
+        }
+        render();
+      });
+      const nameInput = $('<input>').addClass('text_pole').attr({
+        type: 'text',
+        placeholder: `输入设定名称（留空默认：${suggestPresetName(snapshot)}）`,
+      }).val(ui.presetName)
+        .on('input', event => { ui.presetName = event.target.value; })
+        .on('change', event => { ui.presetName = event.target.value; });
+      const saveBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('保存当前设定').on('click', async () => {
+        const name = String(ui.presetName ?? '').trim() || suggestPresetName(draft.snapshot());
+        const res = await storage.savePreset(name, draft.exportPreset());
+        if (res?.ok) {
+          ui.selectedPreset = res.名称;
+          ui.presetName = '';
+          ui.presetNotice = res.覆盖 ? `已覆盖保存设定「${res.名称}」。` : `已保存设定「${res.名称}」。`;
+        } else {
+          ui.presetNotice = `保存失败：${res?.error ?? '未知错误'}`;
+        }
+        render();
+      });
+      bar.append(
+        $('<div>').addClass('ygg-subhead').text('已保存的开局设定'),
+        $('<div>').addClass('ygg-row').append(presetSelect, loadBtn, deleteBtn, resetBtn),
+        $('<div>').addClass('ygg-row').append(nameInput, saveBtn),
+      );
+    } else {
+      bar.append($('<div>').addClass('ygg-row').append(resetBtn));
+    }
+
+    if (ui.presetNotice) bar.append($('<div>').addClass('ygg-preset-notice').text(ui.presetNotice));
+    return bar;
+  }
+
   function render() {
     const snapshot = draft.snapshot(), preview = snapshot.预览;
     root.empty().append($('<h3>').text('世界树：选择开局'));
     root.append(hint('带 * 为必填项，其余均为选填；改动即预演，预演不写聊天变量、不执行开场命令，也不调用叙事或记账模型。取消后可从“世界树：开局”重新打开。'));
     if (snapshot.错误) root.append($('<div>').addClass('ygg-opening-error')
       .text(`尚未开局：${snapshot.错误.code}\n${snapshot.错误.说明}`));
+    root.append(renderPresetToolbar(snapshot));
 
     // 1. 世界线（仅多世界线卡显示）
     if (snapshot.世界线列表?.length) {

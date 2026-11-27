@@ -328,14 +328,19 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
   }));
   const equipStates = resolveDomain('词表.装备状态', decl);
 
-  let planId = has(defaults, '方案') && planMap.has(defaults.方案) ? defaults.方案 : null;
-  let worldlineId = null;
-  if (worldlines.length) {
-    worldlineId = has(defaults, '世界线') && worldlineMap.has(defaults.世界线) ? defaults.世界线
-      : planId && worldlineMap.has(planMap.get(planId)?.内容?.世界线) ? planMap.get(planId).内容.世界线
-        : worldlines.find(wl => wl.内容?.默认 === true)?.id ?? worldlines[0].id;
-    if (planId && planMap.get(planId)?.内容?.世界线 && planMap.get(planId).内容.世界线 !== worldlineId) planId = null;
+  function initialWorldAndPlan() {
+    let initPlan = has(defaults, '方案') && planMap.has(defaults.方案) ? defaults.方案 : null;
+    let initWorldline = null;
+    if (worldlines.length) {
+      initWorldline = has(defaults, '世界线') && worldlineMap.has(defaults.世界线) ? defaults.世界线
+        : initPlan && worldlineMap.has(planMap.get(initPlan)?.内容?.世界线) ? planMap.get(initPlan).内容.世界线
+          : worldlines.find(wl => wl.内容?.默认 === true)?.id ?? worldlines[0].id;
+      if (initPlan && planMap.get(initPlan)?.内容?.世界线 && planMap.get(initPlan).内容.世界线 !== initWorldline) initPlan = null;
+    }
+    return {planId: initPlan, worldlineId: initWorldline};
   }
+
+  let {planId, worldlineId} = initialWorldAndPlan();
 
   let overrides = {}, failure = null, preview = null;
   // 玩家选择与档案草稿是同一份状态：结构化表单、YAML 文本框、预览与提交都读这里。
@@ -1286,8 +1291,338 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     return {ok: false, error: clone(failure)};
   }
 
+  const abilityMetaByName = new Map(abilityMeta.map(item => [item.名称, item]));
+  const skillIdSet = new Set(skillMeta.map(item => item.id));
+  const equipIdSet = new Set(equipBase.map(item => item.id));
+  const equipStateSet = new Set(equipStates.length ? equipStates : ['完好']);
+
+  function exportPreset() {
+    return clone({
+      格式: 1,
+      世界线: worldlineId,
+      方案: planId,
+      时间: has(overrides, '开局时间') ? overrides.开局时间 : currentEffectiveTime(),
+      时间已改: has(overrides, '开局时间'),
+      地点: locationTouched ? locationOverride : currentLocation(),
+      地点已改: locationTouched,
+      角色组: isMap(overrides.角色组) ? overrides.角色组 : {},
+      历史选择: isMap(overrides.历史选择) ? overrides.历史选择 : {},
+      玩家模式: playerMode,
+      扮演角色组: roleGroup,
+      自建档案: profileDraft,
+      初始能力: cleanAbilityMap(initialAbility, decl.ability?.维度),
+      初始装备: initialEquipment,
+      自定义装备: customEquipments,
+      自定义技能: customSkills,
+      额外技能: extraSkills,
+      移除技能: removedSkills,
+      能力覆写: cleanRpAbilityOverrides(rpAbilityOverrides),
+      移除能力: rpRemovedAbilities,
+      额外装备: rpExtraEquipments,
+      移除装备: rpRemovedEquipments,
+      开场白模式: greetingMode,
+      开场白模式已改: greetingModeTouched,
+      开场提示: greetingHint,
+      手写开场白: customGreeting,
+    });
+  }
+
+  function validatePresetAbilities(raw, ignored, {allowEmptySet = false} = {}) {
+    const out = {};
+    if (!isMap(raw)) return out;
+    const dims = decl.ability?.维度 ?? {};
+    for (const [dimName, val] of Object.entries(raw)) {
+      const dim = dims[dimName];
+      if (!dim) { ignored.push(`能力维度「${dimName}」已不存在`); continue; }
+      const meta = abilityMetaByName.get(dimName);
+      const ranks = new Set(meta?.等级序列 ?? []);
+      const keys = new Set(meta?.键列表 ?? []);
+      const memberIds = meta?.成员选项?.length ? new Set(meta.成员选项.map(item => item.id)) : null;
+      if (dim.类型 === '单值等级') {
+        const text = typeof val === 'string' ? val.trim() : '';
+        if (!text || (ranks.size && !ranks.has(text))) {
+          ignored.push(`能力「${dimName}」的等级「${String(val ?? '')}」无效`);
+          continue;
+        }
+        out[dimName] = text;
+      } else if (dim.类型 === '等级映射') {
+        if (!isMap(val)) { ignored.push(`能力「${dimName}」格式无效`); continue; }
+        const mapOut = {};
+        for (const [key, rank] of Object.entries(val)) {
+          if (keys.size && !keys.has(key)) { ignored.push(`能力「${dimName}」的项「${key}」已不存在`); continue; }
+          const text = typeof rank === 'string' ? rank.trim() : '';
+          if (!text || (ranks.size && !ranks.has(text))) {
+            ignored.push(`能力「${dimName}.${key}」的等级「${String(rank ?? '')}」无效`);
+            continue;
+          }
+          mapOut[key] = text;
+        }
+        if (Object.keys(mapOut).length) out[dimName] = mapOut;
+      } else if (dim.类型 === '集合') {
+        const items = [...new Set(cleanListInput(val))];
+        const validItems = [];
+        for (const item of items) {
+          if (memberIds && !memberIds.has(item)) { ignored.push(`能力「${dimName}」的成员「${item}」已不存在`); continue; }
+          validItems.push(item);
+        }
+        if (validItems.length || (allowEmptySet && Array.isArray(val) && val.length === 0)) out[dimName] = validItems;
+      }
+    }
+    return out;
+  }
+
+  function validateWorldEquipList(raw, ignored, label) {
+    if (!Array.isArray(raw)) return [];
+    const out = [], seen = new Set();
+    for (const item of raw) {
+      if (!isMap(item) || typeof item.装备ID !== 'string' || !equipIdSet.has(item.装备ID)) {
+        ignored.push(`${label}「${item?.装备ID ?? '未知'}」已不存在`);
+        continue;
+      }
+      if (seen.has(item.装备ID)) continue;
+      seen.add(item.装备ID);
+      const rawState = typeof item.状态 === 'string' ? item.状态.trim() : '';
+      const st = equipStateSet.has(rawState) ? rawState : (equipStates[0] ?? '完好');
+      const pos = typeof item.位置 === 'string' && item.位置.trim() ? item.位置.trim() : '随身';
+      out.push({装备ID: item.装备ID, 状态: st, 位置: pos});
+    }
+    return out;
+  }
+
+  function importPreset(preset) {
+    if (!isMap(preset) || preset.格式 !== 1) {
+      return {ok: false, ignored: [], error: {code: '开局.预设', 说明: '开局预设格式不合法'}};
+    }
+    const ignored = [];
+    const init = initialWorldAndPlan();
+    let nextWorldlineId = init.worldlineId;
+    if (typeof preset.世界线 === 'string' && preset.世界线) {
+      if (worldlines.length && worldlineMap.has(preset.世界线)) nextWorldlineId = preset.世界线;
+      else ignored.push(`世界线「${preset.世界线}」已不存在`);
+    }
+
+    let nextPlanId = null;
+    if (typeof preset.方案 === 'string' && preset.方案) {
+      if (!planMap.has(preset.方案)) {
+        ignored.push(`开局方案「${preset.方案}」已不存在`);
+      } else {
+        const planWl = planMap.get(preset.方案)?.内容?.世界线;
+        if (worldlines.length && planWl && nextWorldlineId && planWl !== nextWorldlineId) {
+          ignored.push(`开局方案「${preset.方案}」不属于世界线「${nextWorldlineId}」`);
+        } else {
+          nextPlanId = preset.方案;
+        }
+      }
+    } else if (preset.方案 !== null && preset.方案 !== undefined && preset.方案 !== '') {
+      ignored.push('开局方案格式无效');
+    }
+
+    const nextOverrides = {};
+    if (preset.时间已改 === true && typeof preset.时间 === 'string' && preset.时间.trim()) {
+      const trimmedTime = preset.时间.trim();
+      if (calendar.time(trimmedTime)) nextOverrides.开局时间 = trimmedTime;
+      else ignored.push(`开局时间「${trimmedTime}」不符合当前纪年格式`);
+    }
+
+    let nextLocationOverride = null, nextLocationTouched = false;
+    if (preset.地点已改 === true && typeof preset.地点 === 'string' && preset.地点) {
+      if (locationMap.has(preset.地点)) {
+        nextLocationOverride = preset.地点;
+        nextLocationTouched = true;
+      } else {
+        ignored.push(`开局地点「${preset.地点}」已不存在`);
+      }
+    }
+
+    if (isMap(preset.角色组)) {
+      const validGroups = {};
+      for (const [gid, cfg] of Object.entries(preset.角色组)) {
+        const group = groupMap.get(gid);
+        if (!group) { ignored.push(`角色组「${gid}」已不存在`); continue; }
+        if (!isMap(cfg)) { ignored.push(`角色组「${gid}」配置无效`); continue; }
+        const entry = {};
+        if (typeof cfg.启用 === 'boolean') entry.启用 = cfg.启用;
+        if (typeof cfg.版本ID === 'string' && cfg.版本ID) {
+          const versions = group.版本清单 ?? [gid];
+          if (versions.includes(cfg.版本ID)) entry.版本ID = cfg.版本ID;
+          else ignored.push(`角色组「${gid}」的版本「${cfg.版本ID}」已不存在`);
+        }
+        if (Object.keys(entry).length) validGroups[gid] = entry;
+      }
+      if (Object.keys(validGroups).length) nextOverrides.角色组 = validGroups;
+    }
+
+    if (isMap(preset.历史选择)) {
+      const validHistory = {};
+      for (const [eid, branchId] of Object.entries(preset.历史选择)) {
+        const ev = eventMap.get(eid);
+        const opt = options.find(item => item.事件ID === eid);
+        if (!ev || !opt) { ignored.push(`历史事件「${eid}」已不存在`); continue; }
+        if (typeof branchId !== 'string' || !branchId) continue;
+        if (branchId !== '未发生' && !has(opt.选项 ?? {}, branchId)) {
+          ignored.push(`历史事件「${eid}」的分支「${branchId}」已不存在`);
+          continue;
+        }
+        validHistory[eid] = branchId;
+      }
+      if (Object.keys(validHistory).length) nextOverrides.历史选择 = validHistory;
+    }
+
+    let nextPlayerMode = '自建';
+    if (preset.玩家模式 === '自建' || preset.玩家模式 === '扮演') nextPlayerMode = preset.玩家模式;
+    else if (preset.玩家模式 !== undefined) ignored.push(`玩家模式「${String(preset.玩家模式)}」无效`);
+
+    let nextRoleGroup = null;
+    if (typeof preset.扮演角色组 === 'string' && preset.扮演角色组) {
+      if (groupMap.has(preset.扮演角色组)) nextRoleGroup = preset.扮演角色组;
+      else ignored.push(`扮演角色组「${preset.扮演角色组}」已不存在`);
+    }
+
+    const nextProfileDraft = isMap(preset.自建档案) ? clone(preset.自建档案) : {};
+    if (preset.自建档案 !== undefined && !isMap(preset.自建档案)) ignored.push('自建档案格式无效');
+
+    const nextInitialAbility = validatePresetAbilities(preset.初始能力, ignored);
+    const nextInitialEquipment = validateWorldEquipList(preset.初始装备, ignored, '初始装备');
+    const nextRpAbilityOverrides = validatePresetAbilities(preset.能力覆写, ignored, {allowEmptySet: true});
+
+    const dims = decl.ability?.维度 ?? {};
+    const nextRpRemovedAbilities = [];
+    if (Array.isArray(preset.移除能力)) {
+      for (const field of preset.移除能力) {
+        if (typeof field !== 'string' || !field.trim()) continue;
+        const text = field.trim();
+        const dot = text.indexOf('.');
+        const valid = dot < 0
+          ? Boolean(dims[text])
+          : dims[text.slice(0, dot)]?.类型 === '等级映射'
+            && (!abilityMetaByName.get(text.slice(0, dot))?.键列表?.length
+              || abilityMetaByName.get(text.slice(0, dot)).键列表.includes(text.slice(dot + 1)));
+        if (valid && !nextRpRemovedAbilities.includes(text)) nextRpRemovedAbilities.push(text);
+        else if (!valid) ignored.push(`移除能力「${text}」已不存在`);
+      }
+    }
+
+    const nextRpExtraEquipments = validateWorldEquipList(preset.额外装备, ignored, '额外装备');
+    const nextRpRemovedEquipments = [];
+    if (Array.isArray(preset.移除装备)) {
+      for (const id of preset.移除装备) {
+        if (typeof id !== 'string' || !equipIdSet.has(id)) ignored.push(`移除装备「${String(id)}」已不存在`);
+        else if (!nextRpRemovedEquipments.includes(id)) nextRpRemovedEquipments.push(id);
+      }
+    }
+
+    const nextExtraSkills = [];
+    if (Array.isArray(preset.额外技能)) {
+      for (const id of preset.额外技能) {
+        if (typeof id !== 'string' || !skillIdSet.has(id)) ignored.push(`额外技能「${String(id)}」已不存在`);
+        else if (!nextExtraSkills.includes(id)) nextExtraSkills.push(id);
+      }
+    }
+    const nextRemovedSkills = [];
+    if (Array.isArray(preset.移除技能)) {
+      for (const id of preset.移除技能) {
+        if (typeof id !== 'string' || !skillIdSet.has(id)) ignored.push(`移除技能「${String(id)}」已不存在`);
+        else if (!nextRemovedSkills.includes(id)) nextRemovedSkills.push(id);
+      }
+    }
+
+    const nextCustomEquipments = [];
+    if (Array.isArray(preset.自定义装备)) {
+      for (const item of preset.自定义装备) {
+        const name = typeof item?.名称 === 'string' ? item.名称.trim() : '';
+        const desc = typeof item?.说明 === 'string' ? item.说明.trim() : '';
+        const st = typeof item?.状态 === 'string' ? item.状态.trim() : '';
+        const pos = typeof item?.位置 === 'string' ? item.位置.trim() : '';
+        if (!isMap(item) || !name || !desc || !pos || !st || !equipStateSet.has(st)) {
+          ignored.push(`自定义装备「${name || '未命名'}」结构缺项或状态无效`);
+          continue;
+        }
+        nextCustomEquipments.push({名称: name, 说明: desc, 状态: st, 位置: pos});
+      }
+    }
+
+    const nextCustomSkills = [];
+    if (Array.isArray(preset.自定义技能)) {
+      for (const item of preset.自定义技能) {
+        const name = typeof item?.名称 === 'string' ? item.名称.trim() : '';
+        const desc = typeof item?.说明 === 'string' ? item.说明.trim() : '';
+        const limit = typeof item?.限制 === 'string' ? item.限制.trim() : '';
+        if (!isMap(item) || !name || !desc) {
+          ignored.push(`自定义技能「${name || '未命名'}」结构缺项`);
+          continue;
+        }
+        nextCustomSkills.push({名称: name, 说明: desc, ...(limit ? {限制: limit} : {})});
+      }
+    }
+
+    worldlineId = nextWorldlineId;
+    planId = nextPlanId;
+    overrides = nextOverrides;
+    locationOverride = nextLocationOverride;
+    locationTouched = nextLocationTouched;
+    playerMode = nextPlayerMode;
+    roleGroup = nextRoleGroup;
+    profileDraft = nextProfileDraft;
+    initialAbility = nextInitialAbility;
+    initialEquipment = nextInitialEquipment;
+    customEquipments = nextCustomEquipments;
+    customSkills = nextCustomSkills;
+    extraSkills = nextExtraSkills;
+    removedSkills = nextRemovedSkills;
+    rpAbilityOverrides = nextRpAbilityOverrides;
+    rpRemovedAbilities = nextRpRemovedAbilities;
+    rpExtraEquipments = nextRpExtraEquipments;
+    rpRemovedEquipments = nextRpRemovedEquipments;
+    profileText = stringifyYaml(profileDraft);
+    profileFailure = null;
+    playerTouched = true;
+    greetingHint = typeof preset.开场提示 === 'string' ? preset.开场提示 : '';
+    customGreeting = typeof preset.手写开场白 === 'string' ? preset.手写开场白 : '';
+
+    if (GREETING_MODES.includes(preset.开场白模式)) {
+      if (preset.开场白模式 === '预设' && !hasPresetGreeting()) {
+        ignored.push('开场白模式「预设」当前不可用，已切换为自动生成');
+        greetingMode = '自动生成';
+        greetingModeTouched = false;
+      } else {
+        greetingMode = preset.开场白模式;
+        greetingModeTouched = preset.开场白模式已改 === true;
+      }
+    } else {
+      if (preset.开场白模式 !== undefined) ignored.push(`开场白模式「${String(preset.开场白模式)}」无效`);
+      greetingMode = worldlines.length && !planId ? '自动生成' : (hasPresetGreeting() ? '预设' : '自动生成');
+      greetingModeTouched = false;
+    }
+
+    pruneExpiredHistory({worldlineChanged: true});
+    afterChange();
+    return {ok: true, ignored, error: null};
+  }
+
+  let cleanBaseline = '';
+
+  function resetDefaults() {
+    const init = initialWorldAndPlan();
+    worldlineId = init.worldlineId;
+    planId = init.planId;
+    overrides = {};
+    failure = null;
+    locationOverride = null;
+    locationTouched = false;
+    greetingModeTouched = false;
+    greetingHint = '';
+    customGreeting = '';
+    greetingMode = worldlines.length && !planId ? '自动生成' : (hasPresetGreeting() ? '预设' : '自动生成');
+    adoptSourcePlayer();
+    playerTouched = false;
+    const result = previewNow();
+    cleanBaseline = JSON.stringify(exportPreset());
+    return result;
+  }
+
   adoptSourcePlayer();
   previewNow();
+  cleanBaseline = JSON.stringify(exportPreset());
 
   return {
     previewNow,
@@ -1296,6 +1631,8 @@ export function createOpeningDraft({protocol, catalog, decl, defaults = {}, comm
     setCustomEquipment, setCustomSkills, addSkill, removeSkill,
     setRoleplayAbility, setRoleplayEquipment, resetRoleplayCustomization,
     setHistory, setGreetingMode, setGreetingHint, setCustomGreeting, fail,
+    exportPreset, importPreset, resetDefaults,
+    isDirty: () => JSON.stringify(exportPreset()) !== cleanBaseline,
     formatYear: value => calendar.format(value),
     parseYear: value => calendar.year(value),
     input: inputNow,
@@ -1475,7 +1812,7 @@ async function writeOpeningGreeting(greeting, id = 0) {
 
 // 弹窗、提交与失败提示：宿主函数（聊天读写、记录写入、队列与路由刷新）由调用方注入，草稿与预演仍用本文件上方的纯函数。
 export function createOpeningFlow({protocol, catalog, decl, defaults, commands, openingSpec = null, updateOpeningMessage = null,
-  generateOpening = null, bookkeepOpening = null, bookkeeping = () => false,
+  generateOpening = null, bookkeepOpening = null, bookkeeping = () => false, openingStorage = null,
   messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh, audit, session, status, nodeOf, popup}) {
   function openingFailure(draft, message, error = null) {
     const detail = error ? (error.说明 ?? error.message ?? String(error)) : '';
@@ -1605,6 +1942,7 @@ export function createOpeningFlow({protocol, catalog, decl, defaults, commands, 
 
       session.openingPending = false;
       session.integrity = null;
+      await openingStorage?.saveDraft?.(null);
       refresh();
       toastr.success('第 0 楼已原子写入；开场命令、记录与路由均已就绪。', '世界树：开局完成');
       return true;
@@ -1636,14 +1974,27 @@ export function createOpeningFlow({protocol, catalog, decl, defaults, commands, 
     if (session.openingOpen) { status.renderFloors(); return false; }
     session.openingOpen = true;
     const draft = createOpeningDraft({protocol, catalog, decl, defaults, commands, openingSpec});
+    let initialNotice = '';
+    const savedDraft = openingStorage?.loadDraft?.() ?? null;
+    if (savedDraft) {
+      const restored = draft.importPreset(savedDraft);
+      if (restored.ok) {
+        initialNotice = restored.ignored.length
+          ? `已自动恢复上次未提交的开局草稿（已忽略 ${restored.ignored.length} 项失效配置：${restored.ignored.join('；')}）`
+          : '已自动恢复上次未提交的开局草稿。';
+      }
+    }
     const origin = {聊天ID: chatId(), 正文指纹: ownershipOf(first).正文指纹};
     try {
-      await modal(nodeOf(draft), {
+      await modal(nodeOf(draft, {storage: openingStorage, initialNotice}), {
         wide: true, large: true, okButton: '提交开局', cancelButton: '取消',
         onClosing: async dialog => {
           if (session.openingClosingForChat) return true;
           const affirmative = SillyTavern.POPUP_RESULT?.AFFIRMATIVE ?? 1;
           if (dialog?.result !== affirmative) {
+            if (openingStorage && draft.isDirty()) {
+              await openingStorage.saveDraft(draft.exportPreset());
+            }
             status.pendingOpening('已取消，可从“世界树：开局”重新打开');
             toastr.info('尚未开局；没有执行开场命令、创建记录或发送叙事请求。', '世界树：已取消开局');
             return true;

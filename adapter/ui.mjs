@@ -1,5 +1,6 @@
 // 页面上的画法：样式、本局面板的段落、每楼一行、设置表单。依赖酒馆页面的 jQuery（$）；数据见 view.mjs，逻辑在 runtime.mjs。
 // 颜色都取酒馆主题的变量，换主题时随之变化。
+import {isDynamicOpening} from './opening.mjs';
 
 const STYLE_ID = 'ygg-style';
 const CSS = `
@@ -69,6 +70,9 @@ const CSS = `
 .ygg-opening .ygg-rp-bar .menu_button { width: auto; margin: 0 0 0 auto; padding: 2px 8px; }
 .ygg-opening .ygg-unique-hint { margin: 4px 0; padding: 4px 8px; border-radius: 4px; border-left: 3px solid var(--SmartThemeQuoteColor); background: color-mix(in srgb, var(--SmartThemeQuoteColor) 12%, transparent); font-size: 0.88em; }
 .ygg-opening .ygg-req { color: #d98080; margin-left: 2px; font-weight: bold; }
+.ygg-opening .ygg-preset-bar { margin: 8px 0; padding: 6px 9px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 6px; background: var(--black30a); display: flex; flex-direction: column; gap: 6px; }
+.ygg-opening .ygg-preset-bar .ygg-subhead { margin: 0; }
+.ygg-opening .ygg-preset-notice { font-size: 0.86em; color: var(--SmartThemeEmColor); padding: 3px 7px; border-radius: 4px; border-left: 3px solid #3f7fbf; background: color-mix(in srgb, #3f7fbf 12%, transparent); }
 `;
 
 export function installStyle() {
@@ -411,8 +415,9 @@ export function createStatusView({session, injectId, messages, chatId, recordOf,
           开局: record.本局?.开局 ?? {}, 角色: {}, 事件: {}, 待定项: []};
         if (before === null) continue;
         const line = floorOf(before, record.本局, record, verbose);
-        const again = rekeep && id > 0 ? rekeepFor(id) : null;
-        const repair = rekeep && id > 0 && repairFor ? repairFor(id) : null;
+        const editableFloor = id > 0 || (id === 0 && isDynamicOpening(record));
+        const again = rekeep && editableFloor ? rekeepFor(id) : null;
+        const repair = rekeep && editableFloor && repairFor ? repairFor(id) : null;
         attachFloor(id, floorNode(line, {rekeep: again, repair}));
         before = record.本局;
       } catch (error) { console.warn('世界树：每楼记录', error); }

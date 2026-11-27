@@ -21,7 +21,7 @@ import {createOpeningDraft, createOpeningFlow, isDynamicOpening, dynamicOpeningB
 import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, validateManifest, storedManifest, sanitizeText,
   recordOf, createHistoryAudit, emptyTailAssistant} from './records.mjs';
 import {createUpgradeFlow} from './upgrade.mjs';
-import {keeperSettings, showSettings, permissionFailure} from './settings.mjs';
+import {keeperSettings, showSettings, permissionFailure, createOpeningStorage} from './settings.mjs';
 import {stripCommands, fromText} from './commands-parser.mjs';
 import {registerAdapterEvents} from './events.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
@@ -331,7 +331,8 @@ const enqueue = job => {
 async function rekeepFloor(list, id) {
   const busy = isGeneratingOrEmptyTail(list, id);
   if (busy) return toastr.warning(busy, '世界树');
-  const prefix = history.audit(list, {end: id});
+  if (id === 0 && !isDynamicOpening(recordOf(list[0]))) return;
+  const prefix = id === 0 ? {ok: true, state: null} : history.audit(list, {end: id});
   if (!prefix.ok) return status.blocked(prefix);
   const records = history.checkRecords(list, {from: id, allowWorldbookDiff: true});
   if (!records.ok) return status.blocked(records);
@@ -341,16 +342,34 @@ async function rekeepFloor(list, id) {
 }
 const rekeepFor = id => () => enqueue(() => rekeepFloor(messages(), id));
 
+function buildRepairTarget(list, id, curRecord) {
+  if (id === 0) {
+    if (!isDynamicOpening(curRecord)) return {ok: false, code: '开场.修补', 说明: '静态预设开局第 0 楼不支持修补', 楼号: 0};
+    const {baseState, baseCommands, baseWritten} = dynamicOpeningBase(protocol, curRecord);
+    const keeperRecord = {
+      ...curRecord,
+      命令: Array.isArray(curRecord.命令) ? curRecord.命令.slice(baseCommands.length) : curRecord.命令,
+      已写入: Array.isArray(curRecord.已写入) ? curRecord.已写入.slice(baseWritten.length) : curRecord.已写入,
+    };
+    return {ok: true, baseState, baseCommands, baseWritten, keeperRecord, input: '', openingMode: curRecord.记账.方式};
+  }
+  const pre = history.audit(list, {end: id});
+  if (!pre.ok) return pre;
+  const input = [...list.slice(0, id)].reverse().find(item => item.role === 'user')?.message ?? '';
+  return {ok: true, baseState: pre.state, baseCommands: [], baseWritten: [], keeperRecord: curRecord, input, openingMode: null};
+}
+
 async function openRepair(id) {
-  if (session.openingPending || session.integrity || session.upgrade || !bookkeeping() || id <= 0) return;
+  if (session.openingPending || session.integrity || session.upgrade || !bookkeeping() || id < 0) return;
   const list = messages(), busy = isGeneratingOrEmptyTail(list, id);
   if (busy) return toastr.warning(busy, '世界树');
   const message = list[id], record = recordOf(message);
   if (!message || message.role !== 'assistant' || !checkCompatRecord(record, message).ok) return;
-  const prefix = history.audit(list, {end: id});
-  if (!prefix.ok) return status.blocked(prefix);
+  if (id === 0 && !isDynamicOpening(record)) return;
+  const target = buildRepairTarget(list, id, record);
+  if (!target.ok) return status.blocked(target);
   const debug = debugging();
-  const line = view.floor(prefix.state, record.本局, record, {debug});
+  const line = view.floor(target.baseState, record.本局, record, {debug});
   const origin = {聊天ID: chatId(), ...ownershipOf(message)};
   const dialog = repairNode({
     id, line, record, debug,
@@ -368,11 +387,12 @@ async function openRepair(id) {
         if (nowBusy) { dialog.setError(nowBusy); toastr.warning(nowBusy, '世界树'); return false; }
         if (chatId() !== origin.聊天ID || !nowMsg || nowMsg.role !== 'assistant'
           || swipeOf(nowMsg) !== origin.swipe || ownershipOf(nowMsg).正文指纹 !== origin.正文指纹) return true;
-        const pre = history.audit(nowList, {end: id});
-        if (!pre.ok) { dialog.setError(pre.说明); return false; }
+        const curRecord = recordOf(nowMsg);
+        if (id === 0 && !isDynamicOpening(curRecord)) { dialog.setError('静态预设开局第 0 楼不支持修补'); return false; }
+        const nowTarget = buildRepairTarget(nowList, id, curRecord);
+        if (!nowTarget.ok) { dialog.setError(nowTarget.说明); return false; }
         const down = history.checkRecords(nowList, {from: id, allowWorldbookDiff: true});
         if (!down.ok) { dialog.setError(down.说明); return false; }
-        const curRecord = recordOf(nowMsg);
         if (!instruction.trim() && !(curRecord?.失败?.length)) {
           dialog.setError('本楼没有失败项，如需调整请填写修补说明');
           return false;
@@ -380,15 +400,15 @@ async function openRepair(id) {
         invalidateTasks();
         const task = taskFor(id, '修补记账');
         if (!task) return true;
-        const input = [...nowList.slice(0, id)].reverse().find(item => item.role === 'user')?.message ?? '';
         const config = keeperSettings(), attempts = Math.min(3, Math.max(1, Math.round(Number(config.尝试次数) || 2)));
         session.keepingFloor = id;
         status.renderFloors();
         let outcome;
         try {
           outcome = await repairRecord({
-            keeper, protocol, base: pre.state, record: curRecord, input, narration: stripCommands(nowMsg.message ?? ''),
-            instruction, config, attempts, debugging: debugging(), call: callKeeper, isCurrent: () => taskCurrent(task),
+            keeper, protocol, base: nowTarget.baseState, record: nowTarget.keeperRecord, input: nowTarget.input,
+            narration: stripCommands(nowMsg.message ?? ''), instruction, config, attempts, debugging: debugging(),
+            call: callKeeper, isCurrent: () => taskCurrent(task),
           });
         } finally {
           session.keepingFloor = null;
@@ -402,16 +422,23 @@ async function openRepair(id) {
           dialog.setError(message);
           return false;
         }
+        const finalRecord = id === 0 ? {
+          ...outcome.record,
+          命令: [...nowTarget.baseCommands, ...(outcome.record.命令 ?? [])],
+          已写入: [...nowTarget.baseWritten, ...(outcome.record.已写入 ?? [])],
+          失败: [],
+          记账: {...outcome.record.记账, 方式: nowTarget.openingMode},
+        } : outcome.record;
         try {
           history.invalidateFrom(id);
-          if (!(await store(id, outcome.record, task))) return true;
+          if (!(await store(id, finalRecord, task))) return true;
         } catch (error) {
           dialog.setError('写入失败：' + sanitizeText(error.message));
           return false;
         }
-        if (!(await replayFrom(id + 1, outcome.record.本局, {kind: '修补后重放'}))) return true;
+        if (!(await replayFrom(id + 1, finalRecord.本局, {kind: '修补后重放'}))) return true;
         refresh();
-        toastr.success(outcome.record.已写入.length ? outcome.record.已写入.join('、') : '已修补', `世界树：第 ${id} 楼已修补`);
+        toastr.success(finalRecord.已写入.length ? finalRecord.已写入.join('、') : '已修补', `世界树：第 ${id} 楼已修补`);
         return true;
       });
     },
@@ -445,13 +472,14 @@ function refreshOpening0(originRecord) {
   }
 }
 
+const openingStorage = createOpeningStorage(manifest.卡ID);
 const openingFlow = createOpeningFlow({protocol, catalog, decl, defaults: bundle.opening, commands: bundle.openingCommands,
   openingSpec: {openingGreeting: bundle.openingGreeting, commands: bundle.openingCommands,
     optionalPresent: bundle.openingOptionalPresent, requiredGroups: bundle.openingRequiredGroups,
     planOpenings: bundle.planOpenings},
-  generateOpening, bookkeepOpening, bookkeeping,
+  generateOpening, bookkeepOpening, bookkeeping, openingStorage,
   messages, chatId, ownershipOf, recordOf, validateRecord, manifest, store, taskFor, enqueue, refresh,
-  audit: history.audit, session, status, nodeOf: draft => openingNode(draft), popup});
+  audit: history.audit, session, status, nodeOf: (draft, options) => openingNode(draft, options), popup});
 
 async function init() {
   if (!checkPermission()) return;

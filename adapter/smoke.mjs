@@ -2671,3 +2671,163 @@ const run44 = customKeeper.run(custState44, {
 assert.deepEqual(run44.失败, []);
 assert.deepEqual(run44.state.角色.灯塔学徒.装备['旧银哨'], {状态: '破损', 位置: '木盒'});
 console.log('44 YG-CUST-02：扮演现状基线与增量定制 + 唯一装备原主反查与强制归属 + 自定义装备记账追踪均通过');
+
+// ---------- 45. YG-OPEN-04：开局设定持久化/取消暂存与动态开局第 0 楼重新记账与修补 ----------
+globals = {'世界树·记账': {方式: '同一模型', 应答格式: '提示词', 尝试次数: 1, 调试: false, 每楼记录: true}};
+serverGlobals = clone(globals);
+holdPopup = true;
+const open45Before = popupNodes.length, cover45 = '【封面占位】请点击世界树：开局。';
+chat.splice(0, chat.length);
+push(cover45, false);
+await emit('chat_id_changed');
+await waitUntil(() => popupNodes.length > open45Before, '段45 打开开局界面');
+
+// 45a 未修改直接取消不写全局变量
+const globalsBeforeCleanCancel = JSON.stringify(globals);
+assert.equal(await closePopup(null), true, '未改动直接取消应关闭弹窗');
+assert.equal(JSON.stringify(globals), globalsBeforeCleanCancel, '未改动取消不得写入全局变量');
+
+// 重新打开：修改自建姓名与手写开场白、保存命名预设、继续修改后取消自动暂存草稿
+const reopen45a = popupNodes.length;
+void emit(getButtonEvent('世界树：开局'));
+await waitUntil(() => popupNodes.length > reopen45a, '段45 重新打开开局界面');
+let form45 = popupNodes.at(-1);
+const nameField45 = find(form45, item => item.classes.includes('ygg-field') && item.text().startsWith('姓名'));
+find(nameField45, item => item.tag === '<input>').handlers.change({target: {value: '陆离'}});
+let mode45 = find(form45, item => item.tag === '<select>' && item.children.some(o => o.field === '手写'));
+mode45.handlers.change({target: {value: '手写'}});
+const customArea45 = find(form45, item => item.classes.includes('ygg-field') && item.text().includes('手写开场白正文'));
+find(customArea45, item => item.tag === '<textarea>').handlers.change({target: {value: '雾色初散，陆离推开灯塔铁门。'}});
+
+const presetBar45 = find(form45, item => item.classes.includes('ygg-preset-bar'));
+find(presetBar45, item => item.tag === '<input>').handlers.change({target: {value: '雾港自建档'}});
+await find(presetBar45, item => item.tag === '<button>' && item.value === '保存当前设定').handlers.click();
+assert.ok(globals['世界树·开局预设']?.[manifest.卡ID]?.预设?.['雾港自建档'], '命名预设应按卡ID写入全局变量');
+assert.match(form45.text(), /已保存设定「雾港自建档」/);
+
+const customArea45Draft = find(form45, item => item.classes.includes('ygg-field') && item.text().includes('手写开场白正文'));
+find(customArea45Draft, item => item.tag === '<textarea>').handlers.change({target: {value: '未提交的临时草稿正文。'}});
+const chatWritesBeforeCancel45 = messageWrites;
+assert.equal(await closePopup(null), true, '修改后取消应关闭弹窗并暂存草稿');
+assert.equal(messageWrites, chatWritesBeforeCancel45, '取消开局不得写入任何楼层变量');
+assert.equal(record(0), undefined, '取消开局后第 0 楼不得有记录');
+assert.equal(globals['世界树·开局预设']?.[manifest.卡ID]?.草稿?.数据?.手写开场白, '未提交的临时草稿正文。');
+
+// 再次重开：自动恢复草稿 -> 载入命名预设 -> 提交开局（带一条局部失败，便于验证第 0 楼留空增量修补）
+const reopen45b = popupNodes.length;
+void emit(getButtonEvent('世界树：开局'));
+await waitUntil(() => popupNodes.length > reopen45b, '段45 再次打开开局界面恢复草稿');
+form45 = popupNodes.at(-1);
+assert.match(form45.text(), /已自动恢复上次未提交的开局草稿/);
+const restoredCustom45 = find(form45, item => item.classes.includes('ygg-field') && item.text().includes('手写开场白正文'));
+assert.equal(find(restoredCustom45, item => item.tag === '<textarea>').val(), '未提交的临时草稿正文。');
+const loadBar45 = find(form45, item => item.classes.includes('ygg-preset-bar'));
+find(loadBar45, item => item.tag === '<button>' && item.value === '载入').handlers.click();
+assert.match(form45.text(), /已载入设定「雾港自建档」/);
+
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''},
+  地点: {地标: '', 场景: ''},
+  在场: ['秦守'],
+  发生的事件: [],
+  新情况: [
+    {事件ID: '灯塔晨雾', 摘要: '陆离在灯塔门前见到晨雾。', 实际参与者: ['玩家'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '陆离到访灯塔'}]},
+    {事件ID: '开场坏项', 摘要: '触发协议失败。', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]},
+  ],
+}));
+assert.equal(await closePopup(1), true, '载入预设后手写开场白提交应成功');
+holdPopup = false;
+assert.equal(globals['世界树·开局预设']?.[manifest.卡ID]?.草稿, null, '提交成功后应清除未提交草稿');
+assert.ok(globals['世界树·开局预设']?.[manifest.卡ID]?.预设?.['雾港自建档'], '提交成功后命名预设应继续保留');
+assert.equal(record(0).记账.方式, '开场手写');
+assert.equal(record(0).失败.length, 1);
+assert.ok(find(floors.get(0), item => item.tag === '<button>' && item.value === '重新记账'), '动态开局第 0 楼应显示重新记账按钮');
+assert.ok(find(floors.get(0), item => item.tag === '<button>' && item.value === '修补'), '动态开局第 0 楼应显示修补按钮');
+
+// 推进一轮下游对话（第 1/2 楼）
+keeperReplies.push(JSON.stringify({时间: {方式: '写日期', 日期: '潮历071年04月02日', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [], 新情况: []}));
+await send('我向秦守问好。', '秦守微微颔首。');
+assert.equal(record(2).本局.世界.当前时间, '潮历071年04月02日');
+
+// 45b 动态第 0 楼修补事务保护（502 / 坏 JSON / 残留失败 0 覆写）+ 留空增量修补 + 级联重放第 2 楼
+holdPopup = true;
+const snapBeforeFloor0Repair = JSON.stringify(chat), writesBeforeFloor0Repair = messageWrites;
+const open0Inc = find(floors.get(0), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 0 楼记账'), '打开动态第 0 楼修补弹窗');
+
+const origGen45 = globalThis.generateRaw;
+globalThis.generateRaw = async cfg => { keeperCalls.push(cfg); throw new Error('HTTP 502 Bad Gateway'); };
+try { assert.equal(await closePopup(1), false, '第 0 楼修补遇 502 不得关闭弹窗'); }
+finally { globalThis.generateRaw = origGen45; }
+assert.equal(messageWrites, writesBeforeFloor0Repair);
+assert.equal(JSON.stringify(chat), snapBeforeFloor0Repair);
+
+keeperReplies.push('非JSON文本');
+assert.equal(await closePopup(1), false, '第 0 楼修补遇坏 JSON 不得覆写');
+assert.equal(JSON.stringify(chat), snapBeforeFloor0Repair);
+
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [],
+  新情况: [{事件ID: '仍坏', 摘要: '坏', 实际参与者: [], 结束事件串: '', 变化: [{路径: '角色.秦守.姓名', 操作: '设定', 值: 'x'}]}],
+}));
+assert.equal(await closePopup(1), false, '第 0 楼修补残留局部失败不得覆写');
+assert.equal(JSON.stringify(chat), snapBeforeFloor0Repair);
+
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [],
+  新情况: [{事件ID: '晨雾补记', 摘要: '补记晨雾线索。', 实际参与者: ['玩家'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '灯塔铁门微潮'}]}],
+}));
+assert.equal(await closePopup(1), true, '第 0 楼留空增量修补应成功');
+await open0Inc;
+assert.equal(record(0).记账.方式, '开场手写');
+assert.equal(record(0).记账.修补, true);
+assert.deepEqual(record(0).失败, []);
+assert.ok(record(0).命令[0]?.写场景?.当前地点, '修补第 0 楼必须保留前置初始地点命令');
+assert.ok(record(0).已写入.includes('灯塔晨雾') && record(0).已写入.includes('晨雾补记'));
+assert.ok(record(2).本局.角色.灯塔学徒.知识.includes('灯塔铁门微潮'), '第 0 楼修补应级联重放到第 2 楼');
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-2')).ok, true, '第 0 楼增量修补后整聊应通过严格审计');
+
+// 45c 动态第 0 楼带说明手动修补 + 级联重放
+const open0Manual = find(floors.get(0), item => item.tag === '<button>' && item.value === '修补').handlers.click();
+await waitUntil(() => popupNodes.at(-1)?.text().includes('修补第 0 楼记账'), '打开动态第 0 楼手动修补弹窗');
+find(popupNodes.at(-1), item => item.tag === '<textarea>').handlers.change({target: {value: '改记白棠也在场'}});
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守', '白棠'], 发生的事件: [],
+  新情况: [{事件ID: '白棠同行', 摘要: '白棠也在门前。', 实际参与者: ['白棠'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '白棠在灯塔门前'}]}],
+}));
+assert.equal(await closePopup(1), true, '第 0 楼带说明修补应成功');
+await open0Manual;
+holdPopup = false;
+assert.equal(record(0).记账.方式, '开场手写');
+assert.equal(record(0).记账.修补, true);
+assert.equal(record(0).本局.角色.白棠.在场, true);
+assert.equal(record(2).本局.角色.白棠.在场, true, '第 0 楼手动修补后白棠在场应级联重放到第 2 楼');
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-2')).ok, true, '第 0 楼手动修补后整聊应通过严格审计');
+
+// 45d 动态第 0 楼每楼「重新记账」与顶部「世界树：重新记账」按钮
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['白棠'], 发生的事件: [],
+  新情况: [{事件ID: '重记晨景', 摘要: '重新记账第 0 楼。', 实际参与者: ['白棠'], 结束事件串: '', 变化: [{路径: '角色.灯塔学徒.知识', 操作: '新增', 值: '第0楼重记生效'}]}],
+}));
+await find(floors.get(0), item => item.tag === '<button>' && item.value === '重新记账').handlers.click();
+assert.equal(record(0).记账.方式, '开场手写');
+assert.ok(record(0).命令[0]?.写场景?.当前地点, '重记第 0 楼必须保留前置初始地点命令');
+assert.ok(record(2).本局.角色.灯塔学徒.知识.includes('第0楼重记生效'), '第 0 楼重记应级联重放到第 2 楼');
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-2')).ok, true, '第 0 楼重记后整聊应通过严格审计');
+
+// 仅含动态第 0 楼时顶部「世界树：重新记账」同样生效
+chat.splice(1);
+await emit('message_deleted', 1);
+const callsBeforeTopRekeep0 = keeperCalls.length;
+keeperReplies.push(JSON.stringify({
+  时间: {方式: '不变', 日期: '', 事件ID: ''}, 地点: {地标: '', 场景: ''}, 在场: ['秦守'], 发生的事件: [], 新情况: [],
+}));
+await emit(getButtonEvent('世界树：重新记账'));
+assert.equal(keeperCalls.length, callsBeforeTopRekeep0 + 1, '仅含动态第 0 楼时顶部重新记账按钮应触发第 0 楼重记');
+assert.equal(record(0).本局.角色.秦守.在场, true);
+assert.equal(createHistoryAudit({protocol, manifest}).audit(getChatMessages('0-0')).ok, true, '顶部重记动态第 0 楼后应通过严格审计');
+
+delete globals['世界树·开局预设'];
+serverGlobals = clone(globals);
+await restoreChat();
+console.log('45 YG-OPEN-04：开局预设保存/载入/取消暂存/提交清草稿 + 动态第 0 楼每楼与顶部重记、增量与带说明修补、失败零覆写与级联严格审计全通过');

@@ -253,7 +253,8 @@ export function registerAdapterEvents({
     if (session.integrity || session.upgrade) return status.renderFloors();
     const list = messages(), busy = isGeneratingOrEmptyTail(list);
     if (busy) return toastr.warning(busy, '世界树');
-    const id = [...list].reverse().find(message => message.role === 'assistant' && message.message_id > 0)?.message_id;
+    const id = [...list].reverse().find(message => message.role === 'assistant'
+      && (message.message_id > 0 || isDynamicOpening?.(recordOf(message))))?.message_id;
     if (id === undefined) return toastr.warning('没有可以记账的楼', '世界树');
     await rekeepFloor(list, id);
   }));
