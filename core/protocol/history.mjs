@@ -478,6 +478,11 @@ export function createHistoryTools({catalog, decl, calendar, groups, events, cha
     const provisional = {开局: {角色组: selectedGroups, 玩家: normalizedPlayer}};
     validation.serializable(normalizedPlayer, '封卷.参数');
     validation.player(normalizedPlayer, provisional, '封卷.参数');
+    if (normalizedPlayer.模式 === '自建' && normalizedPlayer.档案?.出生年) {
+      const birthInterval = calendar.time(normalizedPlayer.档案.出生年);
+      if (birthInterval && birthInterval[0] >= openingInterval[1])
+        fail('封卷.参数', '自建玩家出生年不能晚于开局时间');
+    }
     const state = {世界: {当前时间: openingTime, 剧情标记: {}},
       开局: {
         ...(selectedWorldline !== null ? {世界线: selectedWorldline} : {}),

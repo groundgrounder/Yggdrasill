@@ -338,7 +338,7 @@ test('YG-CUST-02-A6：记账器自定义装备透出、动态记账追踪与玩�
   assert.match(customReq.prompts[0].content, /自定义装备:/);
   assert.match(customReq.prompts[0].content, /祖传怀表/);
   assert.match(customReq.prompts[0].content, /黄铜旧怀表，表盖刻有航标/);
-  assert.match(customReq.prompts[0].content, /角色\.<角色组ID>\.装备\.<自定义装备名称>：新增、设定、移除；值为 \{状态: .+位置: 文本\}（仅限本局已声明自定义装备：祖传怀表）/);
+  assert.match(customReq.prompts[0].content, /角色\.<角色组ID>\.装备\.<自定义装备名称>：新增、设定、移除；状态为 .+，写作“状态\/位置”（仅限本局已声明自定义装备：祖传怀表）/);
 
   // 改态：完好/随身 → 破损/木盒
   const damaged = keeper.run(customState, {

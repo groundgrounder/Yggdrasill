@@ -129,7 +129,7 @@ function presentCharacters(router, view, present, anomalies, mentions) {
       .map(名称 => ({名称, 说明: customEquipMap.get(名称)}));
     const isPlayerControlled = (state?.开局?.玩家?.模式 === '自建' && id === '玩家')
       || (state?.开局?.玩家?.模式 === '扮演' && id === state?.开局?.玩家?.扮演角色组);
-    const full = {...identity, ...(currentYear !== null && birthYear !== null ? {年龄: currentYear - birthYear} : {}),
+    const full = {...identity, ...(currentYear !== null && birthYear !== null && currentYear >= birthYear ? {年龄: currentYear - birthYear} : {}),
       ...(state.开局.玩家.模式 === '扮演' && state.开局.玩家.扮演角色组 === id ? {玩家扮演: true} : {}),
       档案: profile, 当前能力: view.currentAbility(id), 可用技能: view.availableSkills(id),
       ...(isPlayerControlled && playerCustomSkills.length ? {自定义技能: clone(playerCustomSkills)} : {}),

@@ -52,8 +52,27 @@ const RULES = `你是本局的记账员，不是叙述者。读最新的一段�
 - 地点：地标从地点列表中选，场景是一个短语；没有换场，地标留空。
 - 在场：正文结束时在场的全部角色组，扮演角色组不填。
 - 发生的事件：只填候选、待登记与将到的事件中，正文写明确实发生了的，并选所走的分支。待登记事件只能填协议给出的分支；只被提到、计划要做、还没发生的不填。
-- 新情况：宁缺毋滥，日常寒暄、普通赶路、无后果闲聊一律不记；只记候选与将到事件之外、会留下长期结果、重要约定、冲突、受伤、得失物品、关系转变或影响后续行为的独立事件（每轮通常 0 条）。新情况每项的“事件ID”与“摘要”必填且非空，事件ID须为新拟简短词组，不得与任何预设事件ID重名。“实际参与者”填实际参与该事件的已启用角色组（自建模式含自己时填“玩家”，扮演模式填扮演角色组ID）；“结束事件串”仅在正文使某个“进行中事件串”提前中止或收尾时填其事件串ID，否则填空字符串。“变化”可为空列表（仅在确有长期叙事意义但无对应可写字段时留空）；路径与操作只用可写字段中的，ID 只用已有的、世界书里没有的不瞎编，装备路径可写世界书装备或本局已声明的自定义装备，装备的值写作“状态/位置”（例如“完好/随身”）；若正文已实质改变了某项已声明的剧情标记、角色关系、所在、能力或装备，按正文事实据实填写；将到事件已安排好的成长与结果不要提前另记。
+- 新情况：宁缺毋滥，日常寒暄、普通赶路、无后果闲聊一律不记；只记候选与将到事件之外、会留下长期结果、重要约定、冲突、受伤、得失物品、关系转变或影响后续行为的独立事件（每轮通常 0 条）。新情况每项的“事件ID”与“摘要”必填且非空，事件ID须为新拟简短词组，不得与任何预设事件ID重名。“实际参与者”填实际参与该事件的已启用角色组（自建模式含自己时填“玩家”，扮演模式填扮演角色组ID）；“结束事件串”仅在正文使某个“进行中事件串”提前中止或收尾时填其事件串ID，否则填空字符串。“变化”可为空列表（仅在确有长期叙事意义但无对应可写字段时留空）；路径与操作只用可写字段中的，ID 只用已有的、世界书里没有的不瞎编，装备路径可写世界书装备或本局已声明的自定义装备，装备的值写作“状态/位置”（例如“完好/随身”）；移交唯一自定义装备或物品给他人时，须在“变化”中同时移除原持有者并向新持有者新增或设定；若正文已实质改变了某项已声明的剧情标记、角色关系、所在、能力或装备，按正文事实据实填写；将到事件已安排好的成长与结果不要提前另记。
 - 没有的项填空列表或空字符串。`;
+
+const EXCLUDED_REF_LIBS = new Set(['地点', '装备', '角色组']);
+
+function referencedLibraries(decl) {
+  const libs = new Set();
+  const visit = schema => {
+    if (!isMap(schema)) return;
+    if (typeof schema.引用 === 'string' && !EXCLUDED_REF_LIBS.has(schema.引用)) libs.add(schema.引用);
+    if (isMap(schema.集合)) visit(schema.集合);
+    if (isMap(schema.子字段)) for (const child of Object.values(schema.子字段)) visit(child);
+    if (isMap(schema.映射)) {
+      visit(schema.映射.键);
+      visit(schema.映射.值);
+    }
+  };
+  for (const schema of Object.values(decl?.variables?.世界 ?? {})) visit(schema);
+  for (const schema of Object.values(decl?.variables?.角色 ?? {})) visit(schema);
+  return [...libs].sort(codepointCompare);
+}
 
 export function createBookkeeper({protocol, catalog, decl}) {
   const calendar = createCalendar(decl.calendar);
@@ -125,10 +144,36 @@ export function createBookkeeper({protocol, catalog, decl}) {
     });
   }
 
+  const referenceLines = referencedLibraries(decl).map(libName => {
+    const entries = catalog.entries?.[libName];
+    if (!Array.isArray(entries) || !entries.length) return null;
+    const ids = [...new Set(entries.map(entry => entry.id).filter(Boolean))].sort(codepointCompare);
+    return ids.length ? `${libName}：${ids.join('、')}` : null;
+  }).filter(Boolean);
+  const referenceSection = referenceLines.length
+    ? `\n\n## 可用引用ID\n${referenceLines.join('\n')}\n映射键与引用值仅可使用以上已声明 ID；剧情中新出现且未在库中的组织/条目勿作为映射键，改记入身份或事件摘要。`
+    : '';
+  const locationField = Array.isArray(catalog.entries?.地点) && catalog.entries.地点.length > 0
+    ? '\n角色.<角色组ID>.所在：设定；<地点ID>（仅用于不在场角色位置变更）'
+    : '';
+
   // 返回 generateRaw 的 ordered_prompts 与 json_schema。
   function request(state, {input = '', narration, hint = ''}) {
     const scope = upcoming(state), roleplay = roleplayOf(state), pending = protocol.pendingEvents(state);
     const customEquips = Array.isArray(state.开局?.玩家?.自定义装备) ? state.开局.玩家.自定义装备 : [];
+    const customEquipHolders = name => {
+      const roles = state.角色 ?? {};
+      const roleIDs = Object.keys(roles).sort((a, b) => a === '玩家' ? -1 : b === '玩家' ? 1 : codepointCompare(a, b));
+      const holders = [];
+      for (const roleID of roleIDs) {
+        const equip = roles[roleID]?.装备;
+        if (isMap(equip) && Object.hasOwn(equip, name)) {
+          const item = equip[name];
+          holders.push({角色: roleID, 状态: item?.状态 ?? '', 位置: item?.位置 ?? ''});
+        }
+      }
+      return holders;
+    };
     const facts = {
       当前时间: state.世界.当前时间, 当前地点: state.世界.当前地点 ?? '未写',
       在场: enabled(state).filter(id => id !== roleplay && state.角色?.[id]?.在场 === true), 扮演角色组: roleplay ?? '无（自建玩家）',
@@ -136,12 +181,16 @@ export function createBookkeeper({protocol, catalog, decl}) {
       进行中事件串: ongoingChains(state).map(chain => ({事件串ID: chain.id, 概述: chain.内容?.概述 ?? ''})),
       候选事件: scope.candidates.map(itemOf), 待登记事件: pending.map(pendingItemOf),
       将到的事件: scope.later.map(itemOf),
-      ...(customEquips.length ? {自定义装备: customEquips.map(item => ({名称: item.名称, 说明: item.说明}))} : {}),
+      ...(customEquips.length ? {自定义装备: customEquips.map(item => ({
+        名称: item.名称,
+        说明: item.说明,
+        当前持有: customEquipHolders(item.名称),
+      }))} : {}),
     };
     const customEquipField = customEquips.length
-      ? `\n角色.<角色组ID>.装备.<自定义装备名称>：新增、设定、移除；值为 {状态: ${resolveDomain('词表.装备状态', decl).join(' / ')}, 位置: 文本}（仅限本局已声明自定义装备：${customEquips.map(item => item.名称).join(' / ')}）`
+      ? `\n角色.<角色组ID>.装备.<自定义装备名称>：新增、设定、移除；状态为 ${resolveDomain('词表.装备状态', decl).join(' / ')}，写作“状态/位置”（仅限本局已声明自定义装备：${customEquips.map(item => item.名称).join(' / ')}）`
       : '';
-    const system = `${RULES}\n\n## 本局\n${stringifyYaml(facts)}\n## 地点列表\n${locationList(catalog)}\n\n## 可写字段\n${writableFields(decl)}${customEquipField}`;
+    const system = `${RULES}\n\n## 本局\n${stringifyYaml(facts)}\n## 地点列表\n${locationList(catalog)}${referenceSection}\n\n## 可写字段\n${writableFields(decl)}${locationField}${customEquipField}`;
     const user = `## 玩家的输入\n${input || '（无）'}\n\n## 要记账的正文\n${narration}${hint ? `\n\n## 上一次填写的问题，请改正\n${hint}` : ''}`;
     return {prompts: [{role: 'system', content: system}, {role: 'user', content: user}], schema: {name: '世界树记账', value: schema(state, scope), strict: true}};
   }

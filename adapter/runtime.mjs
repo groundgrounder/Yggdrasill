@@ -5,6 +5,9 @@
 // eventOn、tavern_events、getButtonEvent、generateRaw、getModelList、getProxyPresetNames、retrieveDisplayedMessage、toastr、SillyTavern、
 // 兼容阻断时用宿主 stopGeneration 或 triggerSlash('/stop') 真正中止生成；$（酒馆页面的 jQuery）。
 import {compileWorldbook} from '../core/catalog.mjs';
+import {createCalendar} from '../core/calendar.mjs';
+import {applyCommands} from '../core/commands.mjs';
+import {evaluateCondition, conditionReferences} from '../core/conditions.mjs';
 import {createProtocol, seal, ProtocolError} from '../core/protocol.mjs';
 import {createRouter, route, renderContext} from '../core/router.mjs';
 import {readSettings} from '../core/settings.mjs';
@@ -14,7 +17,7 @@ import {createMemFs, memPath} from './memfs.mjs';
 import {createBookkeeper, customApi, parseJson, runKeeperLoop, buildKeepRecord, repairRecord} from './bookkeeper.mjs';
 import {createView} from './view.mjs';
 import {installStyle, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
-import {createOpeningFlow, isDynamicOpening, dynamicOpeningBase} from './opening.mjs';
+import {createOpeningDraft, createOpeningFlow, isDynamicOpening, dynamicOpeningBase} from './opening.mjs';
 import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, validateManifest, storedManifest, sanitizeText,
   recordOf, createHistoryAudit, emptyTailAssistant} from './records.mjs';
 import {createUpgradeFlow} from './upgrade.mjs';
@@ -480,3 +483,10 @@ registerAdapterEvents({
 installStyle();
 await init();
 toastr.success(catalog.groups.length + ' 角色组，' + catalog.events.length + ' 事件', '世界树已启动');
+if (typeof globalThis.__YGG_PLAYTEST_HOOK__ === 'function') {
+  globalThis.__YGG_PLAYTEST_HOOK__(Object.freeze({
+    bundle, manifest, loaded, decl, catalog, settings, protocol, router, quietRouter, keeper,
+    createOpeningDraft, openingNode, runKeeperLoop, buildKeepRecord, repairRecord, callKeeper, generateOpening,
+    parseJson, applyCommands, route, renderContext, stringifyYaml, createCalendar, evaluateCondition, conditionReferences, seal,
+  }));
+}

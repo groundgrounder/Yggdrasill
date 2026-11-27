@@ -271,12 +271,17 @@ export function openingNode(draft) {
   }
 
   function renderSelfBuiltForm(snapshot) {
-    const form = snapshot.自建表单 ?? {};
-    const profile = form.档案 ?? {};
-    const appearance = profile.稳定体貌 ?? {};
-    const cal = form.纪年 ?? {};
+    const isPlainMap = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    const form = isPlainMap(snapshot.自建表单) ? snapshot.自建表单 : {};
+    const profile = isPlainMap(form.档案) ? form.档案 : {};
+    const appearance = isPlainMap(profile.稳定体貌) ? profile.稳定体貌 : {};
+    const cal = isPlainMap(form.纪年) ? form.纪年 : {};
+    const asText = value => typeof value === 'string' ? value : '';
+    const asListText = value => Array.isArray(value)
+      ? value.filter(item => typeof item === 'string' || typeof item === 'number').join('、')
+      : '';
     const textInput = (value, placeholder, onChange) => $('<input>').addClass('text_pole').attr({type: 'text', placeholder})
-      .val(value ?? '').on('change', event => { onChange(event.target.value); render(); });
+      .val(asText(value)).on('change', event => { onChange(event.target.value); render(); });
 
     // 开局年龄与出生年双向换算提示（支持纪元前年份）
     const digits = Number(cal.年位数) || 3;
@@ -343,24 +348,24 @@ export function openingNode(draft) {
         : `格式：${cal.格式 || snapshot.时间格式}`;
 
     const basicGrid = $('<div>').addClass('ygg-opening-grid').append(
-      field('姓名', textInput(profile.姓名, '主角姓名', v => draft.setProfileField('姓名', v))),
-      field('性别', textInput(profile.性别, '如：男 / 女', v => draft.setProfileField('性别', v))),
-      field('种族', textInput(profile.种族, '如：人族', v => draft.setProfileField('种族', v))),
-      field('出身', textInput(profile.出身, '简述出身背景', v => draft.setProfileField('出身', v))),
+      field('姓名', textInput(asText(profile.姓名), '主角姓名', v => draft.setProfileField('姓名', v))),
+      field('性别', textInput(asText(profile.性别), '如：男 / 女', v => draft.setProfileField('性别', v))),
+      field('种族', textInput(asText(profile.种族), '如：人族', v => draft.setProfileField('种族', v))),
+      field('出身', textInput(asText(profile.出身), '简述出身背景', v => draft.setProfileField('出身', v))),
       field('出生年', $('<div>').addClass('ygg-row').append(
-        textInput(profile.出生年, cal.格式 || '纪年', v => { ui.ageError = ''; draft.setProfileField('出生年', v); }),
+        textInput(asText(profile.出生年), cal.格式 || '纪年', v => { ui.ageError = ''; draft.setProfileField('出生年', v); }),
         ...(currentYear !== null ? [ageInput] : []),
       ), birthNote),
-      field('称号', textInput((profile.称号 ?? []).join('、'), '多个用顿号分隔', v => draft.setProfileField('称号', v))),
+      field('称号', textInput(asListText(profile.称号), '多个用顿号分隔', v => draft.setProfileField('称号', v))),
     );
 
     const appearanceGrid = $('<div>').addClass('ygg-opening-grid').append(
-      field('发色发型', textInput(appearance.发色发型, '如：黑发短发', v => draft.setProfileField('稳定体貌.发色发型', v))),
-      field('瞳色', textInput(appearance.瞳色, '如：深褐', v => draft.setProfileField('稳定体貌.瞳色', v))),
-      field('体型', textInput(appearance.体型, '如：匀称', v => draft.setProfileField('稳定体貌.体型', v))),
-      field('体貌特征', textInput((appearance.特征 ?? []).join('、'), '短语，顿号分隔', v => draft.setProfileField('稳定体貌.特征', v))),
+      field('发色发型', textInput(asText(appearance.发色发型), '如：黑发短发', v => draft.setProfileField('稳定体貌.发色发型', v))),
+      field('瞳色', textInput(asText(appearance.瞳色), '如：深褐', v => draft.setProfileField('稳定体貌.瞳色', v))),
+      field('体型', textInput(asText(appearance.体型), '如：匀称', v => draft.setProfileField('稳定体貌.体型', v))),
+      field('体貌特征', textInput(asListText(appearance.特征), '短语，顿号分隔', v => draft.setProfileField('稳定体貌.特征', v))),
     );
-    const clothing = field('穿着习惯', textInput((profile.穿着习惯 ?? []).join('、'), '多个用顿号分隔', v => draft.setProfileField('穿着习惯', v)));
+    const clothing = field('穿着习惯', textInput(asListText(profile.穿着习惯), '多个用顿号分隔', v => draft.setProfileField('穿着习惯', v)));
 
     const equipList = Array.isArray(form.初始装备) ? form.初始装备 : [];
     const children = [
