@@ -18,8 +18,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check:docs": "node scripts/check-docs.mjs",
-    "prepare:adapter": "node adapter/build.mjs --prepare-only",
-    "build:adapter": "node adapter/build.mjs",
+    "prepare:adapter": "node cli/ygg.mjs pack test/fixtures/雾港 --prepare-only",
+    "build:adapter": "node cli/ygg.mjs pack test/fixtures/雾港",
     "smoke:adapter": "node adapter/smoke.mjs"
   },
   "dependencies": {

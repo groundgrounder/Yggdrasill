@@ -1,5 +1,5 @@
 // 酒馆适配冒烟测试：在 node 中模拟酒馆助手的全局与酒馆的事件顺序，运行 runtime.mjs（未经打包），核对注入、楼层变量、每楼一行与本局面板。
-// 先运行 node adapter/build.mjs --prepare-only。传入打包后的脚本（如 ./adapter/dist/runtime.js）则测打包产物。
+// 先运行 node cli/ygg.mjs pack test/fixtures/雾港 --prepare-only。传入打包后的脚本（如 ./adapter/dist/runtime.js）则测打包产物。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ import {openingNode} from './ui.mjs';
 import {createBookkeeper, buildKeepRecord, runKeeperLoop} from './bookkeeper.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
 
-const face = parseYaml(await fs.readFile(new URL('./卡面.yaml', import.meta.url), 'utf8'));
+const face = parseYaml(await fs.readFile(new URL('../test/fixtures/雾港/卡面.yaml', import.meta.url), 'utf8'));
 const openingFailureMode = process.env.YGG_SMOKE_OPENING_FAILURE === '1';
 if (openingFailureMode) bundle.openingCommands = [face.开场命令[0], {写场景: {在场: {玩家: true}}}];
 const clone = value => value === undefined ? undefined : structuredClone(value);

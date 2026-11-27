@@ -10,7 +10,6 @@ import {slugifyHeading} from '../scripts/check-docs.mjs';
 
 const execFileAsync = promisify(execFile);
 const cliEntry = path.join(project, 'cli', 'ygg.mjs');
-const buildEntry = path.join(project, 'adapter', 'build.mjs');
 
 async function cli(args, options = {}) {
   let stdout = '', stderr = '';
@@ -116,7 +115,7 @@ test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 9 个 yg
   }
 });
 
-test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.yaml、打包产物与 build.mjs 向后兼容', async t => {
+test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.yaml、打包产物与旧入口清理', async t => {
   assert.deepEqual(parsePackArgs([]), {project: null, face: null, prepareOnly: false, compatible: [], help: false});
   assert.deepEqual(parsePackArgs(['examples/三国演义', '--face', 'custom.yaml', '--prepare-only', '--compatible', 'a'.repeat(64)]),
     {project: 'examples/三国演义', face: 'custom.yaml', prepareOnly: true, compatible: ['a'.repeat(64)], help: false});
@@ -136,7 +135,7 @@ test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.
   // 在项目目录内省略项目目录与 --face，自动按 cwd 定位项目和 <cwd>/卡面.yaml
   const worldbook = await fixture(t);
   const projectDir = path.dirname(worldbook);
-  await fs.copyFile(path.join(project, 'adapter', '卡面.yaml'), path.join(projectDir, '卡面.yaml'));
+  await fs.copyFile(path.join(project, 'test', 'fixtures', '雾港', '卡面.yaml'), path.join(projectDir, '卡面.yaml'));
   const cwdPrepare = await spawnNode(cliEntry, ['pack', '--prepare-only'], projectDir);
   assert.equal(cwdPrepare.code, 0, cwdPrepare.stderr);
   assert.match(cwdPrepare.stdout, /bundle\.generated\.json：/u);
@@ -151,10 +150,12 @@ test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.
   const card = JSON.parse(cardText);
   assert.equal(card.name, '三国演义·第一至三回');
 
-  // 旧脚本 adapter/build.mjs 保持 100% 向后兼容
-  const legacyBuild = await spawnNode(buildEntry, ['examples/三国演义', '--face', '../examples/三国演义/卡面.yaml', '--prepare-only'], project);
-  assert.equal(legacyBuild.code, 0, legacyBuild.stderr);
-  assert.match(legacyBuild.stdout, /bundle\.generated\.json：/u);
+  // 确认旧入口与过时目录已清理，且雾港夹具卡面已迁入 test/fixtures/雾港/卡面.yaml
+  await assert.rejects(fs.lstat(path.join(project, 'legacy')), {code: 'ENOENT'});
+  await assert.rejects(fs.lstat(path.join(project, 'adapter', ['build', 'mjs'].join('.'))), {code: 'ENOENT'});
+  await assert.rejects(fs.lstat(path.join(project, 'adapter', '卡面.yaml')), {code: 'ENOENT'});
+  const fixtureFaceStat = await fs.stat(path.join(project, 'test', 'fixtures', '雾港', '卡面.yaml'));
+  assert.equal(fixtureFaceStat.isFile(), true);
 });
 
 test('YG-OPEN-01-A1：卡面按方案字段、逐方案干跑与 alternate_greetings 导出', async t => {

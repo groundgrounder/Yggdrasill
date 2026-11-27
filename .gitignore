@@ -1,8 +1,5 @@
 node_modules/
 
-# 开发过程记录与派生产物只留本地；酒馆适配源码已转正到 adapter/。
-任务/
+# 角色卡打包与冒烟生成的派生产物，只留本地。
 adapter/dist/
 adapter/bundle.generated.json
-审查/
-工作规划.md

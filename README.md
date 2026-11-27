@@ -46,7 +46,7 @@ npm ci
 node cli/ygg.mjs pack examples/三国演义
 ```
 
-构建产物位于 `adapter/dist/三国演义·第一至三回.json`（旧入口 `node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml` 仍保留向后兼容）。
+构建产物位于 `adapter/dist/三国演义·第一至三回.json`。
 
 导入 SillyTavern 步骤：
 
@@ -105,7 +105,6 @@ Yggdrasill/
 ├── defaults/设定/     # 默认基础声明
 ├── examples/三国演义/ # 公开示例世界书（公版《三国演义》第一至三回）
 ├── docs/              # 作者指南、规范正本、参考表与酒馆适配文档
-├── legacy/            # 旧实现，只读参考
 └── test/              # 自动化测试（node:test）与内部测试夹具
 ```
 

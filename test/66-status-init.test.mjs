@@ -52,7 +52,7 @@ test('状态-2：雾港项目目录与世界书目录同口径', async () => {
   assert.equal(byWorldbook.value.项目.识别, '世界书目录');
   assert.deepEqual(byProject.value.计数, {来源资料文件: 0, 通读分卷文件: 0, 声明文件: 9, 世界概况文件: 2,
     扮演准则文件: 1, 条目库: 5, 角色组: 4, 档案: 11, 事件: 13, 事件串: 2, 开局选项: 2, 开局方案: 2,
-    角色位置: 7, 暂存文件: 0, 候选文件: 0, 卡面文件: 0});
+    角色位置: 7, 暂存文件: 0, 候选文件: 0, 卡面文件: 1});
   assert.deepEqual(byProject.value.静态检查, {错误: 0, 提示: 0});
   assert.deepEqual(byProject.value.台词统计, {事件总数: 13, 有角色位置事件数: 4, 角色位置总数: 7,
     有台词角色位置数: 4, 缺台词角色位置数: 3, 候选台词总数: 4, 原台词数: 1, 作者台词数: 3,
@@ -60,7 +60,7 @@ test('状态-2：雾港项目目录与世界书目录同口径', async () => {
   assert.equal(byProject.value.各层.第0层.已跳过, true);
   assert.equal(byProject.value.当前阶段, '第 4 层：档案与填景待补');
   assert.equal(byProject.value.推荐skill, '世界树·填景');
-  assert.deepEqual(byProject.value.缺口, ['有 3 个角色位置缺候选台词', '项目根没有含 卡ID 或名为 卡面.yaml 的卡面文件']);
+  assert.deepEqual(byProject.value.缺口, ['有 3 个角色位置缺候选台词']);
   assert.ok(byProject.value.各层.第3层.完成);
   assert.equal(byProject.value.各层.第4层.完成, false);
 

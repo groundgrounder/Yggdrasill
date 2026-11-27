@@ -56,6 +56,6 @@ jobs:
 
       - name: Build and verify adapter dist (fixture and 三国演义)
         run: |
-          node adapter/build.mjs
+          node cli/ygg.mjs pack test/fixtures/雾港
           SMOKE_USE_DIST=1 node adapter/smoke.mjs
-          node adapter/build.mjs examples/三国演义 --face ../examples/三国演义/卡面.yaml
+          node cli/ygg.mjs pack examples/三国演义
