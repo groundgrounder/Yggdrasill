@@ -1,6 +1,6 @@
 # 世界树作者 skill
 
-十个 model-invoked 作者 skill：一个统筹诊断，两个第 0 层前置入口（原作通读与原卡迁移），六个分层建卡阶段，一个日常修订；另有仓库内共享参考页两份。职责表只在本页维护。
+十一个 model-invoked 作者 skill：一个统筹诊断，两个第 0 层前置入口（原作通读与原卡迁移），六个分层建卡阶段，一个大型卡打包后验收，一个日常修订；另有仓库内共享参考页两份。职责表只在本页维护。
 
 ## 分层流程
 
@@ -18,6 +18,8 @@
 第 4b 层 填景  两遍读法·第二遍：横向写事，按坐标回查原文补实事件、逐字摘原台词
    ↓
 第 5 层 打包   卡面定稿 + ygg pack 构建酒馆角色卡
+   ↓
+第 5.5 层 验收 大型卡推荐：打包卡只读离线挂载 + 五维反原作剧本试玩验收
    ──────────────
 建成后   修订   局部改动与跨层小修，按改动级别只跑最小必要检查
 ```
@@ -37,6 +39,7 @@
 | 世界树·档案 | 第 4a 层：按角色与时期精写档案正文 | [`ygg-profile/SKILL.md`](ygg-profile/SKILL.md) |
 | 世界树·填景 | 第 4b 层：补实事件正文、角色位置，摘原台词 | [`ygg-scenes/SKILL.md`](ygg-scenes/SKILL.md) |
 | 世界树·打包 | 第 5 层：卡面定稿与酒馆打包 | [`ygg-pack/SKILL.md`](ygg-pack/SKILL.md) |
+| 世界树·验收 | 第 5.5 层（大型卡推荐）：打包卡只读离线挂载与五维反原作剧本试玩验收 | [`ygg-playtest/SKILL.md`](ygg-playtest/SKILL.md) |
 | 世界树·修订 | 建成后局部改动与跨层小修 | [`ygg-edit/SKILL.md`](ygg-edit/SKILL.md) |
 
 ## 仓库内共享速查页
@@ -54,7 +57,7 @@
   ```
 
   每个 `ygg-*` skill 目录均可单独安装或复制使用，无跨目录相对路径断链。
-- **仓库内自动发现**：克隆本仓库后，根目录的 `.agents/skills` 符号链接（指向 `../skills`）供兼容工作区级发现的编程代理自动加载全部十个作者 skill。
+- **仓库内自动发现**：克隆本仓库后，根目录的 `.agents/skills` 符号链接（指向 `../skills`）供兼容工作区级发现的编程代理自动加载全部十一个作者 skill。
 - **命令行配合**：在克隆的 Yggdrasill 仓库执行 `npm ci && npm link`，即可在任意外部项目目录直接调用 `ygg`；未链接时，可按 `node <世界树仓库>/cli/ygg.mjs <命令>` 调用。
 
-规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的十个 skill。
+规范入口见 [`docs/README.md`](../docs/README.md)；字段表见 [`docs/参考/`](../docs/参考/)。作者视图入口见 [`view/README.md`](../view/README.md)：`ygg view` 提供本地图形作者工具与事件/角色位置编辑，不替代本页的十一个 skill。

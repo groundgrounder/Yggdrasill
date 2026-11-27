@@ -59,7 +59,7 @@ function extractHeadings(markdown) {
   return anchors;
 }
 
-test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 10 个 ygg-* skill 独立复制到 /tmp 仍零断链', async t => {
+test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 11 个 ygg-* skill 独立复制到 /tmp 仍零断链', async t => {
   await assert.rejects(fs.lstat(path.join(project, '.omp')), {code: 'ENOENT'});
 
   const agentsSkills = path.join(project, '.agents', 'skills');
@@ -70,7 +70,7 @@ test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 10 个 y
   const listed = (await fs.readdir(agentsSkills)).sort();
   const expectedSkills = [
     'ygg-edit', 'ygg-entries', 'ygg-foundation', 'ygg-guide', 'ygg-migrate',
-    'ygg-pack', 'ygg-profile', 'ygg-read', 'ygg-scenes', 'ygg-skeleton',
+    'ygg-pack', 'ygg-playtest', 'ygg-profile', 'ygg-read', 'ygg-scenes', 'ygg-skeleton',
   ];
   for (const name of ['README.md', 'shared', ...expectedSkills]) {
     assert.ok(listed.includes(name), `缺少 ${name}`);
@@ -111,6 +111,13 @@ test('SIMPLIFY-01-A1：移除 .omp、启用 .agents/skills 软链，且 10 个 y
       const helpRun = await spawnNode(isolatedScript, ['--help'], isolatedRoot);
       assert.equal(helpRun.code, 0, `独立复制的 ygg-migrate 脚本 --help 失败：${helpRun.stderr}`);
       assert.match(helpRun.stdout, /用法：node unpack-card\.mjs/u);
+    }
+
+    if (skillName === 'ygg-playtest') {
+      const isolatedScript = path.join(isolatedSkillDir, 'scripts', 'mount-card.mjs');
+      const helpRun = await spawnNode(isolatedScript, ['--help'], isolatedRoot);
+      assert.equal(helpRun.code, 0, `独立复制的 ygg-playtest 脚本 --help 失败：${helpRun.stderr}`);
+      assert.match(helpRun.stdout, /用法：node mount-card\.mjs/u);
     }
   }
 

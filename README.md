@@ -76,7 +76,7 @@ node cli/ygg.mjs view examples/三国演义/世界书 --port 0
 
 - **命令行工具 `ygg`**：提供 `check`、`trace`、`if`、`preview`、`context`、`tree`、`status`、`init`、`view`、`pack`、`format` 共 11 个子命令，覆盖全量检查、引用追踪、分支推演、上下文预算试跑、事件树导出、项目初始化、作者视图、角色卡打包与 YAML 排版。完整参数见[参考：命令](docs/参考/命令.md)。
 - **本地作者视图 `ygg view`**：仅监听本机 `127.0.0.1` 的网页工具，不联网也不调用模型，可在浏览器中查看事件主树、局部关系、角色汇总、if 推演、上下文预览与台词统计，并直接编辑或新建事件与角色位置。详见[作者视图文档](view/README.md)。
-- **AI 建卡与转卡迁移 `skills/`**：内置从通读原作、**迁移现有酒馆角色卡/世界书**（`世界树·迁移` 自带零依赖 PNG/JSON 拆包脚本，自动提取 V1/V2/V3 角色卡、世界书与动态特征并映射为第 0 层总账）、搭建设定与骨架、补写角色档案与事件，到打包与局部修订共 10 个自包含作者 skill，支持在外部项目目录通过 `npx skills add groundgrounder/Yggdrasill` 一句话安装，或在克隆仓库内通过 `.agents/skills` 自动发现。详见[作者 Skill 说明](skills/README.md)。
+- **AI 建卡与转卡迁移 `skills/`**：内置从通读原作、**迁移现有酒馆角色卡/世界书**（`世界树·迁移` 自带零依赖 PNG/JSON 拆包脚本，自动提取 V1/V2/V3 角色卡、世界书与动态特征并映射为第 0 层总账）、搭建设定与骨架、补写角色档案与事件、打包、**大型卡打包后离线五维试玩验收**（`世界树·验收` 自带零依赖离线挂载脚本）到局部修订共 11 个自包含作者 skill，支持在外部项目目录通过 `npx skills add groundgrounder/Yggdrasill` 一句话安装，或在克隆仓库内通过 `.agents/skills` 自动发现。详见[作者 Skill 说明](skills/README.md)。
 
 ## 文档导航
 
@@ -99,7 +99,7 @@ Yggdrasill/
 ├── cli/               # 命令行入口（ygg.mjs）
 ├── view/              # 本地作者视图服务端与前端页面
 ├── adapter/           # 酒馆适配源码、角色卡打包与冒烟脚本
-├── skills/            # 面向编程代理的 10 个作者 skill 与共享参考页
+├── skills/            # 面向编程代理的 11 个作者 skill 与共享参考页
 ├── presets/           # 酒馆补全预设
 ├── templates/         # 协议文本模板
 ├── defaults/设定/     # 默认基础声明
