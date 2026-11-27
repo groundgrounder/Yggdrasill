@@ -32,9 +32,10 @@ export function checkEntries(catalog, decl) {
         issues.push(...checkField(value[field], fieldSchema, {decl, catalog, file, label: field, scope: '条目', entryType: type}));
       }
       if (library === '技能') {
-        const required = new Set(decl.ability.技能可用.filter(isMap).flatMap(rule => [
-          ...Object.keys(isMap(rule.适用) ? rule.适用 : {}), ...(rule.规则 === '等级门槛' ? [rule.键字段, rule.等级字段] : []),
-        ]).filter(isText));
+        const required = new Set(decl.ability.技能可用
+          .filter(rule => isMap(rule) && rule.规则 === '等级门槛' && matches(value, rule.适用))
+          .flatMap(rule => [rule.键字段, rule.等级字段])
+          .filter(isText));
         for (const field of required) if (!has(value, field)) add('条目.缺必填', file, `缺少技能可用规则所需字段“${field}”`);
       }
       if (schema?.分法 === '按种类') {
@@ -85,9 +86,9 @@ function checkSkills(catalog, decl, add) {
         const key = skill.内容?.[rule.键字段], rank = skill.内容?.[rule.等级字段];
         const allowedKeys = dimensionKeys(dimension);
         const group = rule.键组 ? list(dimension.键?.[rule.键组]) : allowedKeys;
-        if (!allowedKeys.includes(key) || !group.includes(key)) add('技能.门槛取值', skill.文件, `技能键字段“${key}”不属于维度的指定键`);
+        if (has(skill.内容, rule.键字段) && (!allowedKeys.includes(key) || !group.includes(key))) add('技能.门槛取值', skill.文件, `技能键字段“${key}”不属于维度的指定键`);
         const ranks = decl.ladders[dimension.等级] ?? [];
-        if (!list(ranks).includes(rank)) add('技能.门槛取值', skill.文件, `技能等级“${rank}”不属于“${dimension.等级}”`);
+        if (has(skill.内容, rule.等级字段) && !list(ranks).includes(rank)) add('技能.门槛取值', skill.文件, `技能等级“${rank}”不属于“${dimension.等级}”`);
       }
       if (rule.规则 === '集合持有' && dimension) {
         const member = dimension.成员;
