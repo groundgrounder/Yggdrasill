@@ -121,4 +121,8 @@ npm run smoke:adapter
 
 ## 许可协议
 
-本项目以 [Apache License 2.0](LICENSE) 发布，版权归 groundgrounder 所有，署名见 [NOTICE](NOTICE)。规范、文档、模板、示例与代码同属本仓库，采用同一许可。
+本项目以 [GNU Affero General Public License v3.0（AGPL-3.0）](LICENSE) 开源发布，版权归 groundgrounder 所有，署名见 [NOTICE](NOTICE)。规范、文档、模板、示例与代码同属本仓库，采用同一许可。
+
+- **开源使用与衍生**：任何人在遵守 AGPL-3.0 条款（包括保留版权声明，以及在分发修改版、内嵌运行时打包或通过网络服务对外提供时按 AGPL-3.0 公开对应源码）的前提下，均可自由使用、修改与分发。
+- **商业授权**：如需将本项目代码、工具或运行时用于闭源软件、闭源在线平台/服务或其他无法满足 AGPL-3.0 开源义务的商业用途，请通过本仓库 Issues 或联系版权人 `groundgrounder` 另行获取书面商业授权。
+- **历史版本说明**：许可变更自变更提交起对后续版本生效；变更提交之前的历史提交仍保留其发布时的 Apache-2.0 授权。
