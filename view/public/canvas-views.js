@@ -100,6 +100,128 @@ function edgeClass(relation) {
   return 'related';
 }
 
+function rectRayFactor(rect, vx, vy, pad = 0) {
+  const hw = rect.width / 2 + pad;
+  const hh = rect.height / 2 + pad;
+  const tx = Math.abs(vx) > 1e-9 ? hw / Math.abs(vx) : Infinity;
+  const ty = Math.abs(vy) > 1e-9 ? hh / Math.abs(vy) : Infinity;
+  return Math.min(tx, ty);
+}
+
+export function computeEdgeGeometry(fromRect, toRect, options = {}) {
+  const sourcePad = Number.isFinite(options.sourcePad) ? options.sourcePad : 2;
+  const targetPad = Number.isFinite(options.targetPad) ? options.targetPad : 4;
+  const curveOffset = Number.isFinite(options.curveOffset) ? options.curveOffset : 0;
+  const selfLoop = options.selfLoop === true || (options.selfLoop !== false && fromRect === toRect);
+
+  const fromCx = fromRect.x + fromRect.width / 2;
+  const fromCy = fromRect.y + fromRect.height / 2;
+  const toCx = toRect.x + toRect.width / 2;
+  const toCy = toRect.y + toRect.height / 2;
+
+  if (selfLoop) {
+    const start = {
+      x: fromRect.x + fromRect.width + sourcePad,
+      y: fromRect.y + Math.min(20, fromRect.height * 0.25),
+    };
+    const end = {
+      x: fromRect.x + fromRect.width + targetPad,
+      y: fromRect.y + Math.max(fromRect.height - 20, fromRect.height * 0.75),
+    };
+    const reach = 44 + Math.abs(curveOffset);
+    const control = {x: fromRect.x + fromRect.width + reach, y: fromCy};
+    const mx = 0.25 * start.x + 0.5 * control.x + 0.25 * end.x;
+    const my = 0.25 * start.y + 0.5 * control.y + 0.25 * end.y;
+    return {
+      kind: 'path',
+      d: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+      start,
+      end,
+      control,
+      label: {x: mx + 6, y: my - 4},
+      selfLoop: true,
+    };
+  }
+
+  const dx = toCx - fromCx;
+  const dy = toCy - fromCy;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-6) {
+    return {
+      kind: 'line',
+      d: null,
+      start: {x: fromCx, y: fromCy},
+      end: {x: toCx, y: toCy},
+      control: null,
+      label: {x: fromCx, y: fromCy - 4},
+      selfLoop: false,
+    };
+  }
+
+  const t1Padded = rectRayFactor(fromRect, dx, dy, sourcePad);
+  const t2Padded = rectRayFactor(toRect, -dx, -dy, targetPad);
+  const t1Raw = rectRayFactor(fromRect, dx, dy, 0);
+  const t2Raw = rectRayFactor(toRect, -dx, -dy, 0);
+  const overlapPadded = t1Padded + t2Padded >= 1;
+  const overlapRaw = t1Raw + t2Raw >= 1;
+
+  if (Math.abs(curveOffset) > 1e-6) {
+    const nx = -dy / dist;
+    const ny = dx / dist;
+    const control = {
+      x: (fromCx + toCx) / 2 + nx * curveOffset,
+      y: (fromCy + toCy) / 2 + ny * curveOffset,
+    };
+    let start, end;
+    if (!overlapPadded) {
+      const svx = control.x - fromCx, svy = control.y - fromCy;
+      const evx = control.x - toCx, evy = control.y - toCy;
+      const st = rectRayFactor(fromRect, svx, svy, sourcePad);
+      const et = rectRayFactor(toRect, evx, evy, targetPad);
+      start = st < 1 ? {x: fromCx + svx * st, y: fromCy + svy * st} : {x: fromCx + dx * t1Padded, y: fromCy + dy * t1Padded};
+      end = et < 1 ? {x: toCx + evx * et, y: toCy + evy * et} : {x: toCx - dx * t2Padded, y: toCy - dy * t2Padded};
+    } else if (!overlapRaw) {
+      start = {x: fromCx + dx * t1Raw, y: fromCy + dy * t1Raw};
+      end = {x: toCx - dx * t2Raw, y: toCy - dy * t2Raw};
+    } else {
+      start = {x: fromCx, y: fromCy};
+      end = {x: toCx, y: toCy};
+    }
+    const lx = 0.25 * start.x + 0.5 * control.x + 0.25 * end.x;
+    const ly = 0.25 * start.y + 0.5 * control.y + 0.25 * end.y;
+    return {
+      kind: 'path',
+      d: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+      start,
+      end,
+      control,
+      label: {x: lx, y: ly - 4},
+      selfLoop: false,
+    };
+  }
+
+  let start, end;
+  if (!overlapPadded) {
+    start = {x: fromCx + dx * t1Padded, y: fromCy + dy * t1Padded};
+    end = {x: toCx - dx * t2Padded, y: toCy - dy * t2Padded};
+  } else if (!overlapRaw) {
+    start = {x: fromCx + dx * t1Raw, y: fromCy + dy * t1Raw};
+    end = {x: toCx - dx * t2Raw, y: toCy - dy * t2Raw};
+  } else {
+    start = {x: fromCx, y: fromCy};
+    end = {x: toCx, y: toCy};
+  }
+  return {
+    kind: 'line',
+    d: null,
+    start,
+    end,
+    control: null,
+    label: {x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 4},
+    selfLoop: false,
+  };
+}
+
 export function renderLocalGraph(app, canvas) {
   app.ensureLocalFocus();
   const focus = app.state.localFocus;
@@ -125,10 +247,8 @@ export function renderLocalGraph(app, canvas) {
     const y = saved && Number.isFinite(saved.y) ? saved.y : 34 + row * 118;
     positions.set(id, {x, y});
   }
-  let maxX = 600, maxY = 420;
-  for (const {x, y} of positions.values()) { maxX = Math.max(maxX, x + nodeWidth + 80); maxY = Math.max(maxY, y + nodeHeight + 80); }
-  const wrap = el('div', {class: 'graph-wrap', style: {width: `${maxX}px`, height: `${maxY}px`}});
-  const svg = svgEl('svg', {class: 'graph-edges', viewBox: `0 0 ${maxX} ${maxY}`, width: maxX, height: maxY});
+  const wrap = el('div', {class: 'graph-wrap'});
+  const svg = svgEl('svg', {class: 'graph-edges', preserveAspectRatio: 'xMinYMin meet'});
   const defs = svgEl('defs');
   for (const [id, color] of [['cond', '#276754'], ['exclude', '#b95d56'], ['related', '#5f8299']]) {
     const marker = svgEl('marker', {id: `arrow-${id}`, viewBox: '0 0 10 10', refX: 9, refY: 5,
@@ -136,20 +256,85 @@ export function renderLocalGraph(app, canvas) {
     marker.append(svgEl('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: color}));
     defs.append(marker);
   }
-  svg.append(defs);
+  const edgeLayer = svgEl('g', {class: 'graph-edge-layer'});
+  svg.append(defs, edgeLayer);
   wrap.append(svg);
 
+  const nodeRect = id => {
+    const pos = positions.get(id);
+    const node = elements.get(id);
+    const width = node && node.offsetWidth > 0 ? node.offsetWidth : nodeWidth;
+    const height = node && node.offsetHeight > 0 ? node.offsetHeight : nodeHeight;
+    return {x: pos.x, y: pos.y, width, height};
+  };
+
+  const syncGraphBounds = () => {
+    let maxX = 600, maxY = 420;
+    for (const id of positions.keys()) {
+      const rect = nodeRect(id);
+      maxX = Math.max(maxX, Math.ceil(rect.x + rect.width + 80));
+      maxY = Math.max(maxY, Math.ceil(rect.y + rect.height + 80));
+    }
+    wrap.style.width = `${maxX}px`;
+    wrap.style.height = `${maxY}px`;
+    svg.setAttribute('viewBox', `0 0 ${maxX} ${maxY}`);
+    svg.setAttribute('width', String(maxX));
+    svg.setAttribute('height', String(maxY));
+    svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+    if (svg.style) {
+      svg.style.width = `${maxX}px`;
+      svg.style.height = `${maxY}px`;
+    }
+    return {maxX, maxY};
+  };
+
   const drawEdges = () => {
-    for (const line of [...svg.querySelectorAll('line, text')]) line.remove();
-    for (const relation of app.state.data.关系 ?? []) {
-      if (!positions.has(relation.from) || !positions.has(relation.to)) continue;
-      const from = positions.get(relation.from), to = positions.get(relation.to);
-      const x1 = from.x + nodeWidth / 2, y1 = from.y + nodeHeight / 2;
-      const x2 = to.x + nodeWidth / 2, y2 = to.y + nodeHeight / 2;
-      const kind = edgeClass(relation);
-      svg.append(svgEl('line', {x1, y1, x2, y2, class: kind, 'marker-end': `url(#arrow-${kind})`}));
-      svg.append(svgEl('text', {x: (x1 + x2) / 2 + 4, y: (y1 + y2) / 2 - 3},
-        `${relation.极性 === '排斥' ? '排斥 · ' : ''}${relation.字段}`));
+    edgeLayer.replaceChildren();
+    const visibleRelations = (app.state.data.关系 ?? [])
+      .filter(relation => positions.has(relation.from) && positions.has(relation.to));
+    const grouped = new Map();
+    for (const relation of visibleRelations) {
+      const key = relation.from === relation.to
+        ? `${relation.from}\0${relation.to}`
+        : [relation.from, relation.to].sort().join('\0');
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(relation);
+    }
+    for (const list of grouped.values()) {
+      const count = list.length;
+      const canonicalFrom = list[0].from === list[0].to
+        ? list[0].from
+        : [list[0].from, list[0].to].sort()[0];
+      const step = 56;
+      for (let index = 0; index < count; index++) {
+        const relation = list[index];
+        const selfLoop = relation.from === relation.to;
+        const rawOffset = count === 1 ? 0 : (index - (count - 1) / 2) * step;
+        const curveOffset = selfLoop
+          ? index * 24
+          : (relation.from === canonicalFrom ? rawOffset : -rawOffset);
+        const geom = computeEdgeGeometry(nodeRect(relation.from), nodeRect(relation.to), {
+          sourcePad: 2,
+          targetPad: 4,
+          curveOffset,
+          selfLoop,
+        });
+        const kind = edgeClass(relation);
+        if (geom.kind === 'path') {
+          edgeLayer.append(svgEl('path', {d: geom.d, class: kind, 'marker-end': `url(#arrow-${kind})`}));
+        } else {
+          edgeLayer.append(svgEl('line', {
+            x1: geom.start.x, y1: geom.start.y,
+            x2: geom.end.x, y2: geom.end.y,
+            class: kind, 'marker-end': `url(#arrow-${kind})`,
+          }));
+        }
+        edgeLayer.append(svgEl('text', {
+          x: geom.label.x,
+          y: geom.label.y,
+          'text-anchor': 'middle',
+        }, `${relation.极性 === '排斥' ? '排斥 · ' : ''}${relation.字段}`));
+      }
     }
   };
 
@@ -179,10 +364,13 @@ export function renderLocalGraph(app, canvas) {
       const next = {x: Math.max(0, drag.left + dx), y: Math.max(0, drag.top + dy)};
       position.x = next.x; position.y = next.y;
       node.style.left = `${next.x}px`; node.style.top = `${next.y}px`;
+      const wasDirty = app.state.layoutDirty;
       app.state.review.value.layout[`事件:${id}`] = {...next};
       app.state.layoutDirty = true;
+      syncGraphBounds();
       drawEdges();
       app.renderHeader();
+      if (!wasDirty) app.renderToolbar();
     });
     const finish = pointer => {
       if (!drag) return;
@@ -195,8 +383,9 @@ export function renderLocalGraph(app, canvas) {
     elements.set(id, node);
     wrap.append(node);
   }
-  drawEdges();
   canvas.append(wrap);
+  syncGraphBounds();
+  drawEdges();
   if (app.state.layoutDirty) canvas.append(notice('节点位置已修改；点击“保存布局”写入审阅状态。', 'warn'));
 }
 

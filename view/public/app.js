@@ -195,7 +195,7 @@ function renderToolbar() {
     ensureLocalFocus();
     items.push(el('span', {class: 'caption'}, state.localFocus ? `焦点：${eventByID(state.localFocus)?.事件标题 ?? state.localFocus}` : '无焦点事件'));
     for (let depth = 1; depth <= 5; depth++) items.push(button(`${depth} 层`,
-      () => { state.depth = depth; renderCanvas(); renderToolbar(); }, state.depth === depth ? 'active' : ''));
+      () => { state.depth = depth; renderViews(); renderCanvas(); renderToolbar(); }, state.depth === depth ? 'active' : ''));
     items.push(button('保存布局', guarded(() => saveReview(app)), state.layoutDirty ? 'primary' : ''));
   }
   else if (state.view === 'characters') {
@@ -260,6 +260,7 @@ function selectEvent(id) {
   if (!id) return;
   state.selected = {type: 'event', id};
   state.localFocus = id;
+  renderToolbar();
   renderCanvas();
   renderInspector(app);
 }
