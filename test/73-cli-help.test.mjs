@@ -49,7 +49,7 @@ test('CLI-帮助与版本-1：顶层 --help/-h 与 --version/-v 输出到 stdout
   assert.equal(realVer.stdout.trim(), `yggdrasill ${pkg.version}`);
 });
 
-test('CLI-帮助与版本-2：全部 11 个子命令 --help/-h 返回退出码 0 且不读写世界书', async () => {
+test('CLI-帮助与版本-2：全部 12 个子命令 --help/-h 返回退出码 0 且不读写世界书', async () => {
   const subcommands = [
     ['check', /用法：ygg check/u],
     ['format', /用法：ygg format/u],
@@ -62,6 +62,7 @@ test('CLI-帮助与版本-2：全部 11 个子命令 --help/-h 返回退出码 0
     ['init', /用法：ygg init/u],
     ['view', /用法：ygg view/u],
     ['pack', /用法：ygg pack/u],
+    ['unpack', /用法：ygg unpack/u],
   ];
   const forbiddenFs = new Proxy({}, {
     get(_target, prop) {
@@ -102,6 +103,7 @@ test('CLI-帮助与版本-3：无参、默认 check 与错误参数维持原退�
     ['init', '--未知'],
     ['view', '--未知'],
     ['pack', '--未知'],
+    ['unpack', '--未知'],
   ]) {
     const res = await cli(args);
     assert.equal(res.code, 1, JSON.stringify(args));

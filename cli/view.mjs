@@ -8,9 +8,12 @@ import {fileURLToPath} from 'node:url';
 import {assertStorage} from '../view/store.mjs';
 import {startViewServer} from '../view/server.mjs';
 
-const USAGE = '用法：ygg view [<世界书目录> | --worldbook <世界书目录>] [--storage <审阅存储目录>] [--port <端口>]\n'
+const USAGE = '用法：ygg view [<世界书目录或角色卡文件> | --worldbook <世界书目录> | --card <角色卡文件>] [--storage <审阅存储目录>] [--port <端口>]\n'
   + '      --port 缺省 4317；0 表示自动选择空闲端口；只监听 127.0.0.1。\n'
-  + '      缺省存储为 <世界书父目录>/作者资料/审阅器；若默认落入实现仓库内，则自动回退到系统临时目录。';
+  + '      目录模式缺省存储为 <世界书父目录>/作者资料/审阅器；若默认落入实现仓库内，则自动回退到系统临时目录。\n'
+  + '      传入世界树成品卡（JSON/PNG）或 --card 时以纯内存只读模式启动，不写入磁盘，不支持 --storage。';
+
+const READONLY_STORAGE_ERROR = '只读成品卡模式不写入磁盘，不支持 `--storage`；如需本地批注与编辑请先用 `ygg unpack` 解包';
 
 const isInside = (parent, child) => {
   const relative = path.relative(parent, child);
@@ -39,16 +42,21 @@ async function resolveExistingAncestor(fsImpl, target) {
 export function parseViewArgs(args) {
   const options = {worldbook: null, storage: null, port: 4317, help: false};
   let flagWorldbook = null;
+  let flagCard = null;
   const positionals = [];
   for (let index = 0; index < args.length; index++) {
     const value = args[index];
     if (value === '--help' || value === '-h') { options.help = true; continue; }
-    if (['--worldbook', '--storage', '--port'].includes(value)) {
+    if (['--worldbook', '--card', '--storage', '--port'].includes(value)) {
       const next = args[++index];
       if (typeof next !== 'string' || !next.length || next.startsWith('-')) throw argumentError(`${value} 缺少值`);
       if (value === '--worldbook') {
         if (flagWorldbook !== null) throw argumentError('--worldbook 只能给出一次');
         flagWorldbook = next;
+      }
+      else if (value === '--card') {
+        if (flagCard !== null) throw argumentError('--card 只能给出一次');
+        flagCard = next;
       }
       else if (value === '--storage') {
         if (options.storage !== null) throw argumentError('--storage 只能给出一次');
@@ -65,10 +73,21 @@ export function parseViewArgs(args) {
   }
   if (positionals.length > 1) throw argumentError(`多余位置参数：${positionals.slice(1).join(' ')}`);
   if (positionals.length && flagWorldbook !== null) throw argumentError('不能同时传入位置参数与 --worldbook');
+  if (positionals.length && flagCard !== null) throw argumentError('不能同时传入位置参数与 --card');
+  if (flagWorldbook !== null && flagCard !== null) throw argumentError('不能同时传入 --worldbook 与 --card');
+  if (!options.help && flagCard !== null && options.storage !== null) throw argumentError(READONLY_STORAGE_ERROR);
   options.worldbook = flagWorldbook ?? positionals[0] ?? null;
-  if (!options.help && !options.worldbook) throw argumentError('缺少世界书目录（请传入 <世界书目录> 或 --worldbook）');
+  if (!options.help && !options.worldbook && flagCard === null)
+    throw argumentError('缺少世界书目录或角色卡文件（请传入 <世界书目录或角色卡文件>、--worldbook 或 --card）');
   if (options.port < 0 || options.port > 65535 || !Number.isInteger(options.port))
     throw argumentError('端口须为 0 至 65535 的整数');
+  const targetKind = flagCard !== null ? 'card' : flagWorldbook !== null ? 'worldbook' : (positionals.length ? 'auto' : null);
+  if (flagCard !== null) {
+    options.card = flagCard;
+  } else {
+    Object.defineProperty(options, 'card', {value: null, enumerable: false, configurable: true});
+  }
+  Object.defineProperty(options, 'targetKind', {value: targetKind, enumerable: false, configurable: true});
   return options;
 }
 
@@ -88,7 +107,45 @@ export async function runView(args, {cwd = process.cwd(), stdout = process.stdou
   }
   if (options.help) { stdout.write(`${USAGE}\n`); return 0; }
 
-  const worldbook = path.resolve(cwd, options.worldbook);
+  let mode = options.targetKind === 'card' ? 'card' : 'directory';
+  let targetPath = path.resolve(cwd, options.card ?? options.worldbook);
+
+  if (options.targetKind === 'auto') {
+    let targetStat = null;
+    try { targetStat = await fsImpl.stat(targetPath); }
+    catch { targetStat = null; }
+    if (targetStat?.isFile()) {
+      mode = 'card';
+      if (options.storage !== null) {
+        stderr.write(`${USAGE}\n错误 view.参数：${READONLY_STORAGE_ERROR}\n`);
+        return 1;
+      }
+    }
+  }
+
+  if (mode === 'card') {
+    let app;
+    try {
+      app = await startViewServer({card: targetPath, port: options.port, fs: fsImpl});
+    }
+    catch (error) {
+      stderr.write(`错误 view.启动失败：${error.message}\n`);
+      return 1;
+    }
+    const info = app.cardInfo;
+    const lines = [
+      `世界树作者视图已启动：${app.url}`,
+      '模式：只读成品卡',
+      `来源：${info.名称} ${info.卡版本}（${String(app.format ?? '').toUpperCase()}）`,
+      `卡ID：${info.卡ID} · 世界书哈希：${info.世界书哈希.slice(0, 12)}…`,
+      '提示：只读浏览模式，不写入磁盘；如需修改请先运行 `ygg unpack` 解包',
+      '按 Ctrl+C 停止。',
+    ];
+    stdout.write(`${lines.join('\n')}\n`);
+    return 0;
+  }
+
+  const worldbook = targetPath;
   const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
   const realRepo = (await realOrSelf(fsImpl, repoRoot)) ?? repoRoot;
 

@@ -21,6 +21,7 @@ const state = {
 
 const events = () => state.data?.事件 ?? [];
 const groups = () => state.data?.角色组 ?? [];
+const isReadOnly = () => state.server?.只读 === true;
 const eventByID = id => events().find(event => event.事件ID === id);
 const groupByID = id => groups().find(group => group.角色组ID === id);
 const profilesOf = group => group?.档案 ?? [];
@@ -124,7 +125,21 @@ function ensureLocalFocus() {
 }
 
 function renderHeader() {
-  const data = state.data;
+  const data = state.data, readOnly = isReadOnly();
+  const brandNote = document.querySelector('.brand small'), navFooter = document.querySelector('.nav-footer');
+  let badge = $('#readonlyBadge');
+  if (readOnly && !badge) {
+    badge = el('span', {id: 'readonlyBadge', class: 'readonly-badge'});
+    $('#counts')?.parentNode?.insertBefore(badge, $('#counts'));
+  }
+  if (badge) {
+    const info = state.server?.卡信息;
+    badge.textContent = info ? `只读成品卡 · ${info.名称} ${info.卡版本}` : '只读成品卡';
+    badge.title = '只读浏览模式，不写入磁盘；如需修改请先运行 ygg unpack 解包';
+    badge.hidden = !readOnly;
+  }
+  if (brandNote) brandNote.textContent = readOnly ? '只读成品卡 · 如需修改请先 ygg unpack 解包' : '作者视图 · 现行世界书只读投影';
+  if (navFooter) navFooter.textContent = readOnly ? '只读成品卡模式 · 如需修改请先 ygg unpack 解包' : '原文件是唯一正文来源 · 批注与布局单独保存';
   if (!data) {
     $('#counts').textContent = '';
     const node = $('#status');
@@ -132,15 +147,12 @@ function renderHeader() {
     node.classList.toggle('error', Boolean(state.error));
     return;
   }
-  const counts = data.元数据.计数;
+  const counts = data.元数据.计数, check = data.元数据.检查, issues = data.元数据.数据异常?.length ?? 0;
   $('#counts').textContent = `${counts.事件} 事件 / ${counts.事件串} 事件串 / ${counts.角色组} 角色组 / ${counts.档案} 档案 / ${counts.条目} 条目`;
-  const check = data.元数据.检查;
-  const dirty = [state.notesDirty ? '批注未保存' : '', state.layoutDirty ? '布局未保存' : ''].filter(Boolean).join('，');
-  const issues = data.元数据.数据异常?.length ?? 0;
-  const status = state.error ? state.error
-    : `${check.错误} 错误 / ${check.提示} 提示${issues ? ` / ${issues} 项读取异常` : ''}${dirty ? ` / ${dirty}` : ''}`;
+  const dirty = readOnly ? '' : [state.notesDirty ? '批注未保存' : '', state.layoutDirty ? '布局未保存' : ''].filter(Boolean).join('，');
   const node = $('#status');
-  node.textContent = status;
+  node.textContent = state.error ? state.error
+    : `${check.错误} 错误 / ${check.提示} 提示${issues ? ` / ${issues} 项读取异常` : ''}${dirty ? ` / ${dirty}` : ''}`;
   node.classList.toggle('error', Boolean(state.error) || check.错误 > 0);
 }
 
@@ -189,14 +201,14 @@ function renderToolbar() {
     items.push(button('折叠全部', () => { for (const chain of state.data?.事件串 ?? []) state.collapsed.add(chain.事件串ID); renderCanvas(); }));
     items.push(button('展开全部', () => { state.collapsed.clear(); renderCanvas(); }));
     items.push(button('台词统计 / 导出树', () => openStatsDialog(app), ''));
-    items.push(button('＋ 新建事件', () => openCreateEventDialog(app), 'primary'));
+    if (!isReadOnly()) items.push(button('＋ 新建事件', () => openCreateEventDialog(app), 'primary'));
   }
   else if (state.view === 'local') {
     ensureLocalFocus();
     items.push(el('span', {class: 'caption'}, state.localFocus ? `焦点：${eventByID(state.localFocus)?.事件标题 ?? state.localFocus}` : '无焦点事件'));
     for (let depth = 1; depth <= 5; depth++) items.push(button(`${depth} 层`,
       () => { state.depth = depth; renderViews(); renderCanvas(); renderToolbar(); }, state.depth === depth ? 'active' : ''));
-    items.push(button('保存布局', guarded(() => saveReview(app)), state.layoutDirty ? 'primary' : ''));
+    if (!isReadOnly()) items.push(button('保存布局', guarded(() => saveReview(app)), state.layoutDirty ? 'primary' : ''));
   }
   else if (state.view === 'characters') {
     items.push(el('span', {class: 'caption'}, '档案初始值、事件变化与暂存分区显示'));
@@ -314,6 +326,7 @@ async function loadData(quiet = false) {
     state.review = value.review ?? {revision: '', value: {notes: {}, layout: {}}};
     state.server = value.服务;
     state.error = null;
+    if (isReadOnly() && state.tab === 'edit') state.tab = 'detail';
     if (state.selected?.type === 'event' && !eventByID(state.selected.id)) state.selected = null;
     if (state.selected?.type === 'group' && !groupByID(state.selected.id)) state.selected = null;
     ensureGroupView();
@@ -331,7 +344,7 @@ async function loadData(quiet = false) {
 }
 
 const app = {
-  state, events, groups, eventByID, groupByID, profilesOf, profileOf,
+  state, events, groups, isReadOnly, eventByID, groupByID, profilesOf, profileOf,
   selectedEvent, selectedGroup, selectedKey, eventGroupIDs, eventTimeLabel, filteredEvents,
   ensureGroupView, ensureLocalFocus, toast, guarded, request,
   renderHeader, renderToolbar, renderCanvas, renderAll,
@@ -364,6 +377,7 @@ function bindControls() {
   $('#tagFilter').addEventListener('change', event => { state.filters.tag = event.target.value; renderViews(); renderCanvas(); });
   $('#resultFilter').addEventListener('change', event => { state.filters.result = event.target.value; renderViews(); renderCanvas(); });
   for (const tab of document.querySelectorAll('[data-tab]')) tab.addEventListener('click', () => {
+    if (tab.dataset.tab === 'edit' && isReadOnly()) return;
     state.tab = tab.dataset.tab;
     renderInspector(app);
   });

@@ -88,6 +88,20 @@ p { margin: 6px 0; }
   font-weight: 700;
 }
 .counts { flex: 1 1 auto; color: var(--muted); font-size: 12px; }
+.readonly-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid #d5c199;
+  background: #f7ecda;
+  color: #7a551d;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.readonly-badge[hidden], .tabs button[hidden] { display: none; }
 .status { color: var(--muted); font-size: 12px; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status.error { color: var(--red); }
 

@@ -12,6 +12,18 @@ import {formatYamlText} from '../core/format.mjs';
 import {isMap, isText, list} from '../core/utils.mjs';
 import {loadProject, loadViewData} from './data.mjs';
 import {assertSafeValue, assertStorage, createViewStore, MAX_BODY, MAX_CANDIDATE, ViewError} from './store.mjs';
+import {createCardMemFs, inspectCard} from '../adapter/unpack.mjs';
+
+const READONLY_BLOCKED = new Set([
+  '/api/preview',
+  '/api/save',
+  '/api/review',
+  '/api/event/create/preview',
+  '/api/position/preview',
+  '/api/yaml/parse',
+  '/api/yaml/format',
+]);
+const READONLY_ERROR = '只读成品卡模式不支持编辑或保存，请先用 ygg unpack 解包为本地目录';
 
 const PUBLIC_DIR = defaultPath.join(defaultPath.dirname(fileURLToPath(import.meta.url)), 'public');
 const STATIC = new Map([
@@ -142,12 +154,42 @@ function ifOptions(input, worldbookName) {
   return options;
 }
 
-export async function startViewServer({worldbook, storage, port = 4317, host = '127.0.0.1',
+export async function startViewServer({worldbook, storage, card = null, port = 4317, host = '127.0.0.1',
   repoRoot = null, fs = defaultFs, path = defaultPath, now = () => Date.now(), check} = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ViewError('端口须为 0 至 65535 的整数', 400);
   if (host !== '127.0.0.1') throw new ViewError('作者视图只监听 127.0.0.1', 400);
-  const resolved = await assertStorage({worldbook, storage, repoRoot, fs, path});
-  const store = createViewStore({worldbook: resolved.worldbook, storage: resolved.storage, fs, path, now, check});
+
+  const readOnly = Boolean(card);
+  let worldbookRoot, storagePath = null, store = null;
+  let dataFs = fs, dataPath = path;
+  let cardInfo = null, cardFormat = null, sourceFileName = null, bundleTemplates = null;
+
+  if (readOnly) {
+    if (worldbook) throw new ViewError('不能同时传入 worldbook 与 card', 400);
+    if (storage) throw new ViewError('只读成品卡模式不写入磁盘，不支持 `--storage`；如需本地批注与编辑请先用 `ygg unpack` 解包', 400);
+    const inspected = await inspectCard(card, {fs});
+    const mem = createCardMemFs(inspected.bundle.files);
+    dataFs = mem.fs;
+    dataPath = mem.path;
+    worldbookRoot = inspected.bundle.root;
+    cardFormat = inspected.format;
+    sourceFileName = path.basename(card);
+    cardInfo = {
+      名称: inspected.cardInfo.名称,
+      卡ID: inspected.cardInfo.卡ID,
+      卡版本: inspected.cardInfo.卡版本,
+      程序版本: inspected.cardInfo.程序版本,
+      世界书哈希: inspected.cardInfo.世界书哈希,
+      主题数: inspected.cardInfo.主题数,
+    };
+    if (isMap(inspected.bundle.templates)) bundleTemplates = inspected.bundle.templates;
+  } else {
+    const resolved = await assertStorage({worldbook, storage, repoRoot, fs, path});
+    worldbookRoot = resolved.worldbook;
+    storagePath = resolved.storage;
+    store = createViewStore({worldbook: worldbookRoot, storage: storagePath, fs, path, now, check});
+  }
+
   const token = randomUUID();
   const allowedHosts = new Set();
   const allowedOrigins = new Set();
@@ -162,6 +204,10 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
     catch { return send(res, 400, {error: '请求地址不合法'}); }
 
     if (req.method === 'GET') {
+      if (url.pathname === '/favicon.ico') {
+        res.writeHead(204, headers());
+        return res.end();
+      }
       const entry = STATIC.get(url.pathname);
       if (entry) {
         const [name, type] = entry;
@@ -169,18 +215,36 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
         catch (error) { return send(res, 500, {error: `无法读取页面资源：${error.message}`}); }
       }
       if (url.pathname === '/api/data') {
+        if (readOnly) {
+          const data = await loadViewData(worldbookRoot, {fs: dataFs, path: dataPath});
+          return send(res, 200, {
+            ...data,
+            token,
+            review: {revision: '', value: {notes: {}, layout: {}}},
+            服务: {
+              地址: `http://${hostHeader}`,
+              端口: server.address().port,
+              只读: true,
+              模式: 'card',
+              来源文件: sourceFileName,
+              存储: null,
+              世界书: worldbookRoot,
+              卡信息: cardInfo,
+            },
+          });
+        }
         const [data, review] = await Promise.all([
-          loadViewData(resolved.worldbook, {fs, path}),
+          loadViewData(worldbookRoot, {fs: dataFs, path: dataPath}),
           store.readState(),
         ]);
         return send(res, 200, {...data, token, review,
           服务: {地址: `http://${hostHeader}`, 端口: server.address().port,
-            存储: resolved.storage, 世界书: resolved.worldbook}});
+            只读: false, 模式: 'directory', 存储: storagePath, 世界书: worldbookRoot}});
       }
       if (url.pathname === '/api/tree.md') {
-        const project = await loadProject(resolved.worldbook, {fs, path});
-        const markdown = exportEventTreeMarkdown(project.catalog, project.decl,
-          {标题: path.basename(resolved.worldbook)});
+        const project = await loadProject(worldbookRoot, {fs: dataFs, path: dataPath});
+        const title = readOnly ? (cardInfo.名称 || dataPath.basename(worldbookRoot)) : dataPath.basename(worldbookRoot);
+        const markdown = exportEventTreeMarkdown(project.catalog, project.decl, {标题: title});
         const extra = url.searchParams.get('download') === '1'
           ? {'Content-Disposition': `attachment; filename="event-tree.md"; filename*=UTF-8''event-tree.md`} : {};
         return send(res, 200, markdown, 'text/markdown; charset=utf-8', extra);
@@ -193,6 +257,9 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
       return send(res, 403, {error: '写入需来自本地审阅页面'});
     if (!String(req.headers['content-type'] ?? '').startsWith('application/json'))
       return send(res, 403, {error: '写入需来自本地审阅页面'});
+    if (readOnly && READONLY_BLOCKED.has(url.pathname)) {
+      return send(res, 403, {error: READONLY_ERROR});
+    }
     const body = await readBody(req);
     let input;
     try { input = assertObject(JSON.parse(body)); }
@@ -204,8 +271,9 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
     if (url.pathname === '/api/save') return send(res, 200, await store.save(input));
     if (url.pathname === '/api/review') return send(res, 200, await store.saveState(input));
     if (url.pathname === '/api/if') {
-      const project = await loadProject(resolved.worldbook, {fs, path});
-      const options = ifOptions(input, path.basename(resolved.worldbook));
+      const project = await loadProject(worldbookRoot, {fs: dataFs, path: dataPath});
+      const label = readOnly ? (cardInfo.名称 || dataPath.basename(worldbookRoot)) : dataPath.basename(worldbookRoot);
+      const options = ifOptions(input, label);
       const result = whatIf(project.catalog, project.decl, {...options, issues: project.issues});
       return send(res, 200, result);
     }
@@ -218,7 +286,12 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
     if (url.pathname === '/api/context') {
       const options = contextOptions(input);
       try {
-        return send(res, 200, await previewContext(resolved.worldbook, {...options, fs, path}));
+        return send(res, 200, await previewContext(worldbookRoot, {
+          ...options,
+          fs: dataFs,
+          path: dataPath,
+          ...(bundleTemplates ? {templates: bundleTemplates} : {}),
+        }));
       }
       catch (error) {
         if (error instanceof ContextError) return send(res, 400, {error: error.message, code: error.code});
@@ -254,7 +327,9 @@ export async function startViewServer({worldbook, storage, port = 4317, host = '
 
   return {
     server, store, token, url, port: actual, host,
-    worldbook: resolved.worldbook, storage: resolved.storage,
+    worldbook: worldbookRoot, storage: storagePath,
+    readOnly, mode: readOnly ? 'card' : 'directory',
+    ...(readOnly ? {card: path.resolve(card), format: cardFormat, cardInfo} : {}),
     close: () => new Promise((resolve, reject) => {
       server.close(error => error ? reject(error) : resolve());
       server.closeIdleConnections?.();

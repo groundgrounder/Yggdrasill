@@ -12,8 +12,9 @@ export const USAGE = CHECK_USAGE
   + '      ygg tree <世界书目录> [--out <文件路径>] [--stats-only] [--json]\n'
   + '      ygg status [项目目录或世界书目录] [--json]\n'
   + '      ygg init <项目目录> [--纪年前缀 <前缀>] [--年位数 <整数>] [--月数 <整数>] [--每月天数 <整数>] [--force] [--json]\n'
-  + '      ygg view [<世界书目录> | --worldbook <世界书目录>] [--storage <审阅存储目录>] [--port <端口>]\n'
+  + '      ygg view [<世界书目录或角色卡文件> | --worldbook <世界书目录> | --card <角色卡文件>] [--storage <审阅存储目录>] [--port <端口>]\n'
   + '      ygg pack [项目目录] [--face <卡面文件>] [--prepare-only] [--compatible <64位指纹>]...\n'
+  + '      ygg unpack <角色卡文件> -o <输出目录> [--force] [--json]\n'
   + '      ygg [--help | -h] [--version | -v]\n';
 
 export async function runCheck(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr,

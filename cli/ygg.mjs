@@ -13,8 +13,9 @@ import {runStatus} from './status.mjs';
 import {runInit} from './init.mjs';
 import {runView} from './view.mjs';
 import {runPack} from './pack.mjs';
+import {runUnpack} from './unpack.mjs';
 
-const SUBCOMMANDS = {view: runView, pack: runPack, if: runIf, trace: runTrace, preview: runPreview, context: runContext,
+const SUBCOMMANDS = {view: runView, pack: runPack, unpack: runUnpack, if: runIf, trace: runTrace, preview: runPreview, context: runContext,
   tree: runTree, status: runStatus, init: runInit, format: runFormat};
 
 export async function runCli(args, {cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr, fs, path: injectedPath} = {}) {

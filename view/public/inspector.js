@@ -104,11 +104,12 @@ function renderEventDetail(app, panel, event) {
     el('dt', {}, '作者台词'), el('dd', {}, String(quotes.作者台词数)),
     el('dt', {}, '事件级出处'), el('dd', {}, quotes.有事件级出处 ? '有' : '无')),
     notice('原台词按 作者资料/出处 记录匹配；不读取 来源资料/。')));
+  const readOnly = Boolean(app.isReadOnly?.());
   panel.append(section('角色位置', (event.角色位置 ?? []).length
     ? el('div', {class: 'list'}, event.角色位置.map(position => details(
       `${position.角色组ID ?? '未知角色'} · ${position.文件}`,
       el('div', {}, pre(position.内容 ?? position.原文 ?? null), source(position.文件),
-        button('在编辑面板编辑此角色位置', () => {
+        readOnly ? null : button('在编辑面板编辑此角色位置', () => {
           app.state.tab = 'edit';
           app.state.positionTarget = {eventID: event.事件ID, groupID: position.角色组ID};
           app.renderInspector();
@@ -179,7 +180,7 @@ function ensureNote(app, key) {
 }
 
 export async function saveReview(app) {
-  if (!app.state.review) return;
+  if (app.isReadOnly?.() || !app.state.review) return;
   try {
     const response = await app.request('/api/review', {revision: app.state.review.revision, value: app.state.review.value});
     app.state.review = {revision: response.revision, value: response.value, damaged: false, error: null};
@@ -229,17 +230,23 @@ function renderEditPanel(app, panel) {
 
 export function renderInspector(app) {
   const visible = app.state.data !== null;
+  const readOnly = Boolean(app.isReadOnly?.());
+  if (readOnly && app.state.tab === 'edit') app.state.tab = 'detail';
   const title = $('#selectionTitle');
   const event = app.selectedEvent();
   const group = app.selectedGroup();
   title.replaceChildren(el('span', {class: 'eyebrow'}, event ? '正式事件' : group ? '角色组' : '选择一个节点'),
     el('h2', {}, event ? (event.事件标题 ?? event.事件ID) : group ? group.显示名 : '从故事开始审阅'));
   document.querySelectorAll('[data-tab]').forEach(node => {
-    const active = node.dataset.tab === app.state.tab;
+    const isEditTab = node.dataset.tab === 'edit';
+    if (isEditTab) node.hidden = readOnly;
+    const active = !node.hidden && node.dataset.tab === app.state.tab;
     node.classList.toggle('active', active);
     node.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  for (const name of ['detail', 'characters', 'edit']) $('#' + name + 'Panel').hidden = app.state.tab !== name;
+  for (const name of ['detail', 'characters', 'edit']) {
+    $('#' + name + 'Panel').hidden = (readOnly && name === 'edit') || app.state.tab !== name;
+  }
   const detail = $('#detailPanel'), characters = $('#charactersPanel'), edit = $('#editPanel');
   detail.replaceChildren(); characters.replaceChildren(); edit.replaceChildren();
   if (!visible) { detail.append(el('p', {class: 'caption'}, app.state.error ? `世界书读取失败：${app.state.error}` : '正在读取世界书…')); return; }
@@ -247,7 +254,7 @@ export function renderInspector(app) {
   else if (group) renderGroupDetail(app, detail, group);
   else detail.append(el('p', {class: 'caption'}, '点击时间轴、关系图或角色汇总中的节点，查看详情。'));
   renderCharactersPanel(app, characters);
-  renderEditPanel(app, edit);
+  if (!readOnly) renderEditPanel(app, edit);
 }
 
 export async function submitPreview(app, {route, body, raw, afterSave = null}) {
