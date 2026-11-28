@@ -49,6 +49,7 @@ const LEGACY_SYMBOLS = [
 
 const GROUP_DEP_TYPES = new Set(['角色启用', '角色版本', '角色已出场', '角色状态', '同处']);
 const COMBINATORS = new Set(['all', 'any', 'none']);
+const COMPOUND_NAME_RE = /[与及暨]/u;
 
 let mountCounter = 0;
 
@@ -567,6 +568,120 @@ function evalThresholdBlocked(threshold, evaluateFn, leaf) {
   return result === false;
 }
 
+function conditionReferencesFallback(node, negative = false, conditionPath = '门槛') {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return [];
+  const keys = Object.keys(node);
+  if (keys.length !== 1) return [];
+  const type = keys[0];
+  const value = node[type];
+  if (type === '事件确认' && value && typeof value === 'object' && !Array.isArray(value)) {
+    return [{...value, 排斥: negative, 条件位置: conditionPath}];
+  }
+  if (!COMBINATORS.has(type) || !Array.isArray(value)) return [];
+  const nextNeg = type === 'none' ? !negative : negative;
+  return value.flatMap((child, index) => conditionReferencesFallback(
+    child,
+    nextNeg,
+    `${conditionPath}.${type}[${index + 1}]`,
+  ));
+}
+
+function computeEventTreeHealth(api, catalog, groups, events, chains) {
+  const confirmStrategyCounts = {自动确认: 0, 条件确认: 0, 仅作候选: 0};
+  const compoundNameSet = new Set();
+  const refsFn = typeof api?.conditionReferences === 'function' ? api.conditionReferences : conditionReferencesFallback;
+
+  const downstreamReferencedIds = new Set();
+  const profileReferencedIds = new Set();
+  const chainEndingIds = new Set();
+  const openingOptionIds = new Set();
+
+  for (const event of events) {
+    const content = event?.内容 ?? {};
+    const policy = content.确认策略;
+    if (policy === '自动确认' || policy === '条件确认' || policy === '仅作候选') {
+      confirmStrategyCounts[policy] += 1;
+    } else if (policy !== undefined && policy !== null && policy !== '') {
+      confirmStrategyCounts.其他 = (confirmStrategyCounts.其他 ?? 0) + 1;
+    }
+
+    if ((typeof event?.id === 'string' && COMPOUND_NAME_RE.test(event.id))
+      || (typeof content.事件标题 === 'string' && COMPOUND_NAME_RE.test(content.事件标题))) {
+      compoundNameSet.add(event.id);
+    }
+
+    for (const ref of refsFn(content.门槛)) {
+      if (!ref?.排斥 && typeof ref?.事件ID === 'string' && ref.事件ID !== event.id) {
+        downstreamReferencedIds.add(ref.事件ID);
+      }
+    }
+    const branches = Array.isArray(content.分支) ? content.分支 : [];
+    for (const branch of branches) {
+      for (const ref of refsFn(branch?.门槛)) {
+        if (!ref?.排斥 && typeof ref?.事件ID === 'string' && ref.事件ID !== event.id) {
+          downstreamReferencedIds.add(ref.事件ID);
+        }
+      }
+    }
+  }
+
+  for (const group of groups) {
+    const declaredProfiles = Array.isArray(group?.内容?.档案) ? group.内容.档案 : [];
+    for (const profile of declaredProfiles) {
+      for (const ref of refsFn(profile?.生效条件)) {
+        if (!ref?.排斥 && typeof ref?.事件ID === 'string') {
+          profileReferencedIds.add(ref.事件ID);
+        }
+      }
+    }
+  }
+
+  for (const chain of chains) {
+    const endings = Array.isArray(chain?.内容?.结局) ? chain.内容.结局 : [];
+    for (const ending of endings) {
+      if (typeof ending?.事件ID === 'string') {
+        chainEndingIds.add(ending.事件ID);
+      }
+    }
+  }
+
+  const openingOptions = Array.isArray(catalog?.openingOptions?.内容?.选项)
+    ? catalog.openingOptions.内容.选项
+    : [];
+  for (const item of openingOptions) {
+    if (typeof item?.事件ID === 'string') {
+      openingOptionIds.add(item.事件ID);
+    }
+  }
+
+  const zeroChangeLeafSet = new Set();
+  for (const event of events) {
+    const branches = Array.isArray(event?.内容?.分支) ? event.内容.分支 : [];
+    const hasChange = branches.some(b => Array.isArray(b?.变化) && b.变化.length > 0);
+    if (hasChange) continue;
+    if (downstreamReferencedIds.has(event.id)) continue;
+    if (profileReferencedIds.has(event.id)) continue;
+    if (chainEndingIds.has(event.id) || openingOptionIds.has(event.id)) continue;
+    zeroChangeLeafSet.add(event.id);
+  }
+
+  const compoundNameIds = [...compoundNameSet].sort(compareCodePoints);
+  const zeroChangeLeafIds = [...zeroChangeLeafSet].sort(compareCodePoints);
+  const autoConfirmRatio = events.length > 0
+    ? Number((confirmStrategyCounts.自动确认 / events.length).toFixed(4))
+    : 0;
+
+  return {
+    confirmStrategyCounts,
+    autoConfirmRatio,
+    compoundNameIds,
+    zeroChangeLeafEvents: {
+      count: zeroChangeLeafIds.length,
+      ids: zeroChangeLeafIds,
+    },
+  };
+}
+
 /**
  * 基于挂载后的真实运行时对象，产出结构化基线探针结果（计数、D1 默认档案清单、D4 停用影响测算）。
  */
@@ -692,7 +807,9 @@ export function probeCard(api, {disableGroups = []} = {}) {
     };
   }
 
-  return {counts, defaultProfiles, disabledImpact};
+  const eventTreeHealth = computeEventTreeHealth(api, catalog, groups, events, chains);
+
+  return {counts, defaultProfiles, disabledImpact, eventTreeHealth};
 }
 
 function parseCliArgs(argv) {
@@ -734,7 +851,7 @@ function parseCliArgs(argv) {
 
 function formatProbeSummary(payload) {
   const {card, mode, cardMeta, probe} = payload;
-  const {counts, defaultProfiles, disabledImpact} = probe;
+  const {counts, defaultProfiles, disabledImpact, eventTreeHealth} = probe;
   const lines = [
     `角色卡：${cardMeta.name || card}（版本 ${cardMeta.characterVersion || '未写'}，文件 ${card}）`,
     `挂载模式：${mode} | 卡文件 ${cardMeta.bytes} B (${cardMeta.sha256.slice(0, 12)}…) | 内嵌脚本 ${cardMeta.esmBytes} B (${cardMeta.esmSha256.slice(0, 12)}…)`,
@@ -751,6 +868,12 @@ function formatProbeSummary(payload) {
     `结构计数：${counts.groups} 角色组、${counts.profiles} 档案、${counts.events} 事件、${counts.chains} 事件串、${counts.worldlines} 世界线、${counts.openingPlans} 开局方案；条目库：${libText}`,
     `默认档案（D1 待审计）：${defaultProfiles.length} 份`,
   );
+  if (eventTreeHealth) {
+    const {confirmStrategyCounts: csc, autoConfirmRatio, compoundNameIds, zeroChangeLeafEvents} = eventTreeHealth;
+    lines.push(
+      `事件树健康：确认策略 自动确认 ${csc.自动确认}（${(autoConfirmRatio * 100).toFixed(1)}%）、条件确认 ${csc.条件确认}、仅作候选 ${csc.仅作候选}；疑似拼盘命名 ${compoundNameIds.length}；零变化孤立事件 ${zeroChangeLeafEvents.count}`,
+    );
+  }
   if (disabledImpact) {
     lines.push(
       `停用影响（D4，停用 [${disabledImpact.disableGroups.join('、')}]）：共 ${disabledImpact.totalEvents} 事件，直接停摆 ${disabledImpact.directDisabled}、级联停摆 ${disabledImpact.cascadeDisabled}、存活 ${disabledImpact.survivingEvents}`,

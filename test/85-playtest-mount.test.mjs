@@ -166,6 +166,15 @@ test('YG-PLAYTEST-01-3：旧包回退模式（legacy-export）兼容无 __YGG_PL
     const sealed = mounted.api.seal(mounted.api.protocol, mounted.api.bundle.opening);
     const routed = mounted.api.route(mounted.api.router, sealed, []);
     assert.ok(routed.context);
+    const legacyProbe = probeCard(mounted.api);
+    const fallbackProbe = probeCard({...mounted.api, conditionReferences: undefined});
+    assert.deepEqual(fallbackProbe.eventTreeHealth, legacyProbe.eventTreeHealth);
+    assert.equal(
+      legacyProbe.eventTreeHealth.confirmStrategyCounts.自动确认
+        + legacyProbe.eventTreeHealth.confirmStrategyCounts.条件确认
+        + legacyProbe.eventTreeHealth.confirmStrategyCounts.仅作候选,
+      mounted.api.catalog.events.length,
+    );
   } finally {
     mounted.cleanup();
   }
@@ -194,6 +203,22 @@ test('YG-PLAYTEST-01-4：probeCard D1/D4 指标准确且 --probe --json CLI 脱�
     assert.equal(impact.directDisabled + impact.cascadeDisabled + impact.survivingEvents, impact.totalEvents);
     const overlap = impact.directIds.filter(id => impact.cascadeIds.includes(id));
     assert.deepEqual(overlap, []);
+
+    const health = directProbe.eventTreeHealth;
+    assert.ok(health, 'probeCard 应包含 eventTreeHealth');
+    assert.equal(
+      health.confirmStrategyCounts.自动确认
+        + health.confirmStrategyCounts.条件确认
+        + health.confirmStrategyCounts.仅作候选,
+      directProbe.counts.events,
+    );
+    assert.equal(
+      health.autoConfirmRatio,
+      Number((health.confirmStrategyCounts.自动确认 / directProbe.counts.events).toFixed(4)),
+    );
+    assert.ok(Array.isArray(health.compoundNameIds));
+    assert.ok(Array.isArray(health.zeroChangeLeafEvents.ids));
+    assert.equal(health.zeroChangeLeafEvents.count, health.zeroChangeLeafEvents.ids.length);
   } finally {
     mounted.cleanup();
   }
@@ -211,6 +236,7 @@ test('YG-PLAYTEST-01-4：probeCard D1/D4 指标准确且 --probe --json CLI 脱�
   assert.equal(cliText.code, 0, cliText.stderr);
   assert.match(cliText.stdout, /挂载模式：hook/u);
   assert.match(cliText.stdout, /默认档案（D1 待审计）/u);
+  assert.match(cliText.stdout, /事件树健康：/u);
   assert.match(cliText.stdout, /停用影响（D4/u);
   assert.ok(!cliText.stdout.includes(tmpDir));
 });

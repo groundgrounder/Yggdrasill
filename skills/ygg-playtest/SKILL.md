@@ -32,15 +32,17 @@ description: 验收：大型多卷/多世界线角色卡在 ygg pack 打包后�
 
 ### 1. 锁定指纹与快速探针
 
-运行随本目录附带的零依赖挂载脚本（支持 `v0.1.3+` 钩子模式与 `v0.1.1`/`v0.1.2` 旧包自动回退），采集构建清单、D1 默认档案清单与 D4 停用影响基线：
+运行随本目录附带的零依赖挂载脚本（支持 `v0.1.3+` 钩子模式与 `v0.1.1`/`v0.1.2` 旧包自动回退），采集构建清单、D1 默认档案清单、D4 停用影响基线与事件树健康指标（`eventTreeHealth`）：
 
 ```sh
 node ./scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角组ID>] --json
 ```
 
+`eventTreeHealth` 输出三项审树参考指标：`confirmStrategyCounts` 与 `autoConfirmRatio`（确认策略分布与自动确认占比）、`compoundNameIds`（ID 或标题含「与/及/暨」的疑似拼盘事件列表）、`zeroChangeLeafEvents`（无 `变化` 且无下游正向因果/档案切期/事件串结局/开局选项引用的零变化叶节点事件）。发现异常偏高时按归属三分法结合剧本审阅：确认属可绕开个人事件全写 `自动确认`、无关两事硬拼或前史/纯日常流水账充数归 **A 类** 移交修订；属合理单线锚点或高光存照归 **B 类** 记录不硬改。
+
 同时在试玩脚本起手调用 `snapshotHashes` 锁定 `<项目目录>` 与 `<打包卡>` 的起手根哈希 `rootSha256`。
 
-**完成标准**：已记录打包卡 `sha256`、`esmSha256`、挂载模式（`hook` / `legacy-export`）、世界书与程序指纹、`defaultProfiles` 清单、停用核心主角的静态依赖统计及起手 `rootSha256`。
+**完成标准**：已记录打包卡 `sha256`、`esmSha256`、挂载模式（`hook` / `legacy-export`）、世界书与程序指纹、`defaultProfiles` 清单、`eventTreeHealth` 指标、停用核心主角的静态依赖统计及起手 `rootSha256`。
 
 ### 2. 构造 2 份反原作对抗剧本覆盖五维（D1–D5）
 

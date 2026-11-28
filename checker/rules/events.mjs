@@ -47,6 +47,25 @@ export function checkEvents(catalog, decl) {
         && byID.has(ref.事件ID) && byID.get(ref.事件ID).内容?.主类型 !== worldType))
       add('事件.世界依赖个人', file, '世界事件的门槛正向引用了非世界事件', '提示');
   }
+  const totalEvents = catalog.events.length;
+  if (totalEvents >= 50) {
+    let autoCount = 0;
+    let conditionalCount = 0;
+    for (const event of catalog.events) {
+      const policy = event.内容?.确认策略;
+      if (policy === '自动确认') autoCount += 1;
+      else if (policy === '条件确认') conditionalCount += 1;
+    }
+    const ratio = autoCount / totalEvents;
+    if (conditionalCount === 0 && ratio >= 0.9) {
+      add(
+        '事件.自动确认偏高',
+        '历史/事件',
+        `共 ${totalEvents} 个事件，其中 ${autoCount} 个（${(ratio * 100).toFixed(1)}%）为自动确认、条件确认为 0；建议区分幕后大事与游玩期个人事件，适当采用条件确认`,
+        '提示',
+      );
+    }
+  }
   return issues;
 
   function checkBranches(event, file) {
