@@ -31,6 +31,8 @@ export function registerAdapterEvents({
   callKeeper,
   parseJson,
   showSettings,
+  cardThemes = [],
+  onAppearanceChange = null,
   stringifyYaml,
   seal,
   ownershipOf,
@@ -259,5 +261,7 @@ export function registerAdapterEvents({
     await rekeepFloor(list, id);
   }));
 
-  eventOn(getButtonEvent('世界树：设置'), () => showSettings({call: callKeeper, parse: parseJson, queue: enqueue, refresh}));
+  eventOn(getButtonEvent('世界树：设置'), () => showSettings({
+    call: callKeeper, parse: parseJson, queue: enqueue, refresh, cardThemes, onAppearanceChange,
+  }));
 }

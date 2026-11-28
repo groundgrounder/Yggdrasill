@@ -16,12 +16,16 @@ import {isMap} from '../core/utils.mjs';
 import {createMemFs, memPath} from './memfs.mjs';
 import {createBookkeeper, customApi, parseJson, runKeeperLoop, buildKeepRecord, repairRecord} from './bookkeeper.mjs';
 import {createView} from './view.mjs';
-import {installStyle, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
+import {installStyle, applyProseAppearance, createStatusView, popup, modalPopup, openingNode, repairNode} from './ui.mjs';
+import {
+  BUILTIN_THEMES, resolveAppearance, buildThemeCss, validateThemeCss,
+  validateThemeEntry, sanitizeCustomCss, enhanceProseNode, clearProseEnhancements,
+} from './themes.mjs';
 import {createOpeningDraft, createOpeningFlow, isDynamicOpening, dynamicOpeningBase} from './opening.mjs';
 import {RECORD_KEY, RECORD_FORMAT, ownershipOf, swipeOf, validateRecord, validateManifest, storedManifest, sanitizeText,
   recordOf, createHistoryAudit, emptyTailAssistant} from './records.mjs';
 import {createUpgradeFlow} from './upgrade.mjs';
-import {keeperSettings, showSettings, permissionFailure, createOpeningStorage} from './settings.mjs';
+import {keeperSettings, appearanceSettings, saveAppearance, showSettings, permissionFailure, createOpeningStorage} from './settings.mjs';
 import {stripCommands, fromText} from './commands-parser.mjs';
 import {registerAdapterEvents} from './events.mjs';
 import bundle from './bundle.generated.json' with {type: 'json'};
@@ -448,12 +452,22 @@ async function openRepair(id) {
   });
 }
 
+const cardThemes = Array.isArray(bundle.themes) ? bundle.themes : [];
+const currentAppearance = () => resolveAppearance(appearanceSettings(), cardThemes);
+
 let upgradeFlow = null;
 const status = createStatusView({session, injectId: INJECT_ID, messages, chatId, recordOf,
   checkRecord: (record, message) => checkCompatRecord(record, message).ok,
   floorOf: (before, after, record, verbose) => view.floor(before, after, record, {debug: verbose}),
   keeperSettings, openOpening: () => openingFlow.open(), rekeepFor, repairFor: id => () => openRepair(id),
-  runUpgrade: () => upgradeFlow.upgrade()});
+  runUpgrade: () => upgradeFlow.upgrade(), getAppearance: currentAppearance});
+
+function applyCurrentAppearance(overrideConfig = null) {
+  const resolved = resolveAppearance(overrideConfig ?? appearanceSettings(), cardThemes);
+  installStyle(resolved);
+  status.renderFloors();
+  return resolved;
+}
 upgradeFlow = createUpgradeFlow({manifest, recordKey: KEY, recordFormat: RECORD_FORMAT, validateRecord, ownershipOf,
   sanitizeText, messages, chatId, enqueue, audit: history.audit, clearCache: history.clearCache, refresh, session, status});
 
@@ -504,10 +518,11 @@ registerAdapterEvents({
   INJECT_ID, manifest, bundle, protocol, view, history, session, messages, invalidateTasks, enqueue,
   checkPermission, isGeneratingOrEmptyTail, stopHostGeneration, isKeeping: () => keeping, bookkeeping, debugging,
   refresh, refreshOpening0, isDynamicOpening, replayFrom, rekeepFloor, openRepair, init, checkCompatRecord,
-  openingFlow, status, recordOf, emptyTailAssistant, callKeeper, parseJson, showSettings, stringifyYaml, seal, ownershipOf,
+  openingFlow, status, recordOf, emptyTailAssistant, callKeeper, parseJson, showSettings, cardThemes,
+  onAppearanceChange: nextConfig => applyCurrentAppearance(nextConfig), stringifyYaml, seal, ownershipOf,
 });
 
-installStyle();
+installStyle(currentAppearance());
 await init();
 toastr.success(catalog.groups.length + ' 角色组，' + catalog.events.length + ' 事件', '世界树已启动');
 if (typeof globalThis.__YGG_PLAYTEST_HOOK__ === 'function') {
@@ -515,5 +530,8 @@ if (typeof globalThis.__YGG_PLAYTEST_HOOK__ === 'function') {
     bundle, manifest, loaded, decl, catalog, settings, protocol, router, quietRouter, keeper,
     createOpeningDraft, openingNode, runKeeperLoop, buildKeepRecord, repairRecord, callKeeper, generateOpening,
     parseJson, applyCommands, route, renderContext, stringifyYaml, createCalendar, evaluateCondition, conditionReferences, seal,
+    cardThemes, BUILTIN_THEMES, resolveAppearance, buildThemeCss, validateThemeCss, validateThemeEntry,
+    sanitizeCustomCss, enhanceProseNode, clearProseEnhancements, appearanceSettings, saveAppearance,
+    applyCurrentAppearance, applyProseAppearance,
   }));
 }

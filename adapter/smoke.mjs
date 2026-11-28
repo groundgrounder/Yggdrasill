@@ -71,7 +71,7 @@ assert.equal(digest(manifest.世界书文件), manifest.世界书哈希);
 
 const programPaths = manifest.程序文件.map(item => item.路径);
 assert.deepEqual(programPaths, [...programPaths].sort(compare));
-for (const name of ['runtime', 'events', 'memfs', 'bookkeeper', 'records', 'opening', 'opening-ui', 'settings', 'commands-parser', 'view', 'ui', 'upgrade'])
+for (const name of ['runtime', 'events', 'memfs', 'bookkeeper', 'records', 'opening', 'opening-ui', 'settings', 'commands-parser', 'view', 'ui', 'themes', 'upgrade'])
   assert.ok(programPaths.includes(`adapter/${name}.mjs`), name);
 for (const name of ['变量更新规则', '角色通用约束', '扮演准则']) assert.ok(programPaths.includes(`templates/${name}.txt`));
 assert.ok(programPaths.every(file => !/^(?:adapter\/(?:build|smoke|bundle\.generated)|adapter\/dist\/|证据\/|test\/|日志|截图)/.test(file)));

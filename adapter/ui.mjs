@@ -1,8 +1,14 @@
 // 页面上的画法：样式、本局面板的段落、每楼一行、设置表单。依赖酒馆页面的 jQuery（$）；数据见 view.mjs，逻辑在 runtime.mjs。
 // 颜色都取酒馆主题的变量，换主题时随之变化；全量兼容极简 DOM 桩（仅用白名单方法）。
 import {isDynamicOpening} from './opening.mjs';
+import {
+  BUILTIN_THEMES, DEFAULT_APPEARANCE, resolveAppearance, buildThemeCss,
+  sanitizeCustomCss, enhanceProseNode, clearProseEnhancements,
+} from './themes.mjs';
 
 const STYLE_ID = 'ygg-style';
+const CUSTOM_STYLE_ID = 'ygg-custom-style';
+let activeAppearance = resolveAppearance(DEFAULT_APPEARANCE, []);
 const ICONS = {
   tree: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDAwIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTEyIDIydi05Ii8+PHBhdGggZD0iTTEyIDEzIDcgOCIvPjxwYXRoIGQ9Ik0xMiAxM2w1LTUiLz48cGF0aCBkPSJNMTIgMTNWNCIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMy41IiByPSIxLjUiIGZpbGw9IiMwMDAiLz48Y2lyY2xlIGN4PSI2LjUiIGN5PSI3LjUiIHI9IjEuNSIgZmlsbD0iIzAwMCIvPjxjaXJjbGUgY3g9IjE3LjUiIGN5PSI3LjUiIHI9IjEuNSIgZmlsbD0iIzAwMCIvPjxwYXRoIGQ9Ik04IDIyaDgiLz48L3N2Zz4=',
   compass: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDAwIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOSIvPjxwb2x5Z29uIHBvaW50cz0iMTYgOCAxNCAxNCA4IDE2IDEwIDEwIDE2IDgiIGZpbGw9IiMwMDAiIHN0cm9rZT0ibm9uZSIvPjwvc3ZnPg==',
@@ -20,7 +26,7 @@ const ICONS = {
 
 const CSS = `
 /* 统一设计令牌：暗/亮双主题自适应 */
-.ygg-panel, .ygg-floor {
+.ygg-panel, .ygg-floor, .ygg-prose-host {
   --ygg-text: var(--SmartThemeBodyColor, #e5e7eb);
   --ygg-muted: var(--SmartThemeEmColor, color-mix(in srgb, var(--ygg-text) 64%, transparent));
   --ygg-accent: var(--SmartThemeQuoteColor, #4f9d7a);
@@ -38,6 +44,8 @@ const CSS = `
   --ygg-radius-sub: 7px;
   --ygg-radius-pill: 999px;
   --ygg-ease: 0.16s ease;
+}
+.ygg-panel, .ygg-floor {
   box-sizing: border-box;
   color: var(--ygg-text);
   line-height: 1.5;
@@ -464,9 +472,56 @@ const CSS = `
 }
 `;
 
-export function installStyle() {
+export function installStyle(appearance = null, cardThemes = []) {
+  if (appearance) {
+    activeAppearance = appearance.theme && appearance.themeId
+      ? appearance
+      : resolveAppearance(appearance, cardThemes);
+  }
+  const fullCss = `${CSS}\n${buildThemeCss(activeAppearance)}`;
   $(`#${STYLE_ID}`).remove();
-  $('head').append($('<style>').attr('id', STYLE_ID).text(CSS));
+  $('head').append($('<style>').attr('id', STYLE_ID).text(fullCss));
+  $(`#${CUSTOM_STYLE_ID}`).remove();
+  const customCss = sanitizeCustomCss(activeAppearance.自定义CSS ?? '');
+  if (customCss.trim()) {
+    $('head').append($('<style>').attr('id', CUSTOM_STYLE_ID).text(customCss));
+  }
+  if (typeof document !== 'undefined') {
+    if (typeof document.documentElement?.setAttribute === 'function') {
+      document.documentElement.setAttribute('data-ygg-theme', activeAppearance.themeId);
+    }
+    if (typeof document.querySelectorAll === 'function') {
+      for (const el of document.querySelectorAll('.ygg-panel[data-ygg-theme], .ygg-floor[data-ygg-theme]')) {
+        el.setAttribute?.('data-ygg-theme', activeAppearance.themeId);
+      }
+    }
+  }
+  return activeAppearance;
+}
+
+// 无损正文美化：仅挂载 CSS 类/属性与可选对白 span（绝不改写 chat[i].mes 原始文本），在极简 DOM 桩中安全空转。
+export function applyProseAppearance(resolved = activeAppearance, root = null) {
+  const targetRoot = root ?? (typeof document !== 'undefined' ? document : null);
+  if (!targetRoot || typeof targetRoot.querySelectorAll !== 'function') return {touched: 0};
+  const active = resolved && resolved.theme ? resolved : activeAppearance;
+  const hosts = [...targetRoot.querySelectorAll('#chat .mes[is_user="false"] .mes_text, .ygg-prose-target')];
+  for (const el of hosts) {
+    if (active.正文美化) {
+      el.classList?.add?.('ygg-prose-host');
+      el.setAttribute?.('data-ygg-theme', active.themeId);
+      el.setAttribute?.('data-ygg-indent', active.首行缩进 ? 'true' : 'false');
+      el.setAttribute?.('data-ygg-dialogue', active.对白高亮 ? 'true' : 'false');
+      if (active.对白高亮) enhanceProseNode(el, {dialogue: true});
+      else clearProseEnhancements(el);
+    } else {
+      clearProseEnhancements(el);
+      el.classList?.remove?.('ygg-prose-host');
+      el.removeAttribute?.('data-ygg-theme');
+      el.removeAttribute?.('data-ygg-indent');
+      el.removeAttribute?.('data-ygg-dialogue');
+    }
+  }
+  return {touched: hosts.length};
 }
 
 const TONES = [['已确认', 'ok'], ['进行中', 'hot'], ['候选', 'hot'], ['待登记', 'info'], ['已结束', 'ok'], ['已排除', 'bad'], ['异常', 'bad'], ['不存在', 'bad']];
@@ -570,7 +625,7 @@ export function panelNode(title, sections = []) {
     ...(metaPills.length ? [$('<div>').addClass('ygg-head-meta').append(metaPills)] : []),
   );
 
-  const root = $('<div>').addClass('ygg-panel').append(head);
+  const root = $('<div>').addClass('ygg-panel').attr('data-ygg-theme', activeAppearance.themeId).append(head);
   if (!hasNow) {
     root.append(list.map(sectionNode));
     return root;
@@ -629,7 +684,7 @@ export function panelNode(title, sections = []) {
   return root;
 }
 
-export const textNode = (title, text) => $('<div>').addClass('ygg-panel').append(
+export const textNode = (title, text) => $('<div>').addClass('ygg-panel').attr('data-ygg-theme', activeAppearance.themeId).append(
   $('<div>').addClass('ygg-panel-head').append($('<div>').addClass('ygg-panel-brand').append(icon('tree', true), $('<h3>').text(title))),
   $('<pre>').addClass('ygg-pre').text(text),
 );
@@ -646,16 +701,18 @@ export function openingStatusNode({open, reason = '尚未开局'}) {
       }),
     ),
   );
-  return $('<details>').addClass('ygg-floor ygg-pending ygg-opening-guide').prop('open', true)
+  return $('<details>').addClass('ygg-floor ygg-pending ygg-opening-guide').attr('data-ygg-theme', activeAppearance.themeId).prop('open', true)
     .append($('<summary>').append(
       $('<span>').addClass('ygg-label').append(icon('spark'), $('<span>').text('待开局')),
       $('<span>').text('等待开局 — 点击下方按钮或顶栏「世界树：开局」开始'),
     ), body);
 }
 
-// 每楼一行：收起时一行摘要，展开为逐项详情、调试附录与“重新记账”“修补”。line 为 view.floor 的结果；pending 时只显示“记账中”。
-export function floorNode(line, {rekeep = null, repair = null, pending = false} = {}) {
-  const node = $('<details>').addClass('ygg-floor');
+// 每楼一行：支持 bar（精简底条）/ card（场景抬头卡）/ minimal（极简徽章）三种形态。
+// 收起时展示摘要或场景快照胶囊，展开为逐项详情、调试附录与“重新记账”“修补”。pending 时只显示“记账中”。
+export function floorNode(line, {rekeep = null, repair = null, pending = false, variant = 'bar', scene = null} = {}) {
+  const mode = variant === 'card' || variant === 'minimal' ? variant : 'bar';
+  const node = $('<details>').addClass(`ygg-floor ygg-floor-${mode}`).attr('data-ygg-theme', activeAppearance.themeId);
   if (pending) {
     return node.addClass('ygg-pending').append(
       $('<summary>').append(
@@ -675,8 +732,26 @@ export function floorNode(line, {rekeep = null, repair = null, pending = false} 
     if (repair) actions.append($('<button>').attr('type', 'button').addClass('menu_button').text('修补').on('click', event => { event?.preventDefault?.(); return repair(); }));
     body.append(actions);
   }
+
+  const labelEl = $('<span>').addClass('ygg-label').append(icon(line.失败 ? 'warn' : 'book'), $('<span>').text('记账'));
+  if (mode === 'card') {
+    const pills = [];
+    if (scene?.时间) pills.push($('<span>').addClass('ygg-scene-pill').append(icon('clock'), $('<span>').text(scene.时间)));
+    if (scene?.地点) pills.push($('<span>').addClass('ygg-scene-pill').append(icon('pin'), $('<span>').text(scene.地点)));
+    if (Array.isArray(scene?.在场) && scene.在场.length) {
+      const names = scene.在场.length <= 3 ? scene.在场.join('、') : `${scene.在场.slice(0, 3).join('、')} 等 ${scene.在场.length} 人`;
+      pills.push($('<span>').addClass('ygg-scene-pill').append(icon('users'), $('<span>').text(names)));
+    }
+    const topRow = $('<div>').addClass('ygg-floor-card-top').append(
+      $('<span>').addClass('ygg-floor-caret').attr('aria-hidden', 'true').text('▸'),
+      labelEl,
+      ...(pills.length ? [$('<div>').addClass('ygg-floor-scene').append(pills)] : []),
+    );
+    return node.append($('<summary>').append(topRow, $('<span>').addClass('ygg-brief').text(line.摘要)), body);
+  }
+
   return node.append($('<summary>').append(
-    $('<span>').addClass('ygg-label').append(icon(line.失败 ? 'warn' : 'book'), $('<span>').text('记账')),
+    labelEl,
     $('<span>').addClass('ygg-brief').text(line.摘要),
   ), body);
 }
@@ -770,7 +845,10 @@ export function upgradeNode(upgrade, {onUpgrade = null, onInspect = null} = {}) 
 // 设置表单，分区仿 MVU 的额外模型解析：显示、记账（方式、连接、模型与拉取、参数、应答格式、测试）。改动即存。
 // current 为当前设置，save(patch) 存，presets 为酒馆的代理预设名，activeModel 为酒馆当前的模型名；
 // pull(settings) 返回模型列表，test(settings) 返回 {文本}，失败时抛出。
-export function settingsNode({current, save, presets = [], activeModel = '', pull, test}) {
+export function settingsNode({
+  current, save, presets = [], activeModel = '', pull, test,
+  appearance = null, saveAppearance = null, cardThemes = [], onAppearanceChange = null,
+}) {
   const settings = {...current}, set = patch => {
     Object.assign(settings, patch);
     const saving = save(patch);
@@ -842,13 +920,128 @@ export function settingsNode({current, save, presets = [], activeModel = '', pul
     manual.toggle(!settings.代理预设);
     params.toggle(settings.方式 !== '关闭');
   }
-  const form = $('<div>').addClass('ygg-panel ygg-form').append(
+
+  let appearanceSection = null;
+  if (appearance && typeof appearance === 'object') {
+    const appState = {...DEFAULT_APPEARANCE, ...appearance};
+    const cards = Array.isArray(cardThemes) ? cardThemes.filter(item => item && typeof item.id === 'string') : [];
+    const allThemes = [...cards, ...BUILTIN_THEMES];
+    const triEncode = value => value === true ? 'on' : value === false ? 'off' : 'auto';
+    const triDecode = value => value === 'on' ? true : value === 'off' ? false : null;
+
+    const themeDesc = $('<div>').addClass('ygg-theme-desc');
+    const updateThemeDesc = (resolved = resolveAppearance(appState, cards)) => {
+      const sourceTag = resolved.theme.source === 'card' ? '本卡专属' : '内置官方';
+      const autoNote = appState.主题 === 'auto' ? `（当前跟随默认：${resolved.theme.name}）` : '';
+      themeDesc.text(`[${sourceTag}] ${resolved.theme.name}${autoNote} — ${resolved.theme.description || '无说明'}`);
+    };
+
+    const setApp = patch => {
+      Object.assign(appState, patch);
+      const saving = saveAppearance?.(patch);
+      saving?.catch?.(() => {});
+      const resolved = resolveAppearance(appState, cards);
+      updateThemeDesc(resolved);
+      form.attr('data-ygg-theme', resolved.themeId);
+      onAppearanceChange?.({...appState});
+    };
+
+    const themeOptions = [
+      ['auto', cards.length ? `跟随本卡默认（${(cards.find(t => t.default) ?? cards[0]).name}）` : '跟随本卡默认（现代工具）'],
+      ...cards.map(t => [t.id, `[本卡] ${t.name}`]),
+      ...BUILTIN_THEMES.map(t => [t.id, t.name]),
+    ];
+    const themeSelect = $('<select>').addClass('text_pole').attr('data-ygg-setting', 'theme')
+      .append(themeOptions.map(([v, label]) => $('<option>').val(v).text(label)))
+      .val(allThemes.some(t => t.id === appState.主题) || appState.主题 === 'auto' ? appState.主题 : 'auto')
+      .on('change', event => setApp({主题: event.target.value}));
+
+    const variantSelect = $('<select>').addClass('text_pole').attr('data-ygg-setting', 'floorVariant')
+      .append([
+        ['auto', '跟随主题默认'],
+        ['bar', '精简底条'],
+        ['card', '场景抬头卡'],
+        ['minimal', '极简徽章'],
+      ].map(([v, label]) => $('<option>').val(v).text(label)))
+      .val(appState.每楼形态 || 'auto')
+      .on('change', event => setApp({每楼形态: event.target.value}));
+
+    const triSelect = (key, dataKey) => $('<select>').addClass('text_pole').attr('data-ygg-setting', dataKey)
+      .append([
+        ['auto', '跟随主题默认'],
+        ['on', '开启'],
+        ['off', '关闭'],
+      ].map(([v, label]) => $('<option>').val(v).text(label)))
+      .val(triEncode(appState[key]))
+      .on('change', event => setApp({[key]: triDecode(event.target.value)}));
+
+    const proseSelect = triSelect('正文美化', 'proseBeautify');
+    const dialogueSelect = triSelect('对白高亮', 'dialogueHighlight');
+    const indentSelect = triSelect('首行缩进', 'firstLineIndent');
+
+    const scaleInput = $('<input>').addClass('text_pole').attr({type: 'number', min: 0.9, max: 1.2, step: 0.05, 'data-ygg-setting': 'proseScale'})
+      .val(appState.正文字号)
+      .on('change', event => {
+        const num = Number(event.target.value);
+        if (Number.isFinite(num)) setApp({正文字号: Math.min(1.2, Math.max(0.9, num))});
+      });
+    const leadingInput = $('<input>').addClass('text_pole').attr({type: 'number', min: 1.5, max: 2.2, step: 0.05, 'data-ygg-setting': 'proseLeading'})
+      .val(appState.正文行距)
+      .on('change', event => {
+        const num = Number(event.target.value);
+        if (Number.isFinite(num)) setApp({正文行距: Math.min(2.2, Math.max(1.5, num))});
+      });
+
+    const customCssInput = $('<textarea>').addClass('text_pole').attr({rows: 4, 'data-ygg-setting': 'customCss',
+      placeholder: '例：.ygg-panel { --ygg-accent: #7c6bf0; }（外链、@import 与危险规则会被自动剥离）'})
+      .val(appState.自定义CSS ?? '')
+      .on('input', event => setApp({自定义CSS: String(event?.target?.value ?? '')}))
+      .on('change', event => setApp({自定义CSS: String(event?.target?.value ?? '')}));
+
+    const resetBtn = $('<button>').attr('type', 'button').addClass('menu_button').text('恢复默认外观')
+      .on('click', event => {
+        event?.preventDefault?.();
+        const resetPatch = {...DEFAULT_APPEARANCE};
+        themeSelect.val(resetPatch.主题);
+        variantSelect.val(resetPatch.每楼形态);
+        proseSelect.val('auto');
+        dialogueSelect.val('auto');
+        indentSelect.val('auto');
+        scaleInput.val(resetPatch.正文字号);
+        leadingInput.val(resetPatch.正文行距);
+        customCssInput.val(resetPatch.自定义CSS);
+        setApp(resetPatch);
+      });
+
+    updateThemeDesc();
+    appearanceSection = section('外观与正文', true,
+      field('前端主题', themeSelect),
+      themeDesc,
+      field('每楼状态栏形态', variantSelect, '场景抬头卡展示本楼时间、地点与在场快照；极简徽章最克制。'),
+      $('<div>').addClass('ygg-appearance-grid').append(
+        field('正文美化排版', proseSelect),
+        field('对白引号高亮', dialogueSelect),
+        field('中文首行缩进', indentSelect),
+      ),
+      $('<div>').addClass('ygg-range-grid').append(
+        field('正文字号缩放（0.9–1.2）', scaleInput),
+        field('正文行距（1.5–2.2）', leadingInput),
+      ),
+      section('高级：自定义 CSS', false,
+        field('附加样式（仅本机生效，自动消毒外链与危险规则）', customCssInput),
+        $('<div>').addClass('ygg-field').append(resetBtn),
+      ),
+    );
+  }
+
+  const form = $('<div>').addClass('ygg-panel ygg-form').attr('data-ygg-theme', activeAppearance.themeId).append(
     $('<div>').addClass('ygg-panel-head').append(
       $('<div>').addClass('ygg-panel-brand').append(icon('sliders', true), $('<h3>').text('世界树：设置')),
     ),
     section('显示', true,
       check('每楼记录', '每楼下方显示这一楼记了什么', '只显示在页面上，不进提示词。'),
       check('调试', '调试', '本局面板显示全部事件与各楼的记账结果，每楼记录附命令，失败提示写出细节。会看到尚未发生的事件。')),
+    ...(appearanceSection ? [appearanceSection] : []),
     section('记账', true, field('记账用的模型', mode), sameHint, other, params));
   sync();
   return form;
@@ -865,8 +1058,21 @@ export function modalPopup(node, options = {wide: true, large: true}, track = nu
   return instance.show().finally(() => track?.(null, instance));
 }
 
+function extractFloorScene(state) {
+  if (!state || typeof state !== 'object') return null;
+  const time = state.世界?.当前时间 || '';
+  const placeObj = state.世界?.当前地点;
+  const place = placeObj ? `${placeObj.地标}${placeObj.场景 ? `·${placeObj.场景}` : ''}` : '';
+  const present = [];
+  for (const [id, role] of Object.entries(state.角色 ?? {})) {
+    if (role?.在场 === true) present.push(role.名称 || id);
+  }
+  if (!time && !place && !present.length) return null;
+  return {时间: time, 地点: place, 在场: present};
+}
+
 export function createStatusView({session, injectId, messages, chatId, recordOf, checkRecord, floorOf, keeperSettings,
-  openOpening, rekeepFor, repairFor, runUpgrade}) {
+  openOpening, rekeepFor, repairFor, runUpgrade, getAppearance = () => activeAppearance}) {
   const show = (title, text) => popup(textNode(title, text));
   const showSections = (title, sections) => popup(panelNode(title, sections));
   const showBlocked = () => {
@@ -957,12 +1163,16 @@ export function createStatusView({session, injectId, messages, chatId, recordOf,
       if (Number.isSafeInteger(id)) attachFloor(id, node); else $('#chat').append(node);
       return;
     }
-    if (!keeperSettings().每楼记录) return;
+    const resolved = getAppearance?.() ?? activeAppearance;
+    if (!keeperSettings().每楼记录) {
+      applyProseAppearance(resolved);
+      return;
+    }
     const verbose = keeperSettings().调试 === true, rekeep = keeperSettings().方式 !== '关闭';
     let before = null;
     for (const message of messages()) {
       const id = message.message_id;
-      if (id === session.keepingFloor) { attachFloor(id, floorNode(null, {pending: true})); continue; }
+      if (id === session.keepingFloor) { attachFloor(id, floorNode(null, {pending: true, variant: resolved.每楼形态})); continue; }
       if (message.role !== 'assistant') continue;
       const record = recordOf(message);
       if (!checkRecord(record, message)) continue;
@@ -974,10 +1184,13 @@ export function createStatusView({session, injectId, messages, chatId, recordOf,
         const editableFloor = id > 0 || (id === 0 && isDynamicOpening(record));
         const again = rekeep && editableFloor ? rekeepFor(id) : null;
         const repair = rekeep && editableFloor && repairFor ? repairFor(id) : null;
-        attachFloor(id, floorNode(line, {rekeep: again, repair}));
+        attachFloor(id, floorNode(line, {
+          rekeep: again, repair, variant: resolved.每楼形态, scene: extractFloorScene(record.本局),
+        }));
         before = record.本局;
       } catch (error) { console.warn('世界树：每楼记录', error); }
     }
+    applyProseAppearance(resolved);
   }
 
   function upgradePending(result) {

@@ -11,9 +11,10 @@ import {loadRouter} from '../core/router.mjs';
 import {seal} from '../core/protocol.mjs';
 import {compileWorldbook} from '../core/catalog.mjs';
 import {applyCommands} from '../core/commands.mjs';
-import {isMap} from '../core/utils.mjs';
+import {codepointCompare, isMap} from '../core/utils.mjs';
 import {adaptOpeningCommands} from './opening.mjs';
 import {assertProgramMatches, collectProgram, collectWorldbook, createManifest, PROGRAM_TEMPLATES, RUNTIME_ROOT} from './manifest.mjs';
+import {validateThemeEntry} from './themes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = path.resolve(HERE, '..');
@@ -46,6 +47,126 @@ const commandList = (value, label = '开场命令') => {
 };
 const overlap = (left, right) => left.find(id => right.includes(id)) ?? null;
 const PLAN_FIELDS = ['开场白', '开场命令', '可选在场', '必需角色组'];
+const utf8Decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
+
+async function lstatOrNull(target) {
+  try { return await fs.lstat(target); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+async function ensureContained(realRoot, target, label) {
+  const real = await fs.realpath(target);
+  const rel = path.relative(realRoot, real);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new PackError(`${label}越出允许目录：${target}`);
+  }
+  return real;
+}
+
+async function readUtf8Checked(file, label) {
+  let buf;
+  try { buf = await fs.readFile(file); }
+  catch (error) { throw new PackError(`无法读取${label} ${file}：${error.message}`); }
+  try { return utf8Decoder.decode(buf); }
+  catch { throw new PackError(`${label}不是合法 UTF-8 文本：${file}`); }
+}
+
+async function loadThemeDir(dir, realThemeRoot, existingIds) {
+  const entries = await fs.readdir(dir, {withFileTypes: true});
+  entries.sort((a, b) => codepointCompare(a.name, b.name));
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    const stat = await fs.lstat(full);
+    if (stat.isSymbolicLink()) throw new PackError(`外观目录不跟随符号链接：${full}`);
+  }
+  const yamlPath = path.join(dir, '主题.yaml');
+  const yamlStat = await lstatOrNull(yamlPath);
+  if (!yamlStat) return null;
+  if (yamlStat.isSymbolicLink() || !yamlStat.isFile()) {
+    throw new PackError(`主题配置须为普通文件且不得是符号链接：${yamlPath}`);
+  }
+  await ensureContained(realThemeRoot, yamlPath, '主题配置');
+  let raw;
+  try { raw = parseYaml(await readUtf8Checked(yamlPath, '主题配置')); }
+  catch (error) {
+    if (error instanceof PackError) throw error;
+    throw new PackError(`解析主题配置失败 ${yamlPath}：${error.message}`);
+  }
+  if (!isMap(raw)) throw new PackError(`主题配置须为 YAML 映射：${yamlPath}`);
+
+  const cssFileName = typeof raw.样式文件 === 'string' && raw.样式文件.trim()
+    ? raw.样式文件.trim()
+    : (typeof raw.cssFile === 'string' && raw.cssFile.trim() ? raw.cssFile.trim() : null);
+
+  let fileCss = '';
+  if (cssFileName) {
+    if (cssFileName.includes('/') || cssFileName.includes('\\') || cssFileName === '.' || cssFileName === '..') {
+      throw new PackError(`主题样式文件须位于同目录内：${cssFileName}`);
+    }
+    const cssPath = path.join(dir, cssFileName);
+    const cssStat = await lstatOrNull(cssPath);
+    if (!cssStat || cssStat.isSymbolicLink() || !cssStat.isFile()) {
+      throw new PackError(`主题指定的样式文件缺失、非普通文件或是符号链接：${cssPath}`);
+    }
+    await ensureContained(realThemeRoot, cssPath, '主题样式文件');
+    fileCss = await readUtf8Checked(cssPath, '主题样式文件');
+  } else {
+    for (const candidate of ['样式.css', 'theme.css']) {
+      const cssPath = path.join(dir, candidate);
+      const cssStat = await lstatOrNull(cssPath);
+      if (!cssStat) continue;
+      if (cssStat.isSymbolicLink() || !cssStat.isFile()) {
+        throw new PackError(`主题样式文件须为普通文件且不得是符号链接：${cssPath}`);
+      }
+      await ensureContained(realThemeRoot, cssPath, '主题样式文件');
+      fileCss = await readUtf8Checked(cssPath, '主题样式文件');
+      break;
+    }
+  }
+
+  const inlineCss = typeof raw.css === 'string' ? raw.css : (typeof raw.样式 === 'string' ? raw.样式 : '');
+  const mergedCss = [fileCss, inlineCss].filter(Boolean).join('\n');
+  const payload = {...raw};
+  if (mergedCss) {
+    payload.css = mergedCss;
+    delete payload.样式;
+  }
+
+  let validated;
+  try { validated = validateThemeEntry(payload, {existingIds}); }
+  catch (error) { throw new PackError(`外观主题校验失败（${yamlPath}）：${error.message}`); }
+  existingIds.add(validated.id);
+  return validated;
+}
+
+async function collectThemes(projectDir) {
+  const realProject = await fs.realpath(projectDir);
+  const themesRoot = path.join(realProject, '外观');
+  const rootStat = await lstatOrNull(themesRoot);
+  if (!rootStat) return [];
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new PackError(`外观目录须为普通目录且不得是符号链接：${themesRoot}`);
+  }
+  const realThemesRoot = await ensureContained(realProject, themesRoot, '外观目录');
+  const existingIds = new Set();
+  const themes = [];
+
+  const rootTheme = await loadThemeDir(realThemesRoot, realThemesRoot, existingIds);
+  if (rootTheme) themes.push(rootTheme);
+
+  const children = await fs.readdir(realThemesRoot, {withFileTypes: true});
+  children.sort((a, b) => codepointCompare(a.name, b.name));
+  for (const child of children) {
+    const full = path.join(realThemesRoot, child.name);
+    const stat = await fs.lstat(full);
+    if (stat.isSymbolicLink()) throw new PackError(`外观目录不跟随符号链接：${full}`);
+    if (!stat.isDirectory()) continue;
+    await ensureContained(realThemesRoot, full, '外观主题子目录');
+    const subTheme = await loadThemeDir(full, realThemesRoot, existingIds);
+    if (subTheme) themes.push(subTheme);
+  }
+  return themes;
+}
 
 export async function packCard({
   projectDir,
@@ -152,10 +273,13 @@ export async function packCard({
     planOpenings[id] = resolved;
   }
 
+  const themes = await collectThemes(projectDir);
+
   const bundle = {
     root: `${RUNTIME_ROOT}/世界书`,
     files,
     templates,
+    themes,
     opening: face.开局,
     openingCommands: topCommands,
     openingGreeting: face.开场白,

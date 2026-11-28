@@ -1,10 +1,13 @@
 // 记账设置与宿主权限自检：设置存在酒馆的全局变量里，不随卡导出；权限只检查宿主实际暴露的状态。
 // 本模块不缓存本局状态；卡内脚本、局部正则与当前模式由调用方以 {permissionIds, bookkeeping} 显式传入。
 import {codepointCompare, isMap} from '../core/utils.mjs';
+import {DEFAULT_APPEARANCE} from './themes.mjs';
 import {popup, settingsNode} from './ui.mjs';
 
 export const SETTINGS_KEY = '世界树·记账';
+export const APPEARANCE_KEY = '世界树·外观';
 export const OPENING_PRESETS_KEY = '世界树·开局预设';
+export const APPEARANCE_DEFAULTS = DEFAULT_APPEARANCE;
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 // 应答格式取代旧的“结构化输出”开关；没有保存设置时默认走任意 OpenAI 兼容端点都可用的提示词 JSON。
 // 调试关着时，玩家看不到候选、将到与已排除的事件，失败提示也不写细节（细节里可能有将到事件的ID）。
@@ -22,24 +25,24 @@ let settingsWrite = Promise.resolve(), settingsWriteError = null;
 const wait = delay => new Promise(resolve => setTimeout(resolve, delay));
 const sameSetting = (left, right) => Object.is(left, right) || JSON.stringify(left) === JSON.stringify(right);
 
-async function persistedKeeperSettings() {
+async function persistedGlobalSettings() {
   const headers = typeof SillyTavern.getRequestHeaders === 'function'
     ? SillyTavern.getRequestHeaders()
     : SillyTavern.getContext().getRequestHeaders();
   const response = await fetch('/api/settings/get', {method: 'POST', headers, cache: 'no-cache'});
   if (!response.ok) throw new Error(`读取酒馆设置失败：HTTP ${response.status}`);
   const body = await response.json(), saved = typeof body.settings === 'string' ? JSON.parse(body.settings) : body.settings;
-  return saved?.extension_settings?.variables?.global?.[SETTINGS_KEY] ?? {};
+  return saved?.extension_settings?.variables?.global ?? {};
 }
 
 // replaceVariables 先改页面内存，再交给酒馆的防抖保存。只有服务器读回完整补丁，关闭设置才可以完成。
-export async function waitForSettings(expected) {
+export async function waitForSettings(expected, key = SETTINGS_KEY) {
   const deadline = Date.now() + 10000;
   let lastError = null;
   while (true) {
     try {
-      const saved = await persistedKeeperSettings();
-      if (Object.entries(expected).every(([key, value]) => sameSetting(saved[key], value))) return;
+      const saved = (await persistedGlobalSettings())?.[key] ?? {};
+      if (Object.entries(expected).every(([entryKey, value]) => sameSetting(saved[entryKey], value))) return;
     } catch (error) { lastError = error; }
     if (Date.now() >= deadline) throw lastError ?? new Error('酒馆设置未在限定时间内保存完成');
     await wait(50);
@@ -57,11 +60,58 @@ export function saveSettings(patch) {
   return write;
 }
 
+export function appearanceSettings(cardId = null) {
+  if (typeof globalThis.getVariables !== 'function') return {...DEFAULT_APPEARANCE};
+  try {
+    const raw = globalThis.getVariables({type: 'global'})?.[APPEARANCE_KEY];
+    if (!isMap(raw)) return {...DEFAULT_APPEARANCE};
+    const {按卡: perCard, ...globalPart} = raw;
+    const validCard = typeof cardId === 'string' && cardId.trim() && !RESERVED_KEYS.has(cardId.trim()) ? cardId.trim() : null;
+    const cardPart = validCard && isMap(perCard) && Object.hasOwn(perCard, validCard) && isMap(perCard[validCard])
+      ? perCard[validCard]
+      : {};
+    return {...DEFAULT_APPEARANCE, ...globalPart, ...cardPart};
+  } catch {
+    return {...DEFAULT_APPEARANCE};
+  }
+}
+
+export function saveAppearance(patch, cardId = null) {
+  if (!isMap(patch)) return Promise.resolve();
+  return enqueueGlobalWrite(async () => {
+    settingsWriteError = null;
+    try {
+      const rawGlobals = typeof globalThis.getVariables === 'function' ? globalThis.getVariables({type: 'global'}) : {};
+      const globals = isMap(rawGlobals) ? {...rawGlobals} : {};
+      const current = isMap(globals[APPEARANCE_KEY]) ? {...globals[APPEARANCE_KEY]} : {};
+      const validCard = typeof cardId === 'string' && cardId.trim() && !RESERVED_KEYS.has(cardId.trim()) ? cardId.trim() : null;
+      let next;
+      if (validCard) {
+        const perCard = isMap(current.按卡) ? {...current.按卡} : {};
+        const prevCard = Object.hasOwn(perCard, validCard) && isMap(perCard[validCard]) ? perCard[validCard] : {};
+        perCard[validCard] = {...prevCard, ...patch};
+        next = {...current, 按卡: perCard};
+      } else {
+        next = {...current, ...patch};
+      }
+      if (typeof globalThis.replaceVariables === 'function') {
+        await globalThis.replaceVariables({...globals, [APPEARANCE_KEY]: next}, {type: 'global'});
+      }
+    } catch (error) {
+      settingsWriteError = error;
+      throw error;
+    }
+  });
+}
+
 export async function flushSettings() {
   await settingsWrite;
   if (settingsWriteError) throw settingsWriteError;
   const globals = getVariables({type: 'global'}) ?? {};
-  await waitForSettings(globals[SETTINGS_KEY] ?? {});
+  await waitForSettings(globals[SETTINGS_KEY] ?? {}, SETTINGS_KEY);
+  if (isMap(globals[APPEARANCE_KEY])) {
+    await waitForSettings(globals[APPEARANCE_KEY], APPEARANCE_KEY);
+  }
 }
 
 // 与 saveSettings 共用同一条 settingsWrite 串行队列，避免并发读写互相覆盖全局变量中的其它键。
@@ -246,14 +296,16 @@ async function testKeeper(config, {queue, call, parse, refresh}) {
     + (config.方式 === '另设模型' && config.模型 ? '，' + config.模型 : '') + '）'};
 }
 
-export async function showSettings({call, parse, queue, refresh}) {
+export async function showSettings({call, parse, queue, refresh, cardThemes = [], onAppearanceChange = null}) {
   const current = keeperSettings();
+  const appearance = appearanceSettings();
   const names = typeof getProxyPresetNames === 'function' ? getProxyPresetNames() : [];
   const presets = [...new Set([...names.filter(name => name && name !== 'None'), current.代理预设].filter(Boolean))];
   let activeModel = '';
   try { activeModel = SillyTavern.getChatCompletionModel?.() ?? ''; } catch {}
   await popup(settingsNode({current, save: saveSettings, presets, activeModel, pull: pullModels,
-    test: config => testKeeper(config, {queue, call, parse, refresh})}), {
+    test: config => testKeeper(config, {queue, call, parse, refresh}),
+    appearance, saveAppearance, cardThemes, onAppearanceChange}), {
     wide: true, large: false,
     onClosing: async () => {
       try { await flushSettings(); return true; }
