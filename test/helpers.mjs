@@ -33,6 +33,21 @@ export async function fixture(t) {
   await fs.cp(author, path.join(temporary, '作者资料'), {recursive: true});
   return root;
 }
+
+export async function createTempPackRepo(t, prefix = 'ygg-pack-repo-') {
+  const tmpRepo = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rm(tmpRepo, {recursive: true, force: true}));
+  await fs.cp(path.join(project, 'core'), path.join(tmpRepo, 'core'), {recursive: true});
+  await fs.cp(path.join(project, 'templates'), path.join(tmpRepo, 'templates'), {recursive: true});
+  await fs.copyFile(path.join(project, 'package.json'), path.join(tmpRepo, 'package.json'));
+  await fs.mkdir(path.join(tmpRepo, 'adapter'), {recursive: true});
+  for (const entry of await fs.readdir(path.join(project, 'adapter'), {withFileTypes: true})) {
+    if (entry.name === 'dist' || entry.name === 'bundle.generated.json') continue;
+    await fs.cp(path.join(project, 'adapter', entry.name), path.join(tmpRepo, 'adapter', entry.name), {recursive: true});
+  }
+  await fs.symlink(path.join(project, 'node_modules'), path.join(tmpRepo, 'node_modules'), 'dir');
+  return tmpRepo;
+}
 export async function read(root, name) { return parseYaml(await fs.readFile(path.join(root, name), 'utf8')); }
 export async function write(root, name, value) {
   const file = path.join(root, name);

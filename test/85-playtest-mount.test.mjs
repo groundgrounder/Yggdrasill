@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import os from 'node:os';
 import {promisify} from 'node:util';
-import {test, assert, fs, path, project} from './helpers.mjs';
+import {test, assert, fs, path, project, createTempPackRepo} from './helpers.mjs';
 import {packCard} from '../adapter/pack.mjs';
 import {mountCard, snapshotHashes, probeCard} from '../skills/ygg-playtest/scripts/mount-card.mjs';
 
@@ -23,11 +23,12 @@ async function runMountCli(args, cwd = project) {
 async function packFixtureCardToTmp(t) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ygg-playtest-'));
   t.after(() => fs.rm(tmpDir, {recursive: true, force: true}));
+  const tmpRepo = await createTempPackRepo(t, 'ygg-playtest-repo-');
   const result = await packCard({
     projectDir: wugangDir,
     faceFile: wugangFace,
-    adapterDir: path.join(project, 'adapter'),
-    repo: project,
+    adapterDir: path.join(tmpRepo, 'adapter'),
+    repo: tmpRepo,
     stdout: quiet,
     stderr: quiet,
   });

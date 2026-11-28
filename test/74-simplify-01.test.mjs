@@ -2,7 +2,7 @@ import {execFile, spawn} from 'node:child_process';
 import {once} from 'node:events';
 import os from 'node:os';
 import {promisify} from 'node:util';
-import {test, assert, fs, path, project, fixture, write} from './helpers.mjs';
+import {test, assert, fs, path, project, fixture, write, createTempPackRepo} from './helpers.mjs';
 import {runCli} from '../cli/ygg.mjs';
 import {parsePackArgs} from '../cli/pack.mjs';
 import {packCard, PackError} from '../adapter/pack.mjs';
@@ -182,8 +182,7 @@ test('SIMPLIFY-01-A2：ygg pack 参数解析、cwd 相对路径、缺省 卡面.
 test('YG-OPEN-01-A1：卡面按方案字段、逐方案干跑与 alternate_greetings 导出', async t => {
   const worldbook = await fixture(t);
   const projectDir = path.dirname(worldbook);
-  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'ygg-open-pack-'));
-  t.after(() => fs.rm(out, {recursive: true, force: true}));
+  const tmpRepo = await createTempPackRepo(t, 'ygg-open-pack-repo-');
   const quiet = {write: () => {}};
   const base = {
     卡ID: 'yggdrasill.wu-gang', 卡版本: '0.1.0', 名称: '雾港·多方案', 描述: '多方案打包测试。',
@@ -213,7 +212,7 @@ test('YG-OPEN-01-A1：卡面按方案字段、逐方案干跑与 alternate_greet
     return path.join(projectDir, name);
   };
   const pack = (file, options = {}) => packCard({projectDir, faceFile: file,
-    adapterDir: path.join(project, 'adapter'), repo: project, stdout: quiet, stderr: quiet, ...options});
+    adapterDir: path.join(tmpRepo, 'adapter'), repo: tmpRepo, stdout: quiet, stderr: quiet, ...options});
 
   const file = await faceFile('卡面.yaml', base);
   const result = await pack(file);
@@ -244,7 +243,7 @@ test('YG-OPEN-01-A1：卡面按方案字段、逐方案干跑与 alternate_greet
   // 非法配置在打包阶段拒绝；结构性错误不写产物。
   const rejectFace = async (name, face, pattern) => {
     const badFile = await faceFile(name, face);
-    await assert.rejects(pack(badFile, {prepareOnly: true, adapterDir: out}),
+    await assert.rejects(pack(badFile, {prepareOnly: true}),
       error => error instanceof PackError && pattern.test(error.message), name);
   };
   await rejectFace('未知字段.yaml', {...base, 多余: 1}, /未授权字段/u);
