@@ -49,7 +49,27 @@ const LEGACY_SYMBOLS = [
 
 const GROUP_DEP_TYPES = new Set(['角色启用', '角色版本', '角色已出场', '角色状态', '同处']);
 const COMBINATORS = new Set(['all', 'any', 'none']);
-const COMPOUND_NAME_RE = /[与及暨]/u;
+const HIGH_CONFIDENCE_COMPOUND_RE = /\S\s*(?:[、+/&＆]|以及|及其|并与|暨)\s*\S/u;
+const COMPOUND_FIXED_WORDS = [
+  '相提并论', '齐头并进', '德才兼备', '软硬兼施', '风雨兼程',
+  '力所能及', '鞭长莫及', '措手不及', '始料未及', '迫不及待', '悔之不及', '追悔莫及',
+  '与日俱增', '与世隔绝', '与虎谋皮', '与众不同', '休戚与共',
+  '参与', '授予', '授与', '赠与', '相与', '与会', '与之', '与其', '与否', '给与', '施与', '让与', '许与', '交与', '付与', '还与',
+  '波及', '普及', '不及', '及时', '未及', '累及', '触及', '涉及', '祸及', '危及', '殃及', '论及', '提及', '顾及', '计及', '及早', '及格', '及第', '及冠', '及笄', '及至',
+  '并州', '吞并', '兼并', '合并', '并肩', '并立', '并行', '并入', '并吞', '并非', '并不', '并未', '并无', '并称', '并列', '并存', '并重', '并举', '并进', '并驾',
+  '兼容', '兼任', '兼顾', '兼职', '兼程', '兼修', '兼备', '兼收', '兼施', '兼具',
+];
+const COMPOUND_FIXED_RE = new RegExp(COMPOUND_FIXED_WORDS.join('|'), 'gu');
+const MID_CONJUNCTION_RE = /\S[与及并兼]\S/u;
+
+export function isCompoundEventName(text) {
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (HIGH_CONFIDENCE_COMPOUND_RE.test(trimmed)) return true;
+  const cleaned = trimmed.replace(COMPOUND_FIXED_RE, '□');
+  return MID_CONJUNCTION_RE.test(cleaned);
+}
 
 let mountCounter = 0;
 
@@ -556,16 +576,57 @@ function evalConditionFallback(node, leaf, negative = false) {
       ? 'all'
       : 'any';
     const values = value.map(child => evalConditionFallback(child, leaf, neg));
-    if (mode === 'all') return values.includes(false) ? false : true;
-    return values.includes(true) ? true : false;
+    if (mode === 'all') return values.includes(false) ? false : values.includes(null) ? null : true;
+    return values.includes(true) ? true : values.includes(null) ? null : false;
   }
   return leaf(type, value, negative);
+}
+
+function combineConditions(first, second) {
+  if (first && second) return {all: [first, second]};
+  return first ?? second ?? null;
 }
 
 function evalThresholdBlocked(threshold, evaluateFn, leaf) {
   if (!threshold || typeof threshold !== 'object') return false;
   const result = evaluateFn(threshold, leaf);
   return result === false;
+}
+
+function isEventThresholdBlocked(content, evaluateFn, leaf) {
+  if (evalThresholdBlocked(content?.门槛, evaluateFn, leaf)) return true;
+  const branches = Array.isArray(content?.分支) ? content.分支 : [];
+  if (branches.length === 0) return false;
+  return branches.every(branch => {
+    const combined = combineConditions(content?.门槛, branch?.门槛);
+    return combined ? evalThresholdBlocked(combined, evaluateFn, leaf) : false;
+  });
+}
+
+function applyPolarity(raw, negative) {
+  if (raw === null) return null;
+  return negative ? !raw : raw;
+}
+
+function evalGroupDisabledRaw(type, value, disabledSet) {
+  if (!GROUP_DEP_TYPES.has(type) || !value || typeof value !== 'object') return null;
+  if (type === '同处') {
+    return Array.isArray(value.角色组ID) && value.角色组ID.some(id => disabledSet.has(id)) ? false : null;
+  }
+  return disabledSet.has(value.角色组ID) ? false : null;
+}
+
+function extractChangeCategory(change) {
+  if (typeof change?.路径 !== 'string') return null;
+  const parts = change.路径.split('.').map(part => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  if (parts[0] === '世界') {
+    return parts[1] === '剧情标记' ? '世界.剧情标记' : `世界.${parts[1]}`;
+  }
+  if (parts[0] === '角色') {
+    return parts.length >= 3 ? `角色.${parts[2]}` : null;
+  }
+  return `${parts[0]}.${parts[1]}`;
 }
 
 function conditionReferencesFallback(node, negative = false, conditionPath = '门槛') {
@@ -589,6 +650,13 @@ function conditionReferencesFallback(node, negative = false, conditionPath = '�
 function computeEventTreeHealth(api, catalog, groups, events, chains) {
   const confirmStrategyCounts = {自动确认: 0, 条件确认: 0, 仅作候选: 0};
   const compoundNameSet = new Set();
+  const multiCategorySet = new Set();
+  const worldEventsWithCoreSet = new Set();
+  const crowdedCoreEventsSet = new Set();
+  let maxCoreCount = 0;
+  const worldType = typeof api?.decl?.classification?.世界事件 === 'string' && api.decl.classification.世界事件.trim()
+    ? api.decl.classification.世界事件
+    : null;
   const refsFn = typeof api?.conditionReferences === 'function' ? api.conditionReferences : conditionReferencesFallback;
 
   const downstreamReferencedIds = new Set();
@@ -605,9 +673,18 @@ function computeEventTreeHealth(api, catalog, groups, events, chains) {
       confirmStrategyCounts.其他 = (confirmStrategyCounts.其他 ?? 0) + 1;
     }
 
-    if ((typeof event?.id === 'string' && COMPOUND_NAME_RE.test(event.id))
-      || (typeof content.事件标题 === 'string' && COMPOUND_NAME_RE.test(content.事件标题))) {
+    if ((typeof event?.id === 'string' && isCompoundEventName(event.id))
+      || (typeof content.事件标题 === 'string' && isCompoundEventName(content.事件标题))) {
       compoundNameSet.add(event.id);
+    }
+
+    const core = Array.isArray(content.核心参与者) ? content.核心参与者 : [];
+    if (core.length > maxCoreCount) maxCoreCount = core.length;
+    if (worldType && content.主类型 === worldType && core.length > 0) {
+      worldEventsWithCoreSet.add(event.id);
+    }
+    if (core.length >= 5) {
+      crowdedCoreEventsSet.add(event.id);
     }
 
     for (const ref of refsFn(content.门槛)) {
@@ -616,13 +693,23 @@ function computeEventTreeHealth(api, catalog, groups, events, chains) {
       }
     }
     const branches = Array.isArray(content.分支) ? content.分支 : [];
+    let isMultiCategory = Array.isArray(content.事件结果) && content.事件结果.length >= 3;
     for (const branch of branches) {
       for (const ref of refsFn(branch?.门槛)) {
         if (!ref?.排斥 && typeof ref?.事件ID === 'string' && ref.事件ID !== event.id) {
           downstreamReferencedIds.add(ref.事件ID);
         }
       }
+      if (!isMultiCategory && Array.isArray(branch?.变化) && branch.变化.length >= 3) {
+        const categories = new Set();
+        for (const change of branch.变化) {
+          const cat = extractChangeCategory(change);
+          if (cat) categories.add(cat);
+        }
+        if (categories.size >= 3) isMultiCategory = true;
+      }
     }
+    if (isMultiCategory) multiCategorySet.add(event.id);
   }
 
   for (const group of groups) {
@@ -666,7 +753,10 @@ function computeEventTreeHealth(api, catalog, groups, events, chains) {
   }
 
   const compoundNameIds = [...compoundNameSet].sort(compareCodePoints);
+  const multiCategoryBranchEvents = [...multiCategorySet].sort(compareCodePoints);
   const zeroChangeLeafIds = [...zeroChangeLeafSet].sort(compareCodePoints);
+  const worldEventsWithCore = [...worldEventsWithCoreSet].sort(compareCodePoints);
+  const crowdedCoreEvents = [...crowdedCoreEventsSet].sort(compareCodePoints);
   const autoConfirmRatio = events.length > 0
     ? Number((confirmStrategyCounts.自动确认 / events.length).toFixed(4))
     : 0;
@@ -675,6 +765,12 @@ function computeEventTreeHealth(api, catalog, groups, events, chains) {
     confirmStrategyCounts,
     autoConfirmRatio,
     compoundNameIds,
+    multiCategoryBranchEvents,
+    coreParticipantHealth: {
+      worldEventsWithCore,
+      crowdedCoreEvents,
+      maxCoreCount,
+    },
     zeroChangeLeafEvents: {
       count: zeroChangeLeafIds.length,
       ids: zeroChangeLeafIds,
@@ -750,20 +846,30 @@ export function probeCard(api, {disableGroups = []} = {}) {
   if (normalizedDisable.length > 0) {
     const disabledSet = new Set(normalizedDisable);
     const evaluateFn = typeof api.evaluateCondition === 'function' ? api.evaluateCondition : evalConditionFallback;
+    const refsFn = typeof api?.conditionReferences === 'function' ? api.conditionReferences : conditionReferencesFallback;
+    const eventsById = new Map(events.map(event => [event.id, event]));
+    const chainStarts = new Map();
+    for (const chain of chains) {
+      const members = Array.isArray(chain?.内容?.事件) ? chain.内容.事件 : [];
+      const memberSet = new Set(members);
+      const starts = members.filter(eventId => {
+        const event = eventsById.get(eventId);
+        if (!event) return false;
+        return !refsFn(event.内容?.门槛).some(ref => !ref?.排斥 && memberSet.has(ref.事件ID));
+      });
+      if (starts.length > 0) chainStarts.set(chain.id, starts);
+    }
+
     const directIds = [];
     const directSet = new Set();
+
+    const directLeaf = (type, value, negative) => applyPolarity(evalGroupDisabledRaw(type, value, disabledSet), negative);
 
     for (const event of events) {
       const content = event.内容 ?? {};
       const coreParticipants = Array.isArray(content.核心参与者) ? content.核心参与者 : [];
       const coreHit = coreParticipants.some(id => disabledSet.has(id));
-      const thresholdHit = !coreHit && evalThresholdBlocked(content.门槛, evaluateFn, (type, value, negative) => {
-        if (negative || !GROUP_DEP_TYPES.has(type) || !value || typeof value !== 'object') return true;
-        if (type === '同处') {
-          return !(Array.isArray(value.角色组ID) && value.角色组ID.some(id => disabledSet.has(id)));
-        }
-        return !disabledSet.has(value.角色组ID);
-      });
+      const thresholdHit = !coreHit && isEventThresholdBlocked(content, evaluateFn, directLeaf);
       if (coreHit || thresholdHit) {
         directIds.push(event.id);
         directSet.add(event.id);
@@ -772,20 +878,32 @@ export function probeCard(api, {disableGroups = []} = {}) {
 
     const cascadeIds = [];
     const blockedSet = new Set(directSet);
+    const blockedChains = new Set();
     let changed = true;
     while (changed) {
       changed = false;
+      for (const [chainId, starts] of chainStarts.entries()) {
+        if (!blockedChains.has(chainId) && starts.every(id => blockedSet.has(id))) {
+          blockedChains.add(chainId);
+          changed = true;
+        }
+      }
+      const cascadeLeaf = (type, value, negative) => {
+        const groupRaw = evalGroupDisabledRaw(type, value, disabledSet);
+        if (groupRaw !== null) return applyPolarity(groupRaw, negative);
+        if (type === '事件确认' && value && typeof value === 'object' && blockedSet.has(value.事件ID)) {
+          return applyPolarity(false, negative);
+        }
+        if (type === '事件串状态' && value && typeof value === 'object' && blockedChains.has(value.事件串ID)) {
+          if (value.状态 === '进行中' || value.状态 === '已结束') return applyPolarity(false, negative);
+          if (value.状态 === '未开始') return applyPolarity(true, negative);
+        }
+        return null;
+      };
       for (const event of events) {
         if (blockedSet.has(event.id)) continue;
-        const threshold = event.内容?.门槛;
-        if (!threshold) continue;
-        const blocked = evalThresholdBlocked(threshold, evaluateFn, (type, value, negative) => {
-          if (!negative && type === '事件确认' && value && typeof value === 'object' && blockedSet.has(value.事件ID)) {
-            return false;
-          }
-          return true;
-        });
-        if (blocked) {
+        const content = event.内容 ?? {};
+        if (isEventThresholdBlocked(content, evaluateFn, cascadeLeaf)) {
           blockedSet.add(event.id);
           cascadeIds.push(event.id);
           changed = true;
@@ -869,10 +987,22 @@ function formatProbeSummary(payload) {
     `默认档案（D1 待审计）：${defaultProfiles.length} 份`,
   );
   if (eventTreeHealth) {
-    const {confirmStrategyCounts: csc, autoConfirmRatio, compoundNameIds, zeroChangeLeafEvents} = eventTreeHealth;
+    const {
+      confirmStrategyCounts: csc,
+      autoConfirmRatio,
+      compoundNameIds,
+      multiCategoryBranchEvents = [],
+      coreParticipantHealth,
+      zeroChangeLeafEvents,
+    } = eventTreeHealth;
     lines.push(
-      `事件树健康：确认策略 自动确认 ${csc.自动确认}（${(autoConfirmRatio * 100).toFixed(1)}%）、条件确认 ${csc.条件确认}、仅作候选 ${csc.仅作候选}；疑似拼盘命名 ${compoundNameIds.length}；零变化孤立事件 ${zeroChangeLeafEvents.count}`,
+      `事件树健康：确认策略 自动确认 ${csc.自动确认}（${(autoConfirmRatio * 100).toFixed(1)}%）、条件确认 ${csc.条件确认}、仅作候选 ${csc.仅作候选}；疑似拼盘命名 ${compoundNameIds.length}；隐性多域拼盘信号 ${multiCategoryBranchEvents.length}；零变化叶节点事件 ${zeroChangeLeafEvents.count}`,
     );
+    if (coreParticipantHealth) {
+      lines.push(
+        `核心参与者健康：世界事件含核心参与者 ${coreParticipantHealth.worldEventsWithCore.length}；拥挤核心事件（≥5人） ${coreParticipantHealth.crowdedCoreEvents.length}；单事件最大核心参与者 ${coreParticipantHealth.maxCoreCount}`,
+      );
+    }
   }
   if (disabledImpact) {
     lines.push(

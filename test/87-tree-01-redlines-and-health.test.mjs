@@ -223,6 +223,8 @@ test('YG-TREE-01-A3：probeCard eventTreeHealth 在标准路径与无 conditionR
     confirmStrategyCounts: {自动确认: 0, 条件确认: 0, 仅作候选: 0},
     autoConfirmRatio: 0,
     compoundNameIds: [],
+    multiCategoryBranchEvents: [],
+    coreParticipantHealth: {worldEventsWithCore: [], crowdedCoreEvents: [], maxCoreCount: 0},
     zeroChangeLeafEvents: {count: 0, ids: []},
   });
 });

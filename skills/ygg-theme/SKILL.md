@@ -7,7 +7,7 @@ description: 前端外观：为世界树角色卡设计、定制、校验或离�
 
 本 skill 是世界树角色卡的可选外观定制层，位于第 4 层（档案/填景）之后、第 5 层 `世界树·打包` 之前，也可用于为既有角色卡补充或调整专属前端主题。它在不改动世界书、不注入任意 JavaScript、不改写聊天原文的前提下，通过 `<项目目录>/外观/` 目录下的声明式配置（`主题.yaml` + 同目录可选 CSS），定制本局面板、每楼状态栏与助手楼正文排版。
 
-完整字段规范、17 个基础 `--ygg-*` 令牌清单、4 套内置基座特点、DOM 选择器挂钩、暗/亮双模式对白高对比度配方与 CSS 报错排查见 [`./references/主题规范与令牌参考.md`](./references/主题规范与令牌参考.md)。
+完整字段规范、17 个基础 `--ygg-*` 令牌清单、4 套内置基座特点、DOM 选择器挂钩、暗/亮双模式对白高对比度配方、重复键与未知顶层键校验及 CSS 报错排查见 [`./references/主题规范与令牌参考.md`](./references/主题规范与令牌参考.md)。
 
 ## 四项强制工程红线
 
@@ -15,7 +15,7 @@ description: 前端外观：为世界树角色卡设计、定制、校验或离�
 2. **绝不改写聊天原文**：正文排版美化与对白高亮完全依赖主题引擎的纯 CSS 与无损 DOM 包裹，绝不修改 `chat[i].mes` 原始消息文本，也不使用会破坏正文的替换正则。
 3. **零外链与作用域隔离**：
    - 严禁出现 `http://`、`https://`、`@import`、`</style`、`javascript:`、`expression(`、`behavior:`、`-moz-binding`；
-   - 严禁在顶层裸写 `html`、`body`、`*`、`:root`、`#chat`、`#sheld`、`#top-bar`、`.mes` 等全局选择器，所有规则须限定在 `.ygg-panel`、`.ygg-floor`、`.ygg-prose-host` 或 `[data-ygg-theme="<id>"]` 作用域内；
+   - **CSS 校验器硬拦截 8 类危险顶层全局选择器**：`html`、`body`、`*`、`:root`、`#chat`、`#sheld`、`#top-bar`、`.mes`；其余普通选择器（如裸 `p`、`blockquote`、`hr`）虽不触发工具硬错，但作者**仍须自觉加 `[data-ygg-theme="<id>"]` 或 `.ygg-*`（如 `.ygg-panel` / `.ygg-floor` / `.ygg-prose-host`）前缀隔离作用域**，防止污染酒馆其余界面；
    - 单主题合并后的 CSS 大小不得超过 **64KB**（65,536 UTF-8 字节）；
    - 所有自定义令牌键严格以 `--ygg-` 开头，且值内不得包含 `{` 或 `}`。
 4. **不污染世界书哈希**：外观文件固定放在项目根目录 `<项目目录>/外观/`，绝不放入 `<项目目录>/世界书/` 内。增删改主题不影响世界书内容，也不影响旧存档的 `世界书哈希` 兼容判定。
@@ -47,23 +47,23 @@ description: 前端外观：为世界树角色卡设计、定制、校验或离�
 
 ### 3. 离线校验
 
-运行随本目录附带的零依赖校验脚本，直至 0 错误：
+运行随本 skill 目录附带的零依赖校验脚本 `scripts/theme-tool.mjs`（**注意该脚本位于本 skill 目录下的 `scripts/`，从外部项目 `cwd` 调用时需传该脚本的实际路径**），直至 0 错误且排查全部未知键告警：
 
 ```sh
-node ./scripts/theme-tool.mjs validate <项目目录或外观目录>
-# 需要结构化脱敏结果时：
-node ./scripts/theme-tool.mjs validate <项目目录或外观目录> --json
+node <ygg-theme-skill目录>/scripts/theme-tool.mjs validate <项目目录或外观目录>
+# 需要结构化脱敏结果（含 warnings）时：
+node <ygg-theme-skill目录>/scripts/theme-tool.mjs validate <项目目录或外观目录> --json
 ```
 
-脚本按与引擎完全一致的口径校验目录结构、符号链接、UTF-8 编码、ID 合法性与唯一性、令牌键名与安全规则、`layout` 白名单、64KB 上限与顶层裸全局选择器。
+脚本按与引擎及 `ygg pack` 完全一致的口径校验：目录结构、符号链接、UTF-8 编码、**YAML 重复键（含顶层、嵌套与行内映射 `{...}` 重复键均报错）**、**未知顶层键告警（在 `warnings` 中提示拼写错误如 `token` 漏写 `s`，防静默丢弃）**、ID 合法性与唯一性、令牌键名与安全规则、`layout` 白名单、64KB 上限与 8 类顶层裸全局选择器。
 
 ### 4. 离线暗/亮/移动端预览
 
 校验通过后，生成完全自包含、零外链的单文件离线预览页：
 
 ```sh
-node ./scripts/theme-tool.mjs preview <项目目录或外观目录> --mode dark --out /tmp/ygg-preview-dark.html
-node ./scripts/theme-tool.mjs preview <项目目录或外观目录> --mode light --out /tmp/ygg-preview-light.html
+node <ygg-theme-skill目录>/scripts/theme-tool.mjs preview <项目目录或外观目录> --mode dark --out /tmp/ygg-preview-dark.html
+node <ygg-theme-skill目录>/scripts/theme-tool.mjs preview <项目目录或外观目录> --mode light --out /tmp/ygg-preview-light.html
 ```
 
 在浏览器或无头 Chromium 中逐项核验：
@@ -86,6 +86,6 @@ ygg pack <项目目录>
 
 交付卡专属外观前逐项确认：
 
-1. `theme-tool.mjs validate <项目目录>` 退出码 `0`、0 错误；
+1. `theme-tool.mjs validate <项目目录>` 退出码 `0`、0 错误，且 `warnings` 未知顶层键告警已核查清零；
 2. 暗色、亮色与移动端预览无水平溢出，对白与正文在双模式下均具备清晰区分度；
 3. `ygg pack <项目目录>` 构建成功且世界书哈希零变化，临时预览文件不遗留在项目目录内。

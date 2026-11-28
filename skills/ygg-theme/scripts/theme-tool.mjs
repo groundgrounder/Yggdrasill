@@ -17,6 +17,17 @@ const RESERVED_THEME_IDS = new Set([
 const THEME_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const TOKEN_KEY_PATTERN = /^--ygg-[a-zA-Z0-9_-]+$/;
 const ALLOWED_LAYOUT_KEYS = new Set(['每楼形态', '正文美化', '对白高亮', '首行缩进']);
+const KNOWN_THEME_KEYS = new Set([
+  'id', 'ID',
+  'name', '名称',
+  'description', '说明', '简介',
+  'default', '默认',
+  'base', '基座', '继承',
+  'tokens', '令牌',
+  'layout', '布局',
+  '样式文件', 'cssFile',
+  'css', '样式',
+]);
 
 const DANGEROUS_PATTERNS = [
   {pattern: /https?:\/\//i, reason: '禁止包含外链 URL（http:// 或 https://）'},
@@ -419,6 +430,7 @@ function parseScalar(rawValue) {
     if (!value.endsWith('}')) throw new Error(`行内映射未闭合：${value}`);
     const inner = value.slice(1, -1).trim();
     const obj = {};
+    const seenKeys = new Set();
     if (!inner) return obj;
     for (const part of splitTopLevel(inner, ',')) {
       const trimmed = part.trim();
@@ -426,8 +438,10 @@ function parseScalar(rawValue) {
       const sep = findKeyValueSeparator(trimmed);
       if (sep === -1) throw new Error(`行内映射缺少冒号分隔符：${trimmed}`);
       const k = parseKey(trimmed.slice(0, sep));
+      if (seenKeys.has(k)) throw new Error(`行内映射存在重复键：${k}`);
+      seenKeys.add(k);
       const v = parseScalar(trimmed.slice(sep + 1));
-      obj[k] = v;
+      Object.defineProperty(obj, k, {value: v, enumerable: true, writable: true, configurable: true});
     }
     return obj;
   }
@@ -532,6 +546,7 @@ export function parseThemeYaml(text) {
 
   function parseMapping(startIdx, expectedIndent) {
     const obj = {};
+    const seenKeys = new Set();
     let i = startIdx;
     while (true) {
       i = nextNonEmpty(i);
@@ -551,27 +566,33 @@ export function parseThemeYaml(text) {
         throw new Error(`第 ${i + 1} 行缺少冒号分隔符：${content}`);
       }
       const key = parseKey(content.slice(0, sep));
+      if (seenKeys.has(key)) {
+        throw new Error(`第 ${i + 1} 行存在重复键：${key}`);
+      }
+      seenKeys.add(key);
       const restRaw = content.slice(sep + 1).trim();
       const restNoComment = stripInlineComment(restRaw).trim();
 
+      let parsedVal;
       if (/^[|>](?:[+-])?(?:[1-9])?$/.test(restNoComment)) {
         const block = parseBlockScalar(restNoComment, ind, i + 1);
-        obj[key] = block.value;
+        parsedVal = block.value;
         i = block.nextIdx;
       } else if (!restNoComment) {
         const peek = nextNonEmpty(i + 1);
         if (peek < lines.length && indentOf(lines[peek]) > ind) {
           const nested = parseMapping(peek, indentOf(lines[peek]));
-          obj[key] = nested.value;
+          parsedVal = nested.value;
           i = nested.nextIdx;
         } else {
-          obj[key] = '';
+          parsedVal = '';
           i += 1;
         }
       } else {
-        obj[key] = parseScalar(restRaw);
+        parsedVal = parseScalar(restRaw);
         i += 1;
       }
+      Object.defineProperty(obj, key, {value: parsedVal, enumerable: true, writable: true, configurable: true});
     }
     return {value: obj, nextIdx: i};
   }
@@ -691,12 +712,20 @@ function pickField(raw, keys) {
   return undefined;
 }
 
-export function validateThemeEntry(raw, {existingIds = new Set()} = {}) {
+export function validateThemeEntry(raw, {existingIds = new Set(), warnings = null} = {}) {
   if (!isPlainObject(raw)) throw new Error('主题配置须为对象映射');
 
   const id = pickField(raw, ['id', 'ID']);
   if (typeof id !== 'string' || !id.trim()) throw new Error('主题缺少非空 id');
   const trimmedId = id.trim();
+  const entryWarnings = [];
+  for (const key of Object.keys(raw)) {
+    if (!KNOWN_THEME_KEYS.has(key)) {
+      const msg = `主题“${trimmedId}”含未知顶层键“${key}”（将被忽略，请核对是否拼写错误）`;
+      entryWarnings.push(msg);
+      if (Array.isArray(warnings)) warnings.push(msg);
+    }
+  }
   if (!THEME_ID_PATTERN.test(trimmedId)) {
     throw new Error(`主题 id 不合法（仅允许小写字母、数字、-、_ 且须以字母或数字开头）：${trimmedId}`);
   }
@@ -796,6 +825,7 @@ export function validateThemeEntry(raw, {existingIds = new Set()} = {}) {
     tokens,
     layout,
     css,
+    warnings: entryWarnings,
   };
 }
 
@@ -900,11 +930,14 @@ async function loadThemeDir(dir, realThemeRoot, existingIds) {
   }
 
   let validated;
-  try { validated = validateThemeEntry(payload, {existingIds}); }
+  const entryWarnings = [];
+  try { validated = validateThemeEntry(payload, {existingIds, warnings: entryWarnings}); }
   catch (error) { throw new Error(`外观主题校验失败（${relYaml}）：${error.message}`); }
   existingIds.add(validated.id);
+  const {warnings: _ignored, ...themeData} = validated;
   return {
-    theme: validated,
+    theme: themeData,
+    warnings: entryWarnings.map(msg => `外观主题告警（${relYaml}）：${msg}`),
     meta: {
       id: validated.id,
       name: validated.name,
@@ -921,15 +954,16 @@ async function loadThemeDir(dir, realThemeRoot, existingIds) {
 
 export async function validateThemesDir(targetDir) {
   const errors = [];
+  const warnings = [];
   const themes = [];
   const summary = [];
 
   const targetStat = await lstatOrNull(targetDir);
   if (!targetStat) {
-    return {ok: false, themes, summary, errors: ['目标目录不存在']};
+    return {ok: false, themes, summary, errors: ['目标目录不存在'], warnings};
   }
   if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
-    return {ok: false, themes, summary, errors: ['目标路径须为普通目录且不得是符号链接']};
+    return {ok: false, themes, summary, errors: ['目标路径须为普通目录且不得是符号链接'], warnings};
   }
 
   const realTarget = await fs.realpath(targetDir);
@@ -938,12 +972,12 @@ export async function validateThemesDir(targetDir) {
   const subStat = await lstatOrNull(subAppearance);
   if (subStat) {
     if (subStat.isSymbolicLink() || !subStat.isDirectory()) {
-      return {ok: false, themes, summary, errors: ['外观目录须为普通目录且不得是符号链接：外观']};
+      return {ok: false, themes, summary, errors: ['外观目录须为普通目录且不得是符号链接：外观'], warnings};
     }
     try {
       realThemesRoot = await ensureContained(realTarget, subAppearance, '外观目录');
     } catch (error) {
-      return {ok: false, themes, summary, errors: [error.message]};
+      return {ok: false, themes, summary, errors: [error.message], warnings};
     }
   }
 
@@ -953,6 +987,7 @@ export async function validateThemesDir(targetDir) {
     if (rootItem) {
       themes.push(rootItem.theme);
       summary.push(rootItem.meta);
+      warnings.push(...rootItem.warnings);
     }
   } catch (error) {
     errors.push(error.message);
@@ -975,6 +1010,7 @@ export async function validateThemesDir(targetDir) {
         if (subItem) {
           themes.push(subItem.theme);
           summary.push(subItem.meta);
+          warnings.push(...subItem.warnings);
         }
       } catch (error) {
         errors.push(error.message);
@@ -988,7 +1024,7 @@ export async function validateThemesDir(targetDir) {
     errors.push('未在目标目录中找到任何主题配置（主题.yaml）');
   }
 
-  return {ok: errors.length === 0, themes, summary, errors};
+  return {ok: errors.length === 0, themes, summary, errors, warnings};
 }
 
 // ---------- 离线预览 HTML 渲染（与 adapter/ui.mjs + adapter/themes.mjs 同口径，零外链） ----------
@@ -1633,11 +1669,16 @@ export async function runCli(argv, {stdout = process.stdout, stderr = process.st
         themeCount: result.summary.length,
         themes: result.summary,
         errors: result.errors,
+        warnings: result.warnings,
       }, null, 2)}\n`);
     } else if (result.ok) {
       stdout.write(`主题校验通过：共 ${result.summary.length} 套主题\n`);
       for (const item of result.summary) {
         stdout.write(`- ${item.id}（${item.name}） · 基座 ${item.base}${item.default ? ' · 默认' : ''} · 令牌 ${item.tokenCount} 项 · CSS ${item.cssBytes} B · ${item.yamlFile}\n`);
+      }
+      if (result.warnings.length > 0) {
+        stdout.write(`告警（共 ${result.warnings.length} 项）：\n`);
+        for (const warn of result.warnings) stdout.write(`- ${warn}\n`);
       }
     } else {
       stderr.write(`主题校验失败（共 ${result.errors.length} 处错误）：\n`);

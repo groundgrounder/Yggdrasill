@@ -4,6 +4,28 @@ import {checkCondition, conditionReferences, evaluateCondition} from '../../core
 import {checkChange, changedFields} from '../../core/changes.mjs';
 import {has, isMap, isText, list, pairs, texts, issue} from '../../core/utils.mjs';
 
+const HIGH_CONFIDENCE_COMPOUND_RE = /\S\s*(?:[、+/&＆]|以及|及其|并与|暨)\s*\S/u;
+const COMPOUND_FIXED_WORDS = [
+  '相提并论', '齐头并进', '德才兼备', '软硬兼施', '风雨兼程',
+  '力所能及', '鞭长莫及', '措手不及', '始料未及', '迫不及待', '悔之不及', '追悔莫及',
+  '与日俱增', '与世隔绝', '与虎谋皮', '与众不同', '休戚与共',
+  '参与', '授予', '授与', '赠与', '相与', '与会', '与之', '与其', '与否', '给与', '施与', '让与', '许与', '交与', '付与', '还与',
+  '波及', '普及', '不及', '及时', '未及', '累及', '触及', '涉及', '祸及', '危及', '殃及', '论及', '提及', '顾及', '计及', '及早', '及格', '及第', '及冠', '及笄', '及至',
+  '并州', '吞并', '兼并', '合并', '并肩', '并立', '并行', '并入', '并吞', '并非', '并不', '并未', '并无', '并称', '并列', '并存', '并重', '并举', '并进', '并驾',
+  '兼容', '兼任', '兼顾', '兼职', '兼程', '兼修', '兼备', '兼收', '兼施', '兼具',
+];
+const COMPOUND_FIXED_RE = new RegExp(COMPOUND_FIXED_WORDS.join('|'), 'gu');
+const MID_CONJUNCTION_RE = /\S[与及并兼]\S/u;
+
+export function isCompoundEventName(text) {
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (HIGH_CONFIDENCE_COMPOUND_RE.test(trimmed)) return true;
+  const cleaned = trimmed.replace(COMPOUND_FIXED_RE, '□');
+  return MID_CONJUNCTION_RE.test(cleaned);
+}
+
 export function checkEvents(catalog, decl) {
   const issues = [];
   const add = (rule, file, message, level = '错误') => issues.push(issue(rule, level, file, message));
@@ -46,6 +68,23 @@ export function checkEvents(catalog, decl) {
       && conditionReferences(content.门槛).some(ref => !ref.排斥
         && byID.has(ref.事件ID) && byID.get(ref.事件ID).内容?.主类型 !== worldType))
       add('事件.世界依赖个人', file, '世界事件的门槛正向引用了非世界事件', '提示');
+    if (isCompoundEventName(event.id) || (isText(content.事件标题) && isCompoundEventName(content.事件标题))) {
+      add(
+        '事件.疑似拼盘',
+        file,
+        '事件ID或事件标题含并列分隔符或并列连接词，请核对是否将两件可独立成败的事捆成拼盘（属不可分割单一互动专名可保留）',
+        '提示',
+      );
+    }
+    if (isText(worldType) && content.主类型 === worldType
+      && Array.isArray(content.核心参与者) && content.核心参与者.length > 0) {
+      add(
+        '事件.世界事件含核心参与者',
+        file,
+        `世界事件填入了 ${content.核心参与者.length} 个核心参与者，任一核心参与者未启用将导致该世界事件被直接排除；除缺人即不成立的特例外，建议保持核心参与者为空列表并将个人后果另拆事件`,
+        '提示',
+      );
+    }
   }
   const totalEvents = catalog.events.length;
   if (totalEvents >= 50) {

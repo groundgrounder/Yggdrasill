@@ -5,9 +5,9 @@ description: 验收：大型多卷/多世界线角色卡在 ygg pack 打包后�
 
 # 世界树·验收
 
-本 skill 是大型角色卡的第 5.5 层推荐验收层，位于第 5 层 `世界树·打包` 之后、正式交付酒馆之前。它与 `ygg check` 静态检查互补：静态检查验证语法与结构自洽，本层直接挂载待发布的真实打包卡 JSON，通过只读离线五维反原作剧本推演，提前暴露默认期剧透、高危转折点跨年覆盖、多年沙盒经历预算淘汰、停用核心主角瘫痪面与记账/开局鲁棒性缺陷。
+本 skill 是大型角色卡的第 5.5 层推荐验收层，位于第 5 层 `世界树·打包` 之后、正式交付酒馆之前。它与 `ygg check` 静态检查互补：静态检查验证语法与结构自洽，本层直接挂载待发布的真实打包卡 JSON，通过只读离线五维反原作剧本推演，提前暴露默认期剧透、高危转折点跨年覆盖、多年沙盒经历预算淘汰、停用核心主角瘫痪面与记账/开局/外观鲁棒性缺陷。
 
-五维判定口径、`mount-card.mjs` 调用模板、三分法裁决判例、可选双盲分轨协议与脱敏报告模板见 [`./references/五维验收矩阵与判定口径.md`](./references/五维验收矩阵与判定口径.md)。
+五维判定口径、`mount-card.mjs` 调用模板（含完整 `openingSpec`）、`eventTreeHealth` 全量指标说明、三分法裁决判例、可选双盲分轨协议与脱敏报告模板见 [`./references/五维验收矩阵与判定口径.md`](./references/五维验收矩阵与判定口径.md)。
 
 ## 适用门槛
 
@@ -20,8 +20,8 @@ description: 验收：大型多卷/多世界线角色卡在 ygg pack 打包后�
 
 ## 四项强制工程红线
 
-1. **100% 只读零落盘**：验收全过程禁止修改 `世界书/`、`卡面.yaml`、`yggdrasill.yaml` 及 `打包/*.json`。起止各采一次 `snapshotHashes` 核对逐字节一致；验收只发现并归类问题，卡侧修复一律交 `世界树·修订` 闭环，不在验收中顺手改卡。
-2. **直接挂载真实 `打包/*.json`**：统一经 `./scripts/mount-card.mjs` 从待发布角色卡 JSON 提取内嵌脚本与世界书运行，不直接 `import` 外部引擎源码目录，确保测的是玩家实际导入酒馆的同一份产物。
+1. **100% 只读零落盘**：验收全过程禁止修改 `世界书/`、`卡面.yaml`、`yggdrasill.yaml`、`外观/` 及 `打包/*.json`。起止各采一次 `snapshotHashes` 核对逐字节一致；验收只发现并归类问题，卡侧修复一律交 `世界树·修订`（或外观交 `世界树·前端`）闭环，不在验收中顺手改卡。
+2. **直接挂载真实 `打包/*.json`**：统一经本 skill 目录附带的 `scripts/mount-card.mjs` 从待发布角色卡 JSON 提取内嵌脚本与世界书运行，不直接 `import` 外部引擎源码目录，确保测的是玩家实际导入酒馆的同一份产物。
 3. **问题级别 × 归属三分法**：每条发现必须同时标明级别（**P0** 崩溃/硬穿帮、**P1** 显著体验损毁、**P2** 边界优化）与归属：
    - **A. 卡侧值得立刻修**：默认档案剧透或错期、高危单分支转折点极易被玩家外力截胡覆盖、明显事实笔误 → 交 `世界树·修订` 最小修复并重新打包；
    - **B. 原作卡合理边界（记录不硬修）**：单主角正史卡停用主角后主线停摆、纯静态地点词条无法预知玩家建国、多年沙盒在预算上限下的正常淘汰 → 写入已知边界说明，严禁为极端魔改阉割正史主干；
@@ -32,17 +32,17 @@ description: 验收：大型多卷/多世界线角色卡在 ygg pack 打包后�
 
 ### 1. 锁定指纹与快速探针
 
-运行随本目录附带的零依赖挂载脚本（支持 `v0.1.3+` 钩子模式与 `v0.1.1`/`v0.1.2` 旧包自动回退），采集构建清单、D1 默认档案清单、D4 停用影响基线与事件树健康指标（`eventTreeHealth`）：
+运行随本 skill 目录附带的零依赖挂载脚本 `scripts/mount-card.mjs`（支持 `v0.1.3+` 钩子模式与 `v0.1.1`/`v0.1.2` 旧包自动回退；**注意脚本位于本 skill 目录下的 `scripts/`，从外部项目 `cwd` 调用时需传脚本实际路径**），采集构建清单、D1 默认档案清单、D4 停用影响基线与事件树健康指标（`eventTreeHealth`）：
 
 ```sh
-node ./scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角组ID>] --json
+node <ygg-playtest-skill目录>/scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角组ID>] --json
 ```
 
-`eventTreeHealth` 输出三项审树参考指标：`confirmStrategyCounts` 与 `autoConfirmRatio`（确认策略分布与自动确认占比）、`compoundNameIds`（ID 或标题含「与/及/暨」的疑似拼盘事件列表）、`zeroChangeLeafEvents`（无 `变化` 且无下游正向因果/档案切期/事件串结局/开局选项引用的零变化叶节点事件）。发现异常偏高时按归属三分法结合剧本审阅：确认属可绕开个人事件全写 `自动确认`、无关两事硬拼或前史/纯日常流水账充数归 **A 类** 移交修订；属合理单线锚点或高光存照归 **B 类** 记录不硬改。
+`eventTreeHealth` 输出五组审树参考指标：`confirmStrategyCounts` 与 `autoConfirmRatio`（确认策略分布与自动确认占比）、`compoundNameIds`（精准排除常见固定词后的疑似拼盘事件列表）、`multiCategoryBranchEvents`（单分支变化触及 ≥ 3 个不同字段/根域或 `事件结果` ≥ 3 项的隐性拼盘复核信号）、`coreParticipantHealth`（`worldEventsWithCore` 世界事件含核心参与者、`crowdedCoreEvents` 核心参与者 ≥ 5 人的拥挤事件及 `maxCoreCount`）、`zeroChangeLeafEvents`（无 `变化` 且无下游正向因果/档案切期/事件串结局/开局选项引用的零变化叶节点事件）。发现异常偏高时按归属三分法结合剧本审阅：确认属可绕开个人事件全写 `自动确认`、无关两事硬拼、世界事件误塞核心参与者或前史/纯日常流水账充数归 **A 类** 移交修订；属合理单线锚点、不可分割专名或高光存照归 **B 类** 记录不硬改。
 
 同时在试玩脚本起手调用 `snapshotHashes` 锁定 `<项目目录>` 与 `<打包卡>` 的起手根哈希 `rootSha256`。
 
-**完成标准**：已记录打包卡 `sha256`、`esmSha256`、挂载模式（`hook` / `legacy-export`）、世界书与程序指纹、`defaultProfiles` 清单、`eventTreeHealth` 指标、停用核心主角的静态依赖统计及起手 `rootSha256`。
+**完成标准**：已记录打包卡 `sha256`、`esmSha256`、挂载模式（`hook` / `legacy-export`）、世界书与程序指纹、`defaultProfiles` 清单、`eventTreeHealth` 全部指标、停用核心主角的静态依赖统计及起手 `rootSha256`。
 
 ### 2. 构造 2 份反原作对抗剧本覆盖五维（D1–D5）
 
@@ -51,8 +51,8 @@ node ./scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角�
 - **D1 默认期防剧透**：选最早可行开局年，把中后期角色拉入在场并逐份审计 `defaultProfiles` 正文；
 - **D2 劫持高危转折点**：抽取 2–3 个高权重「自动确认」转折事件，在窗口前后注入玩家介入动态事件并推进 1–3 年，核查是否被单分支静默覆盖；
 - **D3 多年沙盒经历预算淘汰曲线**：在非主线/高密度地点连续推演 3–10 年，写入跨年动态事件，对比独处与同城基线的淘汰临界年；
-- **D4 停用核心主角依赖图与「幽灵主角」审计**：结合 `probeCard` 依赖图结果，扫描角色档案与公共条目对停用主角的硬引用；
-- **D5 真实开局前端 + 记账对抗 + 拥挤在场预算**：对 `createOpeningDraft`/`openingNode` 喂合法、越界与错型 YAML；构造 15–30 项记账对抗输出跑 `runKeeperLoop`/校验修补；拉入 6–10 名高权重角色同场测试上下文预算退化。
+- **D4 停用核心主角依赖图与「幽灵主角」审计**：结合 `probeCard` 依赖图结果（覆盖顶层门槛、全部分支门槛阻塞、`事件串状态` 级联与 `none` 嵌套极性），扫描角色档案与公共条目对停用主角的硬引用；
+- **D5 真实开局前端 + 记账对抗 + 拥挤在场预算 + 外观核验**：对 `createOpeningDraft`（传完整 `openingSpec`）/`openingNode` 喂合法、越界与错型 YAML；构造 15–30 项记账对抗输出跑 `runKeeperLoop`/校验修补；拉入 6–10 名高权重角色同场测试上下文预算退化；若卡内嵌入 `bundle.themes`，核验卡专属主题字段完整性并衔接 `世界树·前端` 做暗/亮/移动端预览复核。
 
 > 多模型环境下可选**跨模型家族双盲分轨**（叙事设定轨侧重 D1/D2/D3/D4 文本审计，系统对抗轨侧重 D5/D3 精确曲线/D4 图论统计）；单模型环境按五维顺序一次跑通即可。
 
@@ -60,7 +60,7 @@ node ./scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角�
 
 ### 3. 离线执行并双采防篡改核对
 
-在临时/过程脚本中引入 `./scripts/mount-card.mjs` 的 `mountCard`、`snapshotHashes`、`probeCard`，通过 `host.pushResponse(...)` 驱动离线记账与开局推演，跑完五维断言并在结束时调用 `cleanup()`；再次对同一目标执行 `snapshotHashes` 并断言起止 `rootSha256` 逐字节一致。
+在临时/过程脚本中引入 `<ygg-playtest-skill目录>/scripts/mount-card.mjs` 的 `mountCard`、`snapshotHashes`、`probeCard`，通过 `host.pushResponse(...)` 驱动离线记账与开局推演，跑完五维断言并在结束时调用 `cleanup()`；再次对同一目标执行 `snapshotHashes` 并断言起止 `rootSha256` 逐字节一致。
 
 **完成标准**：五维测试脚本执行完毕并保留量化指标；起止 `snapshotHashes` 的 `fileCount`、`rootSha256` 100% 一致；输出与日志中无宿主机绝对路径。
 
@@ -71,7 +71,7 @@ node ./scripts/mount-card.mjs <打包卡JSON> --probe [--disable-group <主角�
 1. **基线与只读核对**：打包卡与世界书指纹、挂载模式、起止 `rootSha256` 一致结论；
 2. **五维量化结果表**：D1–D5 每维通过/命中项与关键数字；
 3. **P0–P2 × A/B/C 发现清单与处置出口**：
-   - A 类缺陷移交 `世界树·修订` 做最小精准修复，修完后重跑 `ygg check` 与 `ygg pack` 并复验；
+   - A 类缺陷移交 `世界树·修订`（外观交 `世界树·前端`）做最小精准修复，修完后重跑 `ygg check` 与 `ygg pack` 并复验；
    - B 类记入卡片已知边界说明，不硬改原作主干；
    - C 类单列与具体作品无关的引擎/协议/提示词问题单。
 
