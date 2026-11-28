@@ -34,8 +34,8 @@ const CSS = `
   --ygg-bg-surface: color-mix(in srgb, var(--ygg-base) 84%, var(--ygg-text) 4%);
   --ygg-bg-elevated: color-mix(in srgb, var(--ygg-base) 76%, var(--ygg-text) 8%);
   --ygg-bg-subtle: color-mix(in srgb, var(--ygg-text) 5%, transparent);
-  --ygg-border: color-mix(in srgb, var(--SmartThemeBorderColor, var(--ygg-text)) 32%, transparent);
-  --ygg-border-strong: color-mix(in srgb, var(--SmartThemeBorderColor, var(--ygg-text)) 56%, transparent);
+  --ygg-border: color-mix(in srgb, var(--SmartThemeBorderColor, transparent) 30%, color-mix(in srgb, var(--ygg-text) 22%, transparent));
+  --ygg-border-strong: color-mix(in srgb, var(--SmartThemeBorderColor, transparent) 42%, color-mix(in srgb, var(--ygg-text) 40%, transparent));
   --ygg-ok: #3fa36c;
   --ygg-warn: #d4943a;
   --ygg-bad: #cf5c5c;
@@ -75,9 +75,29 @@ const CSS = `
 .ygg-ico-wrench { -webkit-mask-image: url("${ICONS.wrench}"); mask-image: url("${ICONS.wrench}"); }
 .ygg-ico-spark { -webkit-mask-image: url("${ICONS.spark}"); mask-image: url("${ICONS.spark}"); }
 
+/* 宽弹窗保护：仅作用于含 .ygg-panel 的宽/大弹窗，不影响不含 .ygg-panel 的普通酒馆弹窗 */
+dialog.popup:is(.wide_dialogue_popup, .large_dialogue_popup):has(.ygg-panel) {
+  width: min(880px, calc(100dvw - 32px)) !important;
+}
+
 /* 面板容器与精致顶栏 */
-.ygg-panel { text-align: left; font-size: calc(var(--mainFontSize, 14px) * 0.94); max-width: 100%; overflow-wrap: break-word; }
-.ygg-panel h3 { margin: 0; font-size: 1.12em; font-weight: 650; letter-spacing: 0.01em; line-height: 1.3; }
+.ygg-panel {
+  container-type: inline-size;
+  width: 100%;
+  text-align: left;
+  font-size: calc(var(--mainFontSize, 14px) * 0.94);
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+.ygg-panel h3,
+.ygg-panel .ygg-panel-head h3 {
+  margin: 0 !important;
+  text-align: left !important;
+  font-size: 1.12em;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+}
 .ygg-panel-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 0 0 10px; margin: 0 0 12px; border-bottom: 1px solid var(--ygg-border);
@@ -443,6 +463,25 @@ const CSS = `
 }
 .ygg-opening .ygg-preview-item.ygg-preview-wide { grid-column: 1 / -1; }
 .ygg-opening .ygg-preview-item .ygg-line { margin: 0; word-break: break-word; }
+
+/* 窄容器响应兜底（不依赖视口宽度，避免第三方主题压窄弹窗时多列网格拥挤） */
+@container (max-width: 580px) {
+  .ygg-panel-head { flex-wrap: wrap; gap: 6px; }
+  .ygg-hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ygg-form .ygg-row { flex-wrap: wrap; }
+  .ygg-form .ygg-row > .text_pole { flex: 1 1 130px; }
+  .ygg-form .ygg-grid { grid-template-columns: 1fr; }
+  .ygg-panel.ygg-form .ygg-appearance-grid,
+  .ygg-panel.ygg-form .ygg-range-grid { grid-template-columns: 1fr; }
+  .ygg-opening .ygg-opening-time-grid { grid-template-columns: 1fr; }
+  .ygg-opening .ygg-group-row { grid-template-columns: 1fr; gap: 6px; }
+  .ygg-opening .ygg-group-tags { justify-content: flex-start; }
+  .ygg-opening .ygg-preview-grid { grid-template-columns: 1fr; }
+  .ygg-opening .ygg-sec-summary { max-width: 100%; margin-left: 0; }
+  .ygg-timeline-item { grid-template-columns: 1fr; gap: 3px; }
+  .ygg-items { grid-template-columns: 1fr; gap: 2px; }
+  .ygg-key { font-size: 0.84em; margin-top: 4px; }
+}
 
 /* 移动端窄屏响应式适配 */
 @media (max-width: 640px) {

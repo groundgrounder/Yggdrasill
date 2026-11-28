@@ -43,6 +43,11 @@ export const BUILTIN_THEMES = Object.freeze([
       '--ygg-radius-pill': '999px',
       '--ygg-dialogue-color': 'color-mix(in srgb, var(--ygg-accent) 62%, var(--ygg-text))',
       '--ygg-dialogue-bg': 'color-mix(in srgb, var(--ygg-accent) 9%, transparent)',
+      '--ygg-bq-border-left': '3px solid var(--ygg-accent)',
+      '--ygg-bq-bg': 'color-mix(in srgb, var(--ygg-accent) 6%, transparent)',
+      '--ygg-bq-radius': '0 6px 6px 0',
+      '--ygg-hr-height': '1px',
+      '--ygg-hr-bg': 'linear-gradient(90deg, transparent, var(--ygg-border-strong), transparent)',
     }),
     layout: Object.freeze({
       每楼形态: 'bar',
@@ -50,18 +55,7 @@ export const BUILTIN_THEMES = Object.freeze([
       对白高亮: true,
       首行缩进: false,
     }),
-    css: `
-.ygg-prose-host[data-ygg-theme="modern"] blockquote {
-  border-left: 3px solid var(--ygg-accent);
-  background: color-mix(in srgb, var(--ygg-accent) 6%, transparent);
-  border-radius: 0 6px 6px 0;
-}
-.ygg-prose-host[data-ygg-theme="modern"] hr {
-  border: none;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--ygg-border-strong), transparent);
-}
-`,
+    css: '',
   }),
   Object.freeze({
     id: 'classic',
@@ -86,6 +80,12 @@ export const BUILTIN_THEMES = Object.freeze([
       '--ygg-font-prose': '"Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", Georgia, serif',
       '--ygg-dialogue-color': 'color-mix(in srgb, #e27d60 58%, var(--ygg-text))',
       '--ygg-dialogue-bg': 'color-mix(in srgb, #d46b4e 12%, transparent)',
+      '--ygg-bq-border-left': '2px solid #b8432e',
+      '--ygg-bq-bg': 'color-mix(in srgb, #c9a86c 8%, transparent)',
+      '--ygg-bq-radius': '0',
+      '--ygg-bq-font-style': 'normal',
+      '--ygg-hr-height': '1px',
+      '--ygg-hr-bg': 'linear-gradient(90deg, transparent, #b89862 25%, #b8432e 50%, #b89862 75%, transparent)',
     }),
     layout: Object.freeze({
       每楼形态: 'card',
@@ -121,16 +121,6 @@ export const BUILTIN_THEMES = Object.freeze([
   font-family: var(--ygg-font-prose);
   letter-spacing: 0.025em;
 }
-.ygg-prose-host[data-ygg-theme="classic"] blockquote {
-  border-left: 2px solid #b8432e;
-  background: color-mix(in srgb, #c9a86c 8%, transparent);
-  font-style: normal;
-}
-.ygg-prose-host[data-ygg-theme="classic"] hr {
-  border: none;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, #b89862 25%, #b8432e 50%, #b89862 75%, transparent);
-}
 `,
   }),
   Object.freeze({
@@ -156,6 +146,11 @@ export const BUILTIN_THEMES = Object.freeze([
       '--ygg-font-prose': 'Georgia, "Noto Serif SC", "PingFang SC", serif',
       '--ygg-dialogue-color': 'color-mix(in srgb, #c9922c 56%, var(--ygg-text))',
       '--ygg-dialogue-bg': 'color-mix(in srgb, #c99a3c 12%, transparent)',
+      '--ygg-bq-border-left': '3px solid #c99a3c',
+      '--ygg-bq-bg': 'color-mix(in srgb, #c99a3c 9%, transparent)',
+      '--ygg-bq-radius': '0 8px 8px 0',
+      '--ygg-hr-height': '2px',
+      '--ygg-hr-bg': 'linear-gradient(90deg, transparent, #2e9e6f 22%, #c99a3c 50%, #2e9e6f 78%, transparent)',
     }),
     layout: Object.freeze({
       每楼形态: 'card',
@@ -192,16 +187,6 @@ export const BUILTIN_THEMES = Object.freeze([
 .ygg-prose-host[data-ygg-theme="fantasy"] {
   font-family: var(--ygg-font-prose);
 }
-.ygg-prose-host[data-ygg-theme="fantasy"] blockquote {
-  border-left: 3px solid #c99a3c;
-  background: color-mix(in srgb, #c99a3c 9%, transparent);
-  border-radius: 0 8px 8px 0;
-}
-.ygg-prose-host[data-ygg-theme="fantasy"] hr {
-  border: none;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #2e9e6f 22%, #c99a3c 50%, #2e9e6f 78%, transparent);
-}
 `,
   }),
   Object.freeze({
@@ -226,6 +211,12 @@ export const BUILTIN_THEMES = Object.freeze([
       '--ygg-font-mono': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       '--ygg-dialogue-color': 'color-mix(in srgb, #0ea5e9 62%, var(--ygg-text))',
       '--ygg-dialogue-bg': 'color-mix(in srgb, #22d3ee 11%, transparent)',
+      '--ygg-bq-border-left': '2px solid #22d3ee',
+      '--ygg-bq-bg': 'color-mix(in srgb, #22d3ee 8%, transparent)',
+      '--ygg-bq-font': 'var(--ygg-font-mono)',
+      '--ygg-bq-font-size': '0.94em',
+      '--ygg-hr-height': '1px',
+      '--ygg-hr-bg': 'repeating-linear-gradient(90deg, #22d3ee 0 8px, transparent 8px 14px)',
     }),
     layout: Object.freeze({
       每楼形态: 'card',
@@ -259,17 +250,6 @@ export const BUILTIN_THEMES = Object.freeze([
 [data-ygg-theme="cyber"] .ygg-floor .ygg-scene-pill {
   border-color: color-mix(in srgb, #22d3ee 44%, transparent);
   background: color-mix(in srgb, #22d3ee 10%, transparent);
-}
-.ygg-prose-host[data-ygg-theme="cyber"] blockquote {
-  border-left: 2px solid #22d3ee;
-  background: color-mix(in srgb, #22d3ee 8%, transparent);
-  font-family: var(--ygg-font-mono);
-  font-size: 0.94em;
-}
-.ygg-prose-host[data-ygg-theme="cyber"] hr {
-  border: none;
-  height: 1px;
-  background: repeating-linear-gradient(90deg, #22d3ee 0 8px, transparent 8px 14px);
 }
 `,
   }),
@@ -628,39 +608,58 @@ const SHARED_PROSE_AND_FLOOR_CSS = `
 .ygg-floor.ygg-floor-minimal .ygg-label { font-size: 0.82em; padding: 0 6px; }
 .ygg-floor.ygg-floor-minimal .ygg-brief { opacity: 0.78; }
 
-/* 无损正文美化排版层（仅作用于挂载 .ygg-prose-host 的助手楼层，不改写原始消息） */
-.ygg-prose-host {
-  font-size: calc(var(--mainFontSize, 15px) * var(--ygg-prose-scale, 1));
-  line-height: var(--ygg-prose-leading, 1.75);
+/* 无损正文美化排版层（仅作用于挂载 .ygg-prose-host 的助手楼层，不改写原始消息；
+   采用四层虚拟 ID 权重 (4,1,0) 压过第三方宿主主题对 #chat .mes .mes_text 的双 ID 覆盖，
+   关闭正文美化移除 .ygg-prose-host 后即 100% 让权给宿主） */
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) {
+  font-size: calc(var(--mainFontSize, 15px) * var(--ygg-prose-scale, 1)) !important;
+  line-height: var(--ygg-prose-leading, 1.75) !important;
   overflow-wrap: break-word;
   word-break: break-word;
 }
-.ygg-prose-host p {
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) :is(p, blockquote, li, .ygg-dialogue) {
+  font-family: var(--ygg-font-prose, inherit);
+}
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) p {
   margin: 0.68em 0;
 }
-.ygg-prose-host p:first-child { margin-top: 0; }
-.ygg-prose-host p:last-child { margin-bottom: 0; }
-.ygg-prose-host[data-ygg-indent="true"] p {
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) p:first-child { margin-top: 0; }
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) p:last-child { margin-bottom: 0; }
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____)[data-ygg-indent="true"] p {
   text-indent: 2em;
 }
-.ygg-prose-host[data-ygg-indent="true"] blockquote p {
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____)[data-ygg-indent="true"] blockquote p {
   text-indent: 0;
 }
-.ygg-prose-host em, .ygg-prose-host i {
-  color: color-mix(in srgb, var(--ygg-muted, currentColor) 82%, currentColor);
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) :is(em, i) {
+  color: var(--ygg-em-color, color-mix(in srgb, var(--ygg-muted, currentColor) 82%, currentColor)) !important;
 }
-.ygg-prose-host blockquote {
-  margin: 0.8em 0;
-  padding: 0.55em 0.95em;
-  border-left: 3px solid var(--ygg-accent, #4f9d7a);
-  background: color-mix(in srgb, var(--ygg-accent, #4f9d7a) 7%, transparent);
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) blockquote {
+  margin: var(--ygg-bq-margin, 0.8em 0) !important;
+  padding: var(--ygg-bq-padding, 0.55em 0.95em) !important;
+  border: 0 !important;
+  border-top: var(--ygg-bq-border-top, 0) !important;
+  border-bottom: var(--ygg-bq-border-bottom, 0) !important;
+  border-left: var(--ygg-bq-border-left, 3px solid var(--ygg-accent, #4f9d7a)) !important;
+  border-radius: var(--ygg-bq-radius, 0) !important;
+  background: var(--ygg-bq-bg, color-mix(in srgb, var(--ygg-accent, #4f9d7a) 7%, transparent)) !important;
+  font-family: var(--ygg-bq-font, var(--ygg-font-prose, inherit));
+  font-size: var(--ygg-bq-font-size, inherit);
+  font-style: var(--ygg-bq-font-style, inherit);
+  color: var(--ygg-bq-color, inherit) !important;
 }
-.ygg-prose-host hr {
-  margin: 1.1em auto;
-  width: 82%;
-  opacity: 0.85;
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) blockquote p {
+  font-family: inherit;
 }
-.ygg-prose-host[data-ygg-dialogue="true"] .ygg-dialogue {
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____) hr {
+  border: 0 !important;
+  height: var(--ygg-hr-height, 1px) !important;
+  margin: var(--ygg-hr-margin, 1.1em auto) !important;
+  width: var(--ygg-hr-width, 82%) !important;
+  background: var(--ygg-hr-bg, linear-gradient(90deg, transparent, var(--ygg-border-strong), transparent)) !important;
+  opacity: var(--ygg-hr-opacity, 0.85) !important;
+}
+.ygg-prose-host:not(#_):not(#__):not(#___):not(#____)[data-ygg-dialogue="true"] .ygg-dialogue {
   color: var(--ygg-dialogue-color, var(--ygg-accent, inherit));
   background: var(--ygg-dialogue-bg, transparent);
   border-radius: 3px;
@@ -677,6 +676,10 @@ const SHARED_PROSE_AND_FLOOR_CSS = `
 }
 .ygg-form .ygg-range-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px;
+}
+@container (max-width: 580px) {
+  .ygg-form .ygg-appearance-grid,
+  .ygg-form .ygg-range-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .ygg-form .ygg-appearance-grid,

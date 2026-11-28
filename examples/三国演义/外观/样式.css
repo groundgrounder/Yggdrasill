@@ -57,25 +57,19 @@
   background: color-mix(in srgb, #c59b52 10%, transparent);
 }
 
-/* 正文排版：章回书卷、史传眉批与双金朱砂分割线 */
+/* 正文排版：章回书卷、史传眉批与双金朱砂分割线（同步映射 --ygg-bq-* / --ygg-hr-* 令牌以抗高权重宿主主题覆盖） */
 .ygg-prose-host[data-ygg-theme="sanguo-scroll"] {
   letter-spacing: 0.03em;
-}
-
-.ygg-prose-host[data-ygg-theme="sanguo-scroll"] blockquote {
-  border-left: 3px double #b93a28;
-  border-top: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
-  background: color-mix(in srgb, #c59b52 10%, transparent);
-  padding: 0.6em 1em;
-  font-style: normal;
-  color: color-mix(in srgb, var(--ygg-text) 88%, #c59b52 12%);
-}
-
-.ygg-prose-host[data-ygg-theme="sanguo-scroll"] hr {
-  border: none;
-  height: 2px;
-  background: linear-gradient(
+  --ygg-bq-border-left: 3px double #b93a28;
+  --ygg-bq-border-top: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
+  --ygg-bq-border-bottom: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
+  --ygg-bq-bg: color-mix(in srgb, #c59b52 10%, transparent);
+  --ygg-bq-padding: 0.6em 1em;
+  --ygg-bq-radius: 0;
+  --ygg-bq-font-style: normal;
+  --ygg-bq-color: color-mix(in srgb, var(--ygg-text) 88%, #c59b52 12%);
+  --ygg-hr-height: 2px;
+  --ygg-hr-bg: linear-gradient(
     90deg,
     transparent,
     color-mix(in srgb, #c59b52 65%, transparent) 18%,
@@ -84,6 +78,23 @@
     color-mix(in srgb, #c59b52 65%, transparent) 82%,
     transparent
   );
+}
+
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"] blockquote {
+  border-left: var(--ygg-bq-border-left);
+  border-top: var(--ygg-bq-border-top);
+  border-bottom: var(--ygg-bq-border-bottom);
+  background: var(--ygg-bq-bg);
+  padding: var(--ygg-bq-padding);
+  border-radius: var(--ygg-bq-radius);
+  font-style: var(--ygg-bq-font-style);
+  color: var(--ygg-bq-color);
+}
+
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"] hr {
+  border: none;
+  height: var(--ygg-hr-height);
+  background: var(--ygg-hr-bg);
 }
 
 .ygg-prose-host[data-ygg-theme="sanguo-scroll"][data-ygg-dialogue="true"] .ygg-dialogue {
