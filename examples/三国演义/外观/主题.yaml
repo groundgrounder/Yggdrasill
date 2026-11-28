@@ -1,0 +1,26 @@
+id: sanguo-scroll
+name: 演义丹青
+description: 汉印朱砂、竹简鎏金与青玉点缀的三国章回书卷主题，兼顾暗色夜读与亮色宣纸双模式高对比可读性。
+default: true
+base: classic
+layout:
+  每楼形态: card
+  正文美化: true
+  对白高亮: true
+  首行缩进: true
+tokens:
+  --ygg-accent: "#b93a28"
+  --ygg-ok: "#3b7a68"
+  --ygg-warn: "#c2862d"
+  --ygg-bad: "#a83330"
+  --ygg-info: "#3c698c"
+  --ygg-radius: "4px"
+  --ygg-radius-sub: "3px"
+  --ygg-radius-pill: "3px"
+  --ygg-bg-surface: "color-mix(in srgb, var(--ygg-base) 82%, #c59b52 7%)"
+  --ygg-bg-elevated: "color-mix(in srgb, var(--ygg-base) 74%, #c59b52 11%)"
+  --ygg-bg-subtle: "color-mix(in srgb, #c59b52 8%, transparent)"
+  --ygg-border: "color-mix(in srgb, #c59b52 46%, var(--ygg-text) 14%)"
+  --ygg-border-strong: "color-mix(in srgb, #b93a28 50%, #c59b52 42%)"
+  --ygg-dialogue-color: "color-mix(in srgb, #d45b3e 60%, var(--ygg-text))"
+  --ygg-dialogue-bg: "color-mix(in srgb, #c84630 11%, transparent)"

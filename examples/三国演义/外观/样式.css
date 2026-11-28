@@ -1,0 +1,91 @@
+/* 《三国演义》示范主题「演义丹青」：汉印朱砂 + 竹简鎏金 + 青玉点缀，零外链、严格限定作用域 */
+
+[data-ygg-theme="sanguo-scroll"] .ygg-panel-head {
+  border-bottom: 3px double var(--ygg-border-strong);
+  padding-bottom: 10px;
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-panel-brand h3 {
+  letter-spacing: 0.1em;
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-head-pill {
+  border-color: color-mix(in srgb, #b93a28 42%, #c59b52 44%);
+  background: color-mix(in srgb, #b93a28 9%, transparent);
+  color: color-mix(in srgb, #b93a28 45%, var(--ygg-text));
+  letter-spacing: 0.04em;
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-hero {
+  border-color: var(--ygg-border-strong);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #c59b52 22%, transparent),
+    0 2px 10px color-mix(in srgb, #000 10%, transparent);
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-stat-card {
+  border-top: 2px solid color-mix(in srgb, #b93a28 65%, #c59b52 35%);
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-chip {
+  border-color: color-mix(in srgb, #3b7a68 46%, #c59b52 34%);
+  background: color-mix(in srgb, #3b7a68 10%, transparent);
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-timeline::before {
+  background: linear-gradient(180deg, #b93a28, #c59b52 55%, #3b7a68);
+}
+
+/* 每楼状态栏：汉印朱砂标签与竹简鎏金抬头卡 */
+[data-ygg-theme="sanguo-scroll"].ygg-floor,
+[data-ygg-theme="sanguo-scroll"] .ygg-floor {
+  border-color: color-mix(in srgb, #c59b52 50%, var(--ygg-text) 14%);
+  border-left: 4px double var(--ygg-accent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #c59b52 20%, transparent);
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-floor .ygg-label {
+  border-radius: 2px;
+  border-color: color-mix(in srgb, #b93a28 58%, transparent);
+  background: color-mix(in srgb, #b93a28 15%, transparent);
+  color: color-mix(in srgb, #b93a28 62%, var(--ygg-text));
+  letter-spacing: 0.1em;
+}
+
+[data-ygg-theme="sanguo-scroll"] .ygg-floor .ygg-scene-pill {
+  border-color: color-mix(in srgb, #c59b52 52%, transparent);
+  background: color-mix(in srgb, #c59b52 10%, transparent);
+}
+
+/* 正文排版：章回书卷、史传眉批与双金朱砂分割线 */
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"] {
+  letter-spacing: 0.03em;
+}
+
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"] blockquote {
+  border-left: 3px double #b93a28;
+  border-top: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #c59b52 30%, transparent);
+  background: color-mix(in srgb, #c59b52 10%, transparent);
+  padding: 0.6em 1em;
+  font-style: normal;
+  color: color-mix(in srgb, var(--ygg-text) 88%, #c59b52 12%);
+}
+
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"] hr {
+  border: none;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, #c59b52 65%, transparent) 18%,
+    #b93a28 48%,
+    #c59b52 52%,
+    color-mix(in srgb, #c59b52 65%, transparent) 82%,
+    transparent
+  );
+}
+
+.ygg-prose-host[data-ygg-theme="sanguo-scroll"][data-ygg-dialogue="true"] .ygg-dialogue {
+  border-bottom: 1px dotted color-mix(in srgb, #c84630 42%, transparent);
+}
