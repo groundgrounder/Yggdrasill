@@ -327,12 +327,13 @@ const initialChat = JSON.stringify(chat);
 holdPopup = true;
 const entry = process.argv[2] || (process.env.SMOKE_USE_DIST === '1' ? 'adapter/dist/runtime.js' : null);
 await import(entry ? pathToFileURL(path.resolve(process.cwd(), entry)).href : new URL('./runtime.mjs', import.meta.url).href);
-await waitUntil(() => popupNodes.length >= 1, '新聊天打开开局界面');
+assert.equal(popupNodes.length, 0, '新聊天不得自动弹出开局界面');
 assert.equal(record(0), undefined, '确认开局前不得创建第 0 楼记录');
 assert.equal(injected['yggdrasill-context'], undefined, '确认开局前不得注入叙事上下文');
 assert.equal(keeperCalls.length, 0, '预演与开局门禁不得调用记账模型');
 assert.equal(messageWrites, 0, '确认开局前不得写楼层变量');
 assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
 const stoppedBeforeOpening = stopCalls;
 await emit('GENERATION_AFTER_COMMANDS', 'normal', generationOptions, false);
 assert.equal(stopCalls, stoppedBeforeOpening + 1, '未开局生成应实际调用宿主停止');
@@ -340,7 +341,12 @@ assert.ok(toasts.some(item => item.title?.includes('已阻止生成') && /尚未
 assert.equal(record(0), undefined);
 assert.equal(injected['yggdrasill-context'], undefined);
 
+const openBtn0 = find(floors.get(0), item => item.tag === '<button>' && item.value === '打开开局');
+assert.ok(openBtn0, '第 0 楼待开局引导卡应包含“打开开局”按钮');
+const firstOpen = openBtn0.handlers.click();
+await waitUntil(() => popupNodes.length >= 1, '点击第 0 楼打开开局按钮应弹出开局界面');
 assert.equal(await closePopup(null), true, '取消开局应关闭界面但不提交');
+await firstOpen;
 await new Promise(resolve => setTimeout(resolve, 10));
 assert.match(floorText(0), /打开开局/);
 assert.equal(JSON.stringify(chat), initialChat, '取消开局不得改变任何聊天变量');
@@ -1663,7 +1669,11 @@ floors.clear();
 holdPopup = true;
 const openingPopupBase = popupNodes.length;
 await emit('chat_id_changed');
-await waitUntil(() => popupNodes.length > openingPopupBase, '新聊天应自动打开开局界面');
+assert.equal(popupNodes.length, openingPopupBase, '新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit('button:世界树：开局');
+await waitUntil(() => popupNodes.length > openingPopupBase, '手动打开开局界面');
 const roleplayMode = find(popupNodes.at(-1), item => item.tag === '<select>'
   && item.children.some(option => option.field === '自建') && item.children.some(option => option.field === '扮演'));
 roleplayMode.handlers.change({target: {value: '扮演'}});
@@ -2310,9 +2320,14 @@ delete chat[0].variables[0].世界树;
 holdPopup = true;
 const emptyOpeningBase = popupNodes.length;
 await emit('message_deleted', 1);
-await waitUntil(() => popupNodes.length > emptyOpeningBase, '删到无记录第 0 楼应交由 init 打开开局界面');
+assert.equal(popupNodes.length, emptyOpeningBase, '删到无记录第 0 楼不得自动弹出开局界面');
 assert.ok(![...floors.values()].some(node => node.text().includes('存档只读')));
 assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+const openBtn38 = find(floors.get(0), item => item.tag === '<button>' && item.value === '打开开局');
+assert.ok(openBtn38, '删回第 0 楼后引导卡应包含“打开开局”按钮');
+void openBtn38.handlers.click();
+await waitUntil(() => popupNodes.length > emptyOpeningBase, '删到无记录第 0 楼点击打开开局应弹出开局界面');
 assert.equal(await closePopup(null), true);
 holdPopup = false;
 
@@ -2430,6 +2445,10 @@ const openBefore = popupNodes.length, writesBeforeGreeting = openingWrites;
 chat.splice(0, chat.length);
 push('旧的开场白占位。', false);
 await emit('chat_id_changed');
+assert.equal(popupNodes.length, openBefore, '新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit('button:世界树：开局');
 await waitUntil(() => popupNodes.length > openBefore, '新聊天打开开局界面');
 assert.match(popupNodes.at(-1).text(), /确认开局后使用这段正文作为第 0 楼开场白/);
 assert.equal(await closePopup(1), true, '开场白与选中方案不同时应同步后提交');
@@ -2445,6 +2464,10 @@ const rollbackBefore = popupNodes.length, rollbackGreeting = '回滚前的开场
 chat.splice(0, chat.length);
 push(rollbackGreeting, false);
 await emit('chat_id_changed');
+assert.equal(popupNodes.length, rollbackBefore, '回滚用例新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit('button:世界树：开局');
 await waitUntil(() => popupNodes.length > rollbackBefore, '回滚用例打开开局界面');
 failNextMessageWrite = true;
 assert.equal(await closePopup(1), false, '记录写入失败时提交必须失败');
@@ -2460,6 +2483,10 @@ const noApiBefore = popupNodes.length, noApiGreeting = '无写正文接口的开
 chat.splice(0, chat.length);
 push(noApiGreeting, false);
 await emit('chat_id_changed');
+assert.equal(popupNodes.length, noApiBefore, '无写正文接口用例新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit('button:世界树：开局');
 await waitUntil(() => popupNodes.length > noApiBefore, '无写正文接口用例打开开局界面');
 const toastBase = toasts.length, savedSetChatMessages = globalThis.setChatMessages;
 delete globalThis.setChatMessages;
@@ -2566,6 +2593,10 @@ const open43Before = popupNodes.length, cover43 = '【封面占位】请点击�
 chat.splice(0, chat.length);
 push(cover43, false);
 await emit('chat_id_changed');
+assert.equal(popupNodes.length, open43Before, '段43 新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit('button:世界树：开局');
 await waitUntil(() => popupNodes.length > open43Before, '段43 打开开局界面');
 let form43 = popupNodes.at(-1);
 // 切换为 提示扩写 并填写一句提示
@@ -2680,6 +2711,10 @@ const open45Before = popupNodes.length, cover45 = '【封面占位】请点击�
 chat.splice(0, chat.length);
 push(cover45, false);
 await emit('chat_id_changed');
+assert.equal(popupNodes.length, open45Before, '段45 新聊天不得自动弹出开局界面');
+assert.match(floorText(0), /尚未开局/);
+assert.match(floorText(0), /打开开局/);
+void emit(getButtonEvent('世界树：开局'));
 await waitUntil(() => popupNodes.length > open45Before, '段45 打开开局界面');
 
 // 45a 未修改直接取消不写全局变量

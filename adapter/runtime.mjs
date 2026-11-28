@@ -487,14 +487,13 @@ async function init() {
   if (!list.length) { status.pendingOpening('尚未开局：等待开场白'); return; }
   const opening = list[0];
   if (opening.role === 'assistant' && !recordOf(opening)) {
-    // 新聊天只有开场白时先交给开局前端；确认并成功写第 0 楼之前不执行开场命令。
+    // 新聊天只有开场白时不自动弹窗，先在第 0 楼下方展示待开局引导卡；由玩家点击「打开开局」或顶栏「世界树：开局」开启，确认并成功写第 0 楼之前不执行开场命令。
     if (list.length !== 1) return status.blocked({code: '记录.缺失', 说明: '第 0 楼缺少正式记录，后面的楼层不能越过缺口', 楼号: 0});
     session.openingPending = true;
     session.integrity = null;
     session.upgrade = null;
     uninjectPrompts([INJECT_ID]);
     status.renderFloors();
-    void openingFlow.open();
     return;
   }
   session.openingPending = false;
